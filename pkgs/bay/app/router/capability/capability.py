@@ -1,12 +1,12 @@
-"""CapabilityRouter - routes capability requests to runtime.
+"""CapabilityRouter - routes capability requests to runtime adapters.
 
 Responsibilities:
 - Resolve sandbox_id -> session endpoint
 - Ensure session is running (ensure_running)
 - Apply policies: timeout, retry, circuit-breaker, audit
-- Route to appropriate RuntimeClient
+- Route to appropriate RuntimeAdapter
 
-See: plans/bay-design.md section 3.2.4
+See: plans/phase-1/capability-adapter-design.md
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from typing import Any
 
 import structlog
 
-from app.clients.runtime.base import ExecutionResult, RuntimeClient
-from app.clients.runtime.ship import ShipClient
+from app.adapters.base import BaseAdapter, ExecutionResult
+from app.adapters.ship import ShipAdapter
 from app.errors import SessionNotReadyError
 from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox
@@ -26,13 +26,13 @@ logger = structlog.get_logger()
 
 
 class CapabilityRouter:
-    """Routes capability requests to the appropriate runtime."""
+    """Routes capability requests to the appropriate runtime adapter."""
 
     def __init__(self, sandbox_mgr: SandboxManager) -> None:
         self._sandbox_mgr = sandbox_mgr
         self._log = logger.bind(component="capability_router")
-        # Cache of RuntimeClients by endpoint
-        self._clients: dict[str, RuntimeClient] = {}
+        # Cache of adapters by endpoint
+        self._adapters: dict[str, BaseAdapter] = {}
 
     async def ensure_session(self, sandbox: Sandbox) -> Session:
         """Ensure sandbox has a running session.
@@ -48,10 +48,10 @@ class CapabilityRouter:
         """
         return await self._sandbox_mgr.ensure_running(sandbox)
 
-    def _get_client(self, session: Session) -> RuntimeClient:
-        """Get or create RuntimeClient for session.
+    def _get_adapter(self, session: Session) -> BaseAdapter:
+        """Get or create adapter for session.
         
-        Caches clients by endpoint to avoid creating new connections.
+        Caches adapters by endpoint to avoid creating new instances.
         """
         if session.endpoint is None:
             raise SessionNotReadyError(
@@ -59,14 +59,16 @@ class CapabilityRouter:
                 sandbox_id=session.sandbox_id,
             )
 
-        if session.endpoint not in self._clients:
-            # Create client based on runtime type
+        if session.endpoint not in self._adapters:
+            # Create adapter based on runtime type
             if session.runtime_type == "ship":
-                self._clients[session.endpoint] = ShipClient(session.endpoint)
+                self._adapters[session.endpoint] = ShipAdapter(session.endpoint)
             else:
                 raise ValueError(f"Unknown runtime type: {session.runtime_type}")
 
-        return self._clients[session.endpoint]
+        return self._adapters[session.endpoint]
+
+    # -- Python capability --
 
     async def exec_python(
         self,
@@ -86,7 +88,7 @@ class CapabilityRouter:
             Execution result
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.python.exec",
@@ -95,7 +97,9 @@ class CapabilityRouter:
             code_len=len(code),
         )
 
-        return await client.exec_python(code, timeout=timeout)
+        return await adapter.exec_python(code, timeout=timeout)
+
+    # -- Shell capability --
 
     async def exec_shell(
         self,
@@ -117,7 +121,7 @@ class CapabilityRouter:
             Execution result
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.shell.exec",
@@ -126,7 +130,9 @@ class CapabilityRouter:
             command=command[:100],
         )
 
-        return await client.exec_shell(command, timeout=timeout, cwd=cwd)
+        return await adapter.exec_shell(command, timeout=timeout, cwd=cwd)
+
+    # -- Filesystem capability --
 
     async def read_file(
         self,
@@ -143,7 +149,7 @@ class CapabilityRouter:
             File content
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.files.read",
@@ -151,7 +157,7 @@ class CapabilityRouter:
             path=path,
         )
 
-        return await client.read_file(path)
+        return await adapter.read_file(path)
 
     async def write_file(
         self,
@@ -167,7 +173,7 @@ class CapabilityRouter:
             content: File content
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.files.write",
@@ -176,7 +182,7 @@ class CapabilityRouter:
             content_len=len(content),
         )
 
-        await client.write_file(path, content)
+        await adapter.write_file(path, content)
 
     async def list_files(
         self,
@@ -193,7 +199,7 @@ class CapabilityRouter:
             List of file entries
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.files.list",
@@ -201,7 +207,7 @@ class CapabilityRouter:
             path=path,
         )
 
-        return await client.list_files(path)
+        return await adapter.list_files(path)
 
     async def delete_file(
         self,
@@ -215,7 +221,7 @@ class CapabilityRouter:
             path: File/directory path (relative to /workspace)
         """
         session = await self.ensure_session(sandbox)
-        client = self._get_client(session)
+        adapter = self._get_adapter(session)
 
         self._log.info(
             "capability.files.delete",
@@ -223,4 +229,56 @@ class CapabilityRouter:
             path=path,
         )
 
-        await client.delete_file(path)
+        await adapter.delete_file(path)
+
+    # -- Upload/Download capability --
+
+    async def upload_file(
+        self,
+        sandbox: Sandbox,
+        path: str,
+        content: bytes,
+    ) -> None:
+        """Upload binary file to sandbox.
+        
+        Args:
+            sandbox: Target sandbox
+            path: Target path (relative to /workspace)
+            content: File content as bytes
+        """
+        session = await self.ensure_session(sandbox)
+        adapter = self._get_adapter(session)
+
+        self._log.info(
+            "capability.files.upload",
+            sandbox_id=sandbox.id,
+            path=path,
+            content_len=len(content),
+        )
+
+        await adapter.upload_file(path, content)
+
+    async def download_file(
+        self,
+        sandbox: Sandbox,
+        path: str,
+    ) -> bytes:
+        """Download file from sandbox.
+        
+        Args:
+            sandbox: Target sandbox
+            path: File path (relative to /workspace)
+            
+        Returns:
+            File content as bytes
+        """
+        session = await self.ensure_session(sandbox)
+        adapter = self._get_adapter(session)
+
+        self._log.info(
+            "capability.files.download",
+            sandbox_id=sandbox.id,
+            path=path,
+        )
+
+        return await adapter.download_file(path)

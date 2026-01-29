@@ -1,7 +1,7 @@
-"""Unit tests for ShipClient.
+"""Unit tests for ShipAdapter.
 
-Tests ShipClient path construction and response parsing using httpx MockTransport.
-See: plans/phase-1/tests.md section 2.5
+Tests ShipAdapter path construction and response parsing using httpx MockTransport.
+See: plans/phase-1/capability-adapter-design.md
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.clients.runtime.ship import ShipClient
+from app.adapters.ship import ShipAdapter
 
 
 def mock_response(data: dict[str, Any], status_code: int = 200) -> httpx.Response:
@@ -24,10 +24,11 @@ def mock_response(data: dict[str, Any], status_code: int = 200) -> httpx.Respons
     )
 
 
-class TestShipClientExecPython:
-    """Unit-05: ShipClient exec_python tests.
+class TestShipAdapterExecPython:
+    """Unit-05: ShipAdapter exec_python tests.
     
     Purpose: Verify endpoint path and response parsing for Python execution.
+    Note: Bay's "python" capability maps to Ship's /ipython/exec endpoint.
     """
 
     async def test_exec_python_request_path(self):
@@ -43,10 +44,10 @@ class TestShipClientExecPython:
                 "execution_count": 1,
             })
         
-        # Create client with mock transport
+        # Create adapter with mock transport
         transport = httpx.MockTransport(handler)
         
-        client = ShipClient("http://fake-ship:8123")
+        adapter = ShipAdapter("http://fake-ship:8123")
         
         # Override the _request method to use our mock transport
         async with httpx.AsyncClient(transport=transport) as http_client:
@@ -78,8 +79,8 @@ class TestShipClientExecPython:
         
         transport = httpx.MockTransport(handler)
         
-        # Use a patched client for testing
-        client = ShipClient("http://fake-ship:8123")
+        # Use a patched adapter for testing
+        adapter = ShipAdapter("http://fake-ship:8123")
         
         # We need to test the actual parsing logic
         # Simulate what exec_python does with the response
@@ -90,7 +91,7 @@ class TestShipClientExecPython:
             )
             result_data = response.json()
         
-        # Parse like ShipClient does
+        # Parse like ShipAdapter does
         output_obj = result_data.get("output") or {}
         output_text = output_obj.get("text", "") if isinstance(output_obj, dict) else ""
         
@@ -122,8 +123,8 @@ class TestShipClientExecPython:
         assert "NameError" in result_data["error"]
 
 
-class TestShipClientListFiles:
-    """Unit-05: ShipClient list_files tests.
+class TestShipAdapterListFiles:
+    """Unit-05: ShipAdapter list_files tests.
     
     Purpose: Verify endpoint path and response parsing for file listing.
     """
@@ -188,8 +189,8 @@ class TestShipClientListFiles:
         assert files[1]["type"] == "directory"
 
 
-class TestShipClientReadFile:
-    """Unit-05: ShipClient read_file tests."""
+class TestShipAdapterReadFile:
+    """Unit-05: ShipAdapter read_file tests."""
 
     async def test_read_file_request_path(self):
         """read_file should POST to /fs/read_file."""
@@ -241,8 +242,8 @@ class TestShipClientReadFile:
         assert content == "print('Hello World')\n"
 
 
-class TestShipClientExecShell:
-    """Unit-05: ShipClient exec_shell tests."""
+class TestShipAdapterExecShell:
+    """Unit-05: ShipAdapter exec_shell tests."""
 
     async def test_exec_shell_request_path(self):
         """exec_shell should POST to /shell/exec."""
@@ -313,7 +314,7 @@ class TestShipClientExecShell:
             )
             result_data = response.json()
         
-        # Verify parsing like ShipClient does
+        # Verify parsing like ShipAdapter does
         success = result_data.get("exit_code", -1) == 0
         output = result_data.get("output", "")
         
@@ -344,8 +345,8 @@ class TestShipClientExecShell:
         assert result_data["exit_code"] == 1
 
 
-class TestShipClientHealth:
-    """ShipClient health check tests."""
+class TestShipAdapterHealth:
+    """ShipAdapter health check tests."""
 
     async def test_health_request_path(self):
         """health should GET /health."""
@@ -363,3 +364,125 @@ class TestShipClientHealth:
         
         assert captured_request.url.path == "/health"
         assert captured_request.method == "GET"
+
+
+class TestShipAdapterMeta:
+    """ShipAdapter meta endpoint tests."""
+
+    async def test_get_meta_request_path(self):
+        """get_meta should GET /meta."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({
+                "runtime": {
+                    "name": "ship",
+                    "version": "0.1.0",
+                    "api_version": "v1",
+                },
+                "workspace": {
+                    "mount_path": "/workspace",
+                },
+                "capabilities": {
+                    "python": {"operations": ["exec"]},
+                    "shell": {"operations": ["exec"]},
+                    "filesystem": {"operations": ["read", "write", "list", "delete"]},
+                },
+            })
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.get("http://fake-ship:8123/meta")
+        
+        assert captured_request.url.path == "/meta"
+        assert captured_request.method == "GET"
+
+    async def test_get_meta_response_parsing(self):
+        """get_meta should correctly parse meta response."""
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            return mock_response({
+                "runtime": {
+                    "name": "ship",
+                    "version": "0.1.0",
+                    "api_version": "v1",
+                },
+                "workspace": {
+                    "mount_path": "/workspace",
+                },
+                "capabilities": {
+                    "python": {"operations": ["exec"]},
+                    "shell": {"operations": ["exec"]},
+                },
+            })
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.get("http://fake-ship:8123/meta")
+            result_data = response.json()
+        
+        # Verify structure
+        assert result_data["runtime"]["name"] == "ship"
+        assert result_data["workspace"]["mount_path"] == "/workspace"
+        assert "python" in result_data["capabilities"]
+        assert "shell" in result_data["capabilities"]
+
+
+class TestShipAdapterUploadDownload:
+    """ShipAdapter upload/download tests."""
+
+    async def test_upload_request_path(self):
+        """upload should POST to /upload."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({
+                "success": True,
+                "message": "File uploaded successfully",
+                "file_path": "/workspace/test.bin",
+                "size": 10,
+            })
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            files = {"file": ("file", b"test data!", "application/octet-stream")}
+            data = {"file_path": "test.bin"}
+            response = await http_client.post(
+                "http://fake-ship:8123/upload",
+                files=files,
+                data=data,
+            )
+        
+        assert captured_request.url.path == "/upload"
+
+    async def test_download_request_path(self):
+        """download should GET /download with file_path param."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return httpx.Response(
+                status_code=200,
+                content=b"binary file content",
+                headers={"content-type": "application/octet-stream"},
+            )
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.get(
+                "http://fake-ship:8123/download",
+                params={"file_path": "test.bin"},
+            )
+        
+        assert captured_request.url.path == "/download"
+        assert "file_path=test.bin" in str(captured_request.url)
+        assert response.content == b"binary file content"

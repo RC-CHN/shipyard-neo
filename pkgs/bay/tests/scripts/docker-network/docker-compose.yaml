@@ -1,0 +1,34 @@
+# Bay E2E Test - Docker Network Mode
+#
+# This docker-compose file runs Bay in a container and allows it to
+# communicate with Ship containers via a shared Docker network.
+
+services:
+  bay:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    container_name: bay-e2e-test
+    ports:
+      - "8002:8000"
+    volumes:
+      # Mount Docker socket for Bay to create Ship containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount config file
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - BAY_CONFIG_FILE=/app/config.yaml
+    networks:
+      - bay-e2e-test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+networks:
+  bay-e2e-test-network:
+    name: bay-e2e-test-network
+    driver: bridge
+    external: false

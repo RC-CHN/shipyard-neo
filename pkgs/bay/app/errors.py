@@ -121,3 +121,11 @@ class ValidationError(BayError):
     code = "validation_error"
     message = "Validation error"
     status_code = 400
+
+
+class FileNotFoundError(BayError):
+    """File not found in sandbox workspace."""
+
+    code = "file_not_found"
+    message = "File not found"
+    status_code = 404

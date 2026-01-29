@@ -9,7 +9,10 @@ scripts/
 ├── docker-host/          # Bay on host, Ship in container (host_port mode)
 │   ├── config.yaml       # Configuration for this mode
 │   └── run.sh            # Script to run E2E tests
-├── docker-network/       # (Future) Bay in container, same docker network
+├── docker-network/       # Bay in container, Ship in container (container_network mode)
+│   ├── config.yaml       # Configuration for this mode
+│   ├── docker-compose.yaml  # Compose file to run Bay
+│   └── run.sh            # Script to run E2E tests
 └── k8s/                  # (Future) Bay with Kubernetes driver
 ```
 
@@ -53,6 +56,62 @@ BAY_CONFIG_FILE=tests/scripts/docker-host/config.yaml uv run python -m app.main
 cd pkgs/bay
 uv run pytest tests/integration -v
 ```
+
+## Docker Network Mode
+
+Production-like setup where:
+- Bay runs in a Docker container
+- Ship containers are created and connected to the same Docker network
+- Bay connects to Ship via container network IP (direct connection)
+
+### Prerequisites
+
+1. Docker daemon running
+2. `ship:latest` image built:
+   ```bash
+   cd pkgs/ship && make build
+   ```
+3. `bay:latest` image built (or the script will build it):
+   ```bash
+   cd pkgs/bay && make build
+   ```
+
+### Running Tests
+
+```bash
+# From pkgs/bay directory
+./tests/scripts/docker-network/run.sh
+
+# With options
+./tests/scripts/docker-network/run.sh -v                    # Verbose
+./tests/scripts/docker-network/run.sh -k "test_create"      # Specific test
+```
+
+### Manual Testing
+
+```bash
+# Start Bay in container
+cd pkgs/bay/tests/scripts/docker-network
+docker-compose up -d
+
+# Check logs
+docker-compose logs -f
+
+# Run tests (from pkgs/bay directory)
+cd pkgs/bay
+E2E_BAY_PORT=8002 uv run pytest tests/integration -v
+
+# Stop
+docker-compose down
+```
+
+## Mode Comparison
+
+| Mode | Bay Location | Ship Location | Connection | Use Case |
+|:--|:--|:--|:--|:--|
+| docker-host | Host machine | Container | host_port mapping | Development |
+| docker-network | Container | Container | container IP | Testing / Staging |
+| k8s (future) | K8s Pod | K8s Pod | K8s Service | Production |
 
 ## Adding New Driver Modes
 

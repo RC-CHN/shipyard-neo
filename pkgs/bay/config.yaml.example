@@ -68,7 +68,7 @@ profiles:
     capabilities:
       - filesystem
       - shell
-      - ipython
+      - python
     idle_timeout: 1800  # 30 minutes
     env: {}
 
@@ -81,7 +81,7 @@ profiles:
     capabilities:
       - filesystem
       - shell
-      - ipython
+      - python
     idle_timeout: 1800
     env: {}
 

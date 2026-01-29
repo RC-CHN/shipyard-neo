@@ -1,14 +1,16 @@
 """Capabilities API endpoints (through Sandbox).
 
-These endpoints route capability requests to the Ship runtime.
-See: plans/bay-api.md section 6.2
+These endpoints route capability requests to the runtime adapters.
+See: plans/phase-1/capability-adapter-design.md
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import OwnerDep, SandboxManagerDep
@@ -216,3 +218,61 @@ async def delete_file(
     await capability_router.delete_file(sandbox=sandbox, path=request.path)
 
     return {"status": "ok"}
+
+
+# -- Upload/Download endpoints --
+
+
+class FileUploadResponse(BaseModel):
+    """File upload response."""
+
+    status: str
+    path: str
+    size: int
+
+
+@router.post("/{sandbox_id}/files/upload", response_model=FileUploadResponse)
+async def upload_file(
+    sandbox_id: str,
+    sandbox_mgr: SandboxManagerDep,
+    owner: OwnerDep,
+    file: UploadFile = File(..., description="File to upload"),
+    path: str = Form(..., description="Target path relative to /workspace"),
+) -> FileUploadResponse:
+    """Upload binary file to sandbox.
+    
+    This endpoint accepts multipart/form-data with:
+    - file: The file to upload
+    - path: Target path in the sandbox workspace
+    """
+    sandbox = await sandbox_mgr.get(sandbox_id, owner)
+    capability_router = CapabilityRouter(sandbox_mgr)
+
+    content = await file.read()
+    await capability_router.upload_file(sandbox=sandbox, path=path, content=content)
+
+    return FileUploadResponse(status="ok", path=path, size=len(content))
+
+
+@router.get("/{sandbox_id}/files/download")
+async def download_file(
+    sandbox_id: str,
+    sandbox_mgr: SandboxManagerDep,
+    owner: OwnerDep,
+    path: str = Query(..., description="File path relative to /workspace"),
+) -> Response:
+    """Download file from sandbox.
+    
+    Returns the file content as a binary stream.
+    """
+    sandbox = await sandbox_mgr.get(sandbox_id, owner)
+    capability_router = CapabilityRouter(sandbox_mgr)
+
+    content = await capability_router.download_file(sandbox=sandbox, path=path)
+    filename = Path(path).name
+
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

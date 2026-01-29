@@ -91,7 +91,7 @@ class ProfileConfig(BaseModel):
     id: str
     image: str = "ship:latest"
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
-    capabilities: list[str] = Field(default_factory=lambda: ["filesystem", "shell", "ipython"])
+    capabilities: list[str] = Field(default_factory=lambda: ["filesystem", "shell", "python"])
     idle_timeout: int = 1800  # 30 minutes
 
     # 容器内运行时 HTTP 端口（用于 Bay->Runtime 访问）
@@ -149,14 +149,14 @@ class Settings(BaseSettings):
                 id="python-default",
                 image="ship:latest",
                 resources=ResourceSpec(cpus=1.0, memory="1g"),
-                capabilities=["filesystem", "shell", "ipython"],
+                capabilities=["filesystem", "shell", "python"],
                 idle_timeout=1800,
             ),
             ProfileConfig(
                 id="python-data",
                 image="ship:data",
                 resources=ResourceSpec(cpus=2.0, memory="4g"),
-                capabilities=["filesystem", "shell", "ipython"],
+                capabilities=["filesystem", "shell", "python"],
                 idle_timeout=1800,
             ),
         ]

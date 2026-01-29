@@ -20,6 +20,9 @@ dependencies = [
     # HTTP client
     "httpx>=0.26.0",
     
+    # Form data (for file upload)
+    "python-multipart>=0.0.6",
+    
     # Config & validation
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
