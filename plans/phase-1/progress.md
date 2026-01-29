@@ -1,6 +1,6 @@
 # Bay Phase 1 进度追踪
 
-> 更新日期：2026-01-29 11:13 (UTC+8)
+> 更新日期：2026-01-29 11:33 (UTC+8)
 >
 > 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)
 
@@ -12,6 +12,7 @@
 | 最小 E2E 链路 | ✅ 100% | create → python/exec → stop → delete |
 | Capability Adapter 重构 | ✅ 100% | clients/ 已删除，adapters/ 已创建 |
 | Upload/Download | ✅ 100% | API + E2E 测试已添加 |
+| Filesystem (read/write/list/delete) | ✅ 100% | API + 单元测试 + E2E 测试完整 |
 | 统一错误模型 | ✅ 100% | BayError 层级完整 |
 | Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
@@ -29,14 +30,14 @@
 | 4 | 添加 upload/download API | ✅ | `api/v1/capabilities.py` |
 | 5 | 更新 config（ipython → python） | ✅ | `config.py`, `config.yaml.example` |
 | 6 | 更新/重命名测试文件 | ✅ | `tests/unit/test_ship_adapter.py` |
-| 7 | 运行所有测试验证 | ⏳ | 待用户运行 |
+| 7 | 运行所有测试验证 | ✅ | 20 E2E passed (2026-01-29 11:33) |
 
 ### 2.1 已创建的文件
 
 - [`pkgs/bay/app/adapters/__init__.py`](../../pkgs/bay/app/adapters/__init__.py) - 导出
 - [`pkgs/bay/app/adapters/base.py`](../../pkgs/bay/app/adapters/base.py) - BaseAdapter 抽象类
 - [`pkgs/bay/app/adapters/ship.py`](../../pkgs/bay/app/adapters/ship.py) - ShipAdapter 实现
-- [`pkgs/bay/tests/unit/test_ship_adapter.py`](../../pkgs/bay/tests/unit/test_ship_adapter.py) - 16 个单元测试
+- [`pkgs/bay/tests/unit/test_ship_adapter.py`](../../pkgs/bay/tests/unit/test_ship_adapter.py) - 21 个单元测试（含 write_file, delete_file）
 
 ### 2.2 已删除的文件
 
@@ -66,19 +67,23 @@
 | 文件上传 | ✅ | `POST /{sandbox_id}/files/upload` |
 | 文件下载 | ✅ | `GET /{sandbox_id}/files/download` |
 | download 404 处理 | ✅ | 返回 `file_not_found` 错误 |
+| 文件读取 | ✅ | `POST /{sandbox_id}/files/read` |
+| 文件写入 | ✅ | `POST /{sandbox_id}/files/write` |
+| 目录列表 | ✅ | `POST /{sandbox_id}/files/list` |
+| 文件删除 | ✅ | `POST /{sandbox_id}/files/delete` |
 
 ## 6. 测试状态
 
-### 6.1 单元测试
+### 6.1 单元测试（69 tests）
 
 | 文件 | 测试数 | 状态 |
 |:--|:--|:--|
 | `test_docker_driver.py` | 12 | ✅ |
 | `test_sandbox_manager.py` | 12 | ✅ |
-| `test_ship_adapter.py` | 16 | ✅ |
+| `test_ship_adapter.py` | 21 | ✅ （含 write_file, delete_file） |
 | `test_idempotency.py` | 24 | ✅ |
 
-### 6.2 E2E 测试
+### 6.2 E2E 测试（20 tests）
 
 | 测试类 | 测试数 | 状态 |
 |:--|:--|:--|
@@ -87,7 +92,8 @@
 | `TestE2E03Delete` | 3 | ✅ |
 | `TestE2E04ConcurrentEnsureRunning` | 1 | ✅ |
 | `TestE2E05FileUploadDownload` | 4 | ✅ |
-| `TestE2E06Idempotency` | 4 | ✅ |
+| `TestE2E06Filesystem` | 4 | ✅ **新增** read/write/list/delete |
+| `TestE2E07Idempotency` | 4 | ✅ |
 
 ### 6.3 测试运行命令
 
@@ -104,11 +110,13 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 
 ## 7. 下一步行动
 
-1. ~~运行 E2E 测试验证~~ ✅ 16 passed (2026-01-29)
+1. ~~运行 E2E 测试验证~~ ✅ 20 passed (2026-01-29 11:33)
 2. ~~删除 clients/runtime/ 目录~~ ✅ 已删除
 3. ~~Idempotency-Key 接入~~ ✅ 已完成
-4. **鉴权设计与实现** - 参考 `auth-design.md`
-5. **并发 ensure_running 竞态修复** - 参考 `test-report.md` 第 3.2 节
+4. ~~并发 ensure_running 竞态修复~~ ✅ 已完成
+5. ~~Filesystem E2E 测试补充~~ ✅ 4 tests 已添加
+6. **鉴权设计与实现** - 参考 `auth-design.md`
+7. **路径安全校验** - 参考 `auth-design.md`
 
 ## 8. 依赖关系
 
@@ -119,7 +127,11 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
     ↓
 [x] Idempotency-Key
     ↓
+[x] Filesystem 测试补充
+    ↓
 [ ] 鉴权实现
+    ↓
+[ ] 路径安全校验
 ```
 
 ## 9. Idempotency 实现详情

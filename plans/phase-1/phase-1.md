@@ -2,6 +2,8 @@
 
 > 本文记录 Bay Phase 1 的开发进展、已跑通的最小链路、以及后续必须补齐的工作项。
 >
+> 更新日期：2026-01-29 11:33 (UTC+8)
+>
 > 相关设计：
 > - [`plans/bay-implementation-path.md`](plans/bay-implementation-path.md:1)
 > - [`plans/bay-api.md`](plans/bay-api.md:1)
@@ -16,6 +18,7 @@
 | 最小 E2E 链路 | ✅ 100% | create → python/exec → stop → delete |
 | Capability Adapter 重构 | ✅ 100% | clients/ 已删除，adapters/ 已创建 |
 | Upload/Download | ✅ 100% | API + E2E 测试已添加 |
+| Filesystem (read/write/list/delete) | ✅ 100% | API 完整 + E2E 测试已添加 |
 | 统一错误模型 | ✅ 100% | BayError 层级完整 |
 | Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
@@ -101,13 +104,15 @@
 - `POST /v1/sandboxes/{id}/stop`
 - `DELETE /v1/sandboxes/{id}`
 
-### 2.3 Capabilities（已可用，但仍需补齐安全/校验/错误映射）
+### 2.3 Capabilities（已可用，E2E 测试覆盖完整）
 - `POST /v1/sandboxes/{id}/python/exec`
 - `POST /v1/sandboxes/{id}/shell/exec`
 - `POST /v1/sandboxes/{id}/files/read`
 - `POST /v1/sandboxes/{id}/files/write`
 - `POST /v1/sandboxes/{id}/files/list`
 - `POST /v1/sandboxes/{id}/files/delete`
+- `POST /v1/sandboxes/{id}/files/upload`
+- `GET /v1/sandboxes/{id}/files/download`
 
 ## 3. 当前运行默认配置（dev）
 
@@ -155,16 +160,16 @@
 
 ## 8. 测试覆盖
 
-### 8.1 单元测试（64 tests）
+### 8.1 单元测试（69 tests）
 
 | 文件 | 测试数 | 说明 |
 |:--|:--|:--|
 | `test_docker_driver.py` | 12 | DockerDriver endpoint 解析 |
 | `test_sandbox_manager.py` | 12 | SandboxManager 生命周期 |
-| `test_ship_adapter.py` | 16 | ShipAdapter HTTP 请求/响应 |
+| `test_ship_adapter.py` | 21 | ShipAdapter HTTP 请求/响应（含 write_file, delete_file） |
 | `test_idempotency.py` | 24 | IdempotencyService 完整测试 |
 
-### 8.2 E2E 测试（16 tests）
+### 8.2 E2E 测试（20 tests）
 
 | 测试类 | 测试数 | 说明 |
 |:--|:--|:--|
@@ -173,7 +178,8 @@
 | `TestE2E03Delete` | 3 | delete 语义（彻底销毁） |
 | `TestE2E04ConcurrentEnsureRunning` | 1 | 并发 ensure_running |
 | `TestE2E05FileUploadDownload` | 4 | 文件上传下载 |
-| `TestE2E06Idempotency` | 4 | 幂等键测试 |
+| `TestE2E06Filesystem` | 4 | **新增** read/write/list/delete E2E |
+| `TestE2E07Idempotency` | 4 | 幂等键测试 |
 
 ### 8.3 运行命令
 

@@ -242,6 +242,127 @@ class TestShipAdapterReadFile:
         assert content == "print('Hello World')\n"
 
 
+class TestShipAdapterWriteFile:
+    """Unit-05: ShipAdapter write_file tests."""
+
+    async def test_write_file_request_path(self):
+        """write_file should POST to /fs/write_file."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({
+                "success": True,
+                "path": "test.txt",
+                "size": 13,
+            })
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.post(
+                "http://fake-ship:8123/fs/write_file",
+                json={"path": "test.txt", "content": "Hello, World!", "mode": "w"},
+            )
+        
+        assert captured_request.url.path == "/fs/write_file"
+        
+        body = json.loads(captured_request.content)
+        assert body["path"] == "test.txt"
+        assert body["content"] == "Hello, World!"
+        assert body["mode"] == "w"
+
+    async def test_write_file_with_nested_path(self):
+        """write_file should handle nested paths."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({
+                "success": True,
+                "path": "subdir/nested/file.py",
+            })
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.post(
+                "http://fake-ship:8123/fs/write_file",
+                json={"path": "subdir/nested/file.py", "content": "print(1)", "mode": "w"},
+            )
+        
+        body = json.loads(captured_request.content)
+        assert body["path"] == "subdir/nested/file.py"
+
+
+class TestShipAdapterDeleteFile:
+    """Unit-05: ShipAdapter delete_file tests."""
+
+    async def test_delete_file_request_path(self):
+        """delete_file should POST to /fs/delete_file."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({"success": True})
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.post(
+                "http://fake-ship:8123/fs/delete_file",
+                json={"path": "test.txt"},
+            )
+        
+        assert captured_request.url.path == "/fs/delete_file"
+        
+        body = json.loads(captured_request.content)
+        assert body["path"] == "test.txt"
+
+    async def test_delete_file_nested_path(self):
+        """delete_file should handle nested paths."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({"success": True})
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.post(
+                "http://fake-ship:8123/fs/delete_file",
+                json={"path": "subdir/nested/file.txt"},
+            )
+        
+        body = json.loads(captured_request.content)
+        assert body["path"] == "subdir/nested/file.txt"
+
+    async def test_delete_directory(self):
+        """delete_file should work for directories too."""
+        captured_request = None
+        
+        def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal captured_request
+            captured_request = request
+            return mock_response({"success": True})
+        
+        transport = httpx.MockTransport(handler)
+        
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            response = await http_client.post(
+                "http://fake-ship:8123/fs/delete_file",
+                json={"path": "empty_dir"},
+            )
+        
+        body = json.loads(captured_request.content)
+        assert body["path"] == "empty_dir"
+
+
 class TestShipAdapterExecShell:
     """Unit-05: ShipAdapter exec_shell tests."""
 

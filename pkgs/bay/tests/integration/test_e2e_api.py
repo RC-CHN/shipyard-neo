@@ -576,7 +576,182 @@ class TestE2E05FileUploadDownload:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
 
 
-class TestE2E06Idempotency:
+class TestE2E06Filesystem:
+    """E2E-06: Filesystem operations (read/write/list/delete).
+    
+    Purpose: Verify text file read/write/list/delete via API.
+    """
+
+    async def test_write_and_read_file(self):
+        """Write a file and read it back."""
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+            # Create sandbox
+            create_response = await client.post(
+                "/v1/sandboxes",
+                json={"profile": DEFAULT_PROFILE},
+            )
+            assert create_response.status_code == 201
+            sandbox_id = create_response.json()["id"]
+            
+            try:
+                # Write a file
+                file_content = "Hello from E2E test!\nLine 2\nLine 3"
+                file_path = "test_write_read.txt"
+                
+                write_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/write",
+                    json={"path": file_path, "content": file_content},
+                    timeout=120.0,
+                )
+                
+                assert write_response.status_code == 200, f"Write failed: {write_response.text}"
+                
+                # Read it back
+                read_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/read",
+                    json={"path": file_path},
+                    timeout=30.0,
+                )
+                
+                assert read_response.status_code == 200, f"Read failed: {read_response.text}"
+                result = read_response.json()
+                assert result["content"] == file_content
+                
+            finally:
+                await client.delete(f"/v1/sandboxes/{sandbox_id}")
+
+    async def test_list_directory(self):
+        """List directory after creating files."""
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+            # Create sandbox
+            create_response = await client.post(
+                "/v1/sandboxes",
+                json={"profile": DEFAULT_PROFILE},
+            )
+            assert create_response.status_code == 201
+            sandbox_id = create_response.json()["id"]
+            
+            try:
+                # Write a file first
+                await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/write",
+                    json={"path": "file1.txt", "content": "content1"},
+                    timeout=120.0,
+                )
+                await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/write",
+                    json={"path": "file2.py", "content": "print(1)"},
+                    timeout=30.0,
+                )
+                
+                # List directory
+                list_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/list",
+                    json={"path": "."},
+                    timeout=30.0,
+                )
+                
+                assert list_response.status_code == 200, f"List failed: {list_response.text}"
+                result = list_response.json()
+                
+                # Should contain the files we created
+                entries = result.get("entries", [])
+                names = [e.get("name") for e in entries]
+                assert "file1.txt" in names, f"file1.txt not in {names}"
+                assert "file2.py" in names, f"file2.py not in {names}"
+                
+            finally:
+                await client.delete(f"/v1/sandboxes/{sandbox_id}")
+
+    async def test_delete_file(self):
+        """Delete a file and verify it's gone."""
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+            # Create sandbox
+            create_response = await client.post(
+                "/v1/sandboxes",
+                json={"profile": DEFAULT_PROFILE},
+            )
+            assert create_response.status_code == 201
+            sandbox_id = create_response.json()["id"]
+            
+            try:
+                # Write a file
+                file_path = "to_delete.txt"
+                await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/write",
+                    json={"path": file_path, "content": "will be deleted"},
+                    timeout=120.0,
+                )
+                
+                # Verify it exists
+                read_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/read",
+                    json={"path": file_path},
+                    timeout=30.0,
+                )
+                assert read_response.status_code == 200
+                
+                # Delete the file
+                delete_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/delete",
+                    json={"path": file_path},
+                    timeout=30.0,
+                )
+                assert delete_response.status_code == 200, f"Delete failed: {delete_response.text}"
+                
+                # Try to read - should fail (Ship may return error differently)
+                # We use download here to get proper 404 handling
+                download_response = await client.get(
+                    f"/v1/sandboxes/{sandbox_id}/files/download",
+                    params={"path": file_path},
+                    timeout=30.0,
+                )
+                # File should not exist
+                assert download_response.status_code == 404, \
+                    f"Expected 404 after delete, got: {download_response.status_code}"
+                
+            finally:
+                await client.delete(f"/v1/sandboxes/{sandbox_id}")
+
+    async def test_write_to_nested_directory(self):
+        """Write file to nested directory path."""
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+            # Create sandbox
+            create_response = await client.post(
+                "/v1/sandboxes",
+                json={"profile": DEFAULT_PROFILE},
+            )
+            assert create_response.status_code == 201
+            sandbox_id = create_response.json()["id"]
+            
+            try:
+                # Write to nested path
+                file_path = "subdir/deep/file.txt"
+                file_content = "nested content"
+                
+                write_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/write",
+                    json={"path": file_path, "content": file_content},
+                    timeout=120.0,
+                )
+                
+                assert write_response.status_code == 200, f"Write failed: {write_response.text}"
+                
+                # Read it back
+                read_response = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/files/read",
+                    json={"path": file_path},
+                    timeout=30.0,
+                )
+                
+                assert read_response.status_code == 200
+                assert read_response.json()["content"] == file_content
+                
+            finally:
+                await client.delete(f"/v1/sandboxes/{sandbox_id}")
+
+
+class TestE2E07Idempotency:
     """E2E-06: Idempotency-Key support.
     
     Purpose: Verify idempotent sandbox creation with Idempotency-Key header.
