@@ -1,6 +1,6 @@
 # Bay Phase 1 进度追踪
 
-> 更新日期：2026-01-29
+> 更新日期：2026-01-29 11:13 (UTC+8)
 >
 > 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)
 
@@ -10,11 +10,12 @@
 |:--|:--|:--|
 | 核心骨架 | ✅ 100% | Models, Managers, Drivers, API |
 | 最小 E2E 链路 | ✅ 100% | create → python/exec → stop → delete |
-| Capability Adapter 重构 | ✅ 100% | clients/ 已删除 |
+| Capability Adapter 重构 | ✅ 100% | clients/ 已删除，adapters/ 已创建 |
 | Upload/Download | ✅ 100% | API + E2E 测试已添加 |
-| 统一错误模型 | 🟡 80% | 大部分完成，FileNotFoundError 刚添加 |
-| 鉴权 | ⏳ 0% | 待设计实现 |
-| Idempotency | ✅ 100% | Service + API 已接入 |
+| 统一错误模型 | ✅ 100% | BayError 层级完整 |
+| Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
+| 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
+| 鉴权 | ⏳ 0% | 框架预留，待实现 JWT 验证 |
 
 ## 2. Capability Adapter 重构详情
 

@@ -1,15 +1,29 @@
-# Bay Phase 1 当前进展（截至 2026-01-28）
+# Bay Phase 1 当前进展（截至 2026-01-29）
 
-> 本文记录我们今天把 Bay Phase 1 推进到了哪一步、已跑通的最小链路、以及后续必须补齐的工作项。
+> 本文记录 Bay Phase 1 的开发进展、已跑通的最小链路、以及后续必须补齐的工作项。
 >
 > 相关设计：
 > - [`plans/bay-implementation-path.md`](plans/bay-implementation-path.md:1)
 > - [`plans/bay-api.md`](plans/bay-api.md:1)
 > - [`plans/bay-design.md`](plans/bay-design.md:1)
+> - [`progress.md`](progress.md) - 详细进度追踪
 
-## 0. 今日达成（Summary）
+## 0. 总体进度摘要
 
-### 0.1 Bay 工程骨架与核心分层已落地
+| 模块 | 进度 | 说明 |
+|:--|:--|:--|
+| 核心骨架 | ✅ 100% | Models, Managers, Drivers, API |
+| 最小 E2E 链路 | ✅ 100% | create → python/exec → stop → delete |
+| Capability Adapter 重构 | ✅ 100% | clients/ 已删除，adapters/ 已创建 |
+| Upload/Download | ✅ 100% | API + E2E 测试已添加 |
+| 统一错误模型 | ✅ 100% | BayError 层级完整 |
+| Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
+| 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
+| 鉴权 | ⏳ 0% | 框架已预留，待实现 JWT 验证 |
+
+## 1. 已达成的里程碑
+
+### 1.1 Bay 工程骨架与核心分层已落地
 
 已落地目录：[`pkgs/bay/`](pkgs/bay:1)
 
@@ -28,10 +42,14 @@
   - SandboxManager：[`pkgs/bay/app/managers/sandbox/sandbox.py`](pkgs/bay/app/managers/sandbox/sandbox.py:1)
   - SessionManager：[`pkgs/bay/app/managers/session/session.py`](pkgs/bay/app/managers/session/session.py:1)
   - WorkspaceManager：[`pkgs/bay/app/managers/workspace/workspace.py`](pkgs/bay/app/managers/workspace/workspace.py:1)
-- RuntimeClient（Ship HTTP client）：[`pkgs/bay/app/clients/runtime/ship.py`](pkgs/bay/app/clients/runtime/ship.py:1)
+- Adapters（重构后）：
+  - BaseAdapter：[`pkgs/bay/app/adapters/base.py`](pkgs/bay/app/adapters/base.py:1)
+  - ShipAdapter：[`pkgs/bay/app/adapters/ship.py`](pkgs/bay/app/adapters/ship.py:1)
 - CapabilityRouter：[`pkgs/bay/app/router/capability/capability.py`](pkgs/bay/app/router/capability/capability.py:1)
+- Services：
+  - IdempotencyService：[`pkgs/bay/app/services/idempotency.py`](pkgs/bay/app/services/idempotency.py:1)
 
-### 0.2 Phase 1 最小 E2E 链路已跑通
+### 1.2 Phase 1 最小 E2E 链路已跑通
 
 已跑通链路（符合 [`plans/bay-implementation-path.md`](plans/bay-implementation-path.md:19) 的 0.2 验收思路）：
 
@@ -46,22 +64,36 @@
 - sandboxes：[`pkgs/bay/app/api/v1/sandboxes.py`](pkgs/bay/app/api/v1/sandboxes.py:1)
 - capabilities：[`pkgs/bay/app/api/v1/capabilities.py`](pkgs/bay/app/api/v1/capabilities.py:1)
 
-### 0.3 修复：首个 python/exec 请求不再需要客户端重试
+### 1.3 修复：首个 python/exec 请求不再需要客户端重试
 
 现状：首个 `python/exec` 单次请求即可返回 200。
 原因：在 Session 启动后增加了 runtime readiness 等待（容器启动 ≠ HTTP server ready）。
 
-### 0.4 Ship 镜像本地已构建
+### 1.4 并发 ensure_running 竞态已修复
+
+问题：多个并发请求导致创建多个 session/容器。
+修复：在 `SandboxManager.ensure_running()` 中实现 asyncio.Lock + 双重检查。
+详见 [`test-report.md`](test-report.md:163)。
+
+### 1.5 Idempotency-Key 已完整实现
+
+- IdempotencyService 实现：[`pkgs/bay/app/services/idempotency.py`](pkgs/bay/app/services/idempotency.py:1)
+- API 接入：`POST /v1/sandboxes` 支持 `Idempotency-Key` header
+- 配置项：TTL 1小时（可配置）
+- 测试：24 单元测试 + 4 E2E 测试
+- 详见 [`idempotency-design.md`](idempotency-design.md)
+
+### 1.6 Ship 镜像本地已构建
 
 - 已执行 `docker build -t ship:latest pkgs/ship`，可用于 Bay 直接拉起 runtime。
 
-## 1. 当前可用的接口清单
+## 2. 当前可用的接口清单
 
-### 1.1 Bay 自身
+### 2.1 Bay 自身
 - `GET /health`
 - `GET /v1/profiles`
 
-### 1.2 Sandboxes（已可用）
+### 2.2 Sandboxes（已可用）
 - `POST /v1/sandboxes`
 - `GET /v1/sandboxes`
 - `GET /v1/sandboxes/{id}`
@@ -69,7 +101,7 @@
 - `POST /v1/sandboxes/{id}/stop`
 - `DELETE /v1/sandboxes/{id}`
 
-### 1.3 Capabilities（已可用，但仍需补齐安全/校验/错误映射）
+### 2.3 Capabilities（已可用，但仍需补齐安全/校验/错误映射）
 - `POST /v1/sandboxes/{id}/python/exec`
 - `POST /v1/sandboxes/{id}/shell/exec`
 - `POST /v1/sandboxes/{id}/files/read`
@@ -77,62 +109,78 @@
 - `POST /v1/sandboxes/{id}/files/list`
 - `POST /v1/sandboxes/{id}/files/delete`
 
-## 2. 当前运行默认配置（dev）
+## 3. 当前运行默认配置（dev）
 
 - [`pkgs/bay/config.yaml`](pkgs/bay/config.yaml:1)
   - 默认按“Bay 跑宿主机”方式连接：`connect_mode=host_port` + `publish_ports=true`
   - profile：仅保留 `python-default`
   - ship runtime_port：8123（与 ship 镜像启动日志一致）
 
-## 3. Phase 1 还需要跑通/补齐的内容（Next）
+## 4. P0 清单完成情况
 
-> 这些是 Phase 1 要交付为“可上线雏形”必须补齐的，优先级从高到低。
+> Phase 1 核心功能已全部完成。
 
-### 3.1 必须补齐（P0）
+| # | 任务 | 状态 | 说明 |
+|:--|:--|:--|:--|
+| 1 | Ship `/meta` 握手校验 | ✅ | ShipAdapter.get_meta() 实现，带缓存 |
+| 2 | 统一错误模型 | ✅ | BayError 层级完整，ConflictError 用于幂等冲突 |
+| 3 | Idempotency-Key | ✅ | IdempotencyService + API 已接入 |
+| 4 | stop/delete 资源回收 | ✅ | E2E 测试覆盖 |
+| 5 | 并发 ensure_running | ✅ | asyncio.Lock + 双重检查 |
 
-1. **Ship `/meta` 握手校验接入**（对应 Milestone 4）
-   - Bay 在 `ensure_running` 后调用 ship `GET /meta`
-   - 校验：
-     - `workspace.mount_path == /workspace`
-     - `capabilities ⊇ profile.capabilities`
-     - `api_version` 兼容
+## 5. P1 清单（建议完成）
 
-2. **统一错误模型落地**（对齐 [`plans/bay-api.md`](plans/bay-api.md:80)）
-   - ship 错误 -> `ship_error` (502)
-   - runtime not ready -> `session_not_ready` (503) + 可选 `Retry-After`
+| # | 任务 | 状态 | 说明 |
+|:--|:--|:--|:--|
+| 1 | JWT Token 验证 | ⏳ | 框架预留，待实现 |
+| 2 | 路径安全校验 | ⏳ | Ship 有 resolve_path，Bay 侧待实现 |
+| 3 | 可观测性增强 | ⏳ | request_id 基础有，metrics 未做 |
 
-3. **幂等键 Idempotency-Key**（至少覆盖 `POST /v1/sandboxes`）
-   - 表已建模：[`IdempotencyKey`](pkgs/bay/app/models/idempotency.py:1)
-   - 但 API 层尚未接入
+详见 [`auth-design.md`](auth-design.md) 了解鉴权设计与实现计划。
 
-4. **stop/delete 语义与资源回收验证**
-   - `stop`：只回收算力（destroy session/container），保留 workspace
-   - `delete`：managed workspace 级联删除
-   - 需要补 E2E 测试脚本验证容器/volume 是否被正确清理
-
-### 3.2 建议补齐（P1）
-
-1. **鉴权与 owner 隔离**
-   - 目前 owner 通过 `X-Owner` 或默认 `default`（开发简化）
-   - Phase 1 至少需要可替换的鉴权 middleware / dependency
-
-2. **路径安全校验**
-   - files API 需要严格拒绝绝对路径/`../`
-   - ship 已有 `resolve_path`，Bay 侧也应做一层校验（防止绕过）
-
-3. **可观测性**
-   - request_id 贯穿
-   - 关键路径日志与 metrics（可后置）
-
-### 3.3 暂不做（明确不做）
+## 6. Phase 1 明确不做
 
 - K8sDriver（Phase 2）
 - 对外暴露 Session
 - 多 sandbox 共享 workspace
 
-## 4. 建议的下一步执行顺序
+## 7. 下一步执行顺序
 
-1. 接入 ship `GET /meta` 握手（先把校验失败映射成 `ship_error` 或 `validation_error`）
-2. 把 `Idempotency-Key` 接入 `POST /v1/sandboxes`
-3. 写一个最小 E2E 脚本（create -> python/exec -> stop -> delete）并校验资源回收
-4. 再补 filesystem/shell 的边界与安全校验
+1. ~~接入 ship `GET /meta` 握手~~ ✅
+2. ~~把 `Idempotency-Key` 接入 `POST /v1/sandboxes`~~ ✅
+3. ~~写 E2E 脚本并校验资源回收~~ ✅
+4. ~~并发 ensure_running 竞态修复~~ ✅
+5. **JWT Token 验证实现** - 参考 [`auth-design.md`](auth-design.md:277)
+6. **路径安全校验** - 参考 [`auth-design.md`](auth-design.md:373)
+
+## 8. 测试覆盖
+
+### 8.1 单元测试（64 tests）
+
+| 文件 | 测试数 | 说明 |
+|:--|:--|:--|
+| `test_docker_driver.py` | 12 | DockerDriver endpoint 解析 |
+| `test_sandbox_manager.py` | 12 | SandboxManager 生命周期 |
+| `test_ship_adapter.py` | 16 | ShipAdapter HTTP 请求/响应 |
+| `test_idempotency.py` | 24 | IdempotencyService 完整测试 |
+
+### 8.2 E2E 测试（16 tests）
+
+| 测试类 | 测试数 | 说明 |
+|:--|:--|:--|
+| `TestE2E01MinimalPath` | 2 | 最小链路 (create → exec) |
+| `TestE2E02Stop` | 2 | stop 语义（回收算力） |
+| `TestE2E03Delete` | 3 | delete 语义（彻底销毁） |
+| `TestE2E04ConcurrentEnsureRunning` | 1 | 并发 ensure_running |
+| `TestE2E05FileUploadDownload` | 4 | 文件上传下载 |
+| `TestE2E06Idempotency` | 4 | 幂等键测试 |
+
+### 8.3 运行命令
+
+```bash
+# 单元测试
+cd pkgs/bay && uv run pytest tests/unit -v
+
+# E2E 测试 (docker-host 模式)
+cd pkgs/bay && ./tests/scripts/docker-host/run.sh
+```
