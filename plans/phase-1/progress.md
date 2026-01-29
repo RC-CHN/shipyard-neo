@@ -1,8 +1,8 @@
 # Bay Phase 1 进度追踪
 
-> 更新日期：2026-01-29 11:33 (UTC+8)
+> 更新日期：2026-01-29 16:15 (UTC+8)
 >
-> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)
+> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)、[`auth-design.md`](auth-design.md)
 
 ## 1. 总体进度
 
@@ -16,7 +16,7 @@
 | 统一错误模型 | ✅ 100% | BayError 层级完整 |
 | Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
-| 鉴权 | ⏳ 0% | 框架预留，待实现 JWT 验证 |
+| 鉴权 | ✅ 100% | API Key 认证 + `AuthDep` 注入，支持 dev 模式 `X-Owner` |
 
 ## 2. Capability Adapter 重构详情
 
@@ -56,7 +56,7 @@
 
 | # | 任务 | 状态 | 说明 |
 |:--|:--|:--|:--|
-| 1 | 鉴权与 owner 隔离 | ⏳ | 目前用 X-Owner header |
+| 1 | 鉴权与 owner 隔离 | ✅ | API Key 认证（可关闭匿名）；`X-Owner` 仅在 `allow_anonymous=true` 时用于开发测试 |
 | 2 | 路径安全校验 | ⏳ | Ship 有 resolve_path，Bay 未做 |
 | 3 | 可观测性 | ⏳ | request_id 基础有，metrics 未做 |
 
@@ -74,19 +74,21 @@
 
 ## 6. 测试状态
 
-### 6.1 单元测试（69 tests）
+### 6.1 单元测试（91 tests）
 
 | 文件 | 测试数 | 状态 |
 |:--|:--|:--|
+| `test_auth.py` | 18 | ✅ （API Key / allow_anonymous / X-Owner 行为） |
 | `test_docker_driver.py` | 12 | ✅ |
 | `test_sandbox_manager.py` | 12 | ✅ |
 | `test_ship_adapter.py` | 21 | ✅ （含 write_file, delete_file） |
 | `test_idempotency.py` | 24 | ✅ |
 
-### 6.2 E2E 测试（20 tests）
+### 6.2 E2E 测试（23 tests）
 
 | 测试类 | 测试数 | 状态 |
 |:--|:--|:--|
+| `TestE2E00Auth` | 3 | ✅ （缺失/错误/正确 API Key） |
 | `TestE2E01MinimalPath` | 2 | ✅ |
 | `TestE2E02Stop` | 2 | ✅ |
 | `TestE2E03Delete` | 3 | ✅ |
@@ -115,8 +117,8 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 3. ~~Idempotency-Key 接入~~ ✅ 已完成
 4. ~~并发 ensure_running 竞态修复~~ ✅ 已完成
 5. ~~Filesystem E2E 测试补充~~ ✅ 4 tests 已添加
-6. **鉴权设计与实现** - 参考 `auth-design.md`
-7. **路径安全校验** - 参考 `auth-design.md`
+6. ~~鉴权设计与实现（API Key/AuthDep）~~ ✅ 已实现（见 [`auth-design.md`](auth-design.md) 与 [`dependencies.authenticate()`](../../pkgs/bay/app/api/dependencies.py:59)）
+7. **路径安全校验** - 参考 [`auth-design.md`](auth-design.md)
 
 ## 8. 依赖关系
 
@@ -129,7 +131,7 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
     ↓
 [x] Filesystem 测试补充
     ↓
-[ ] 鉴权实现
+[x] 鉴权实现（API Key/AuthDep）
     ↓
 [ ] 路径安全校验
 ```

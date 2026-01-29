@@ -5,7 +5,7 @@ Provides dependency injection for:
 - Managers (Sandbox, Session, Workspace)
 - Driver
 - Services (Idempotency)
-- Authentication (TODO)
+- Authentication
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.db.session import get_session_dependency
 from app.drivers.base import Driver
 from app.drivers.docker import DockerDriver
+from app.errors import UnauthorizedError
 from app.managers.sandbox import SandboxManager
 from app.services.idempotency import IdempotencyService
 
@@ -56,25 +57,51 @@ async def get_idempotency_service(
     )
 
 
-def get_current_owner(request: Request) -> str:
-    """Get current owner from request.
-    
-    TODO: Implement proper JWT authentication.
-    For now, returns a default owner for development.
+def authenticate(request: Request) -> str:
+    """Authenticate request and return owner.
+
+    Single-tenant mode: Always returns "default" as owner.
+
+    Authentication flow:
+    1. If Bearer token provided → validate API key
+    2. If no token and allow_anonymous → allow (with optional X-Owner)
+    3. Otherwise → 401 Unauthorized
+
+    Returns:
+        Owner identifier (currently fixed to "default" for single-tenant)
+
+    Raises:
+        UnauthorizedError: If authentication fails
     """
-    # Check for Authorization header
+    settings = get_settings()
+    security = settings.security
     auth_header = request.headers.get("Authorization")
+
+    # 1. Bearer token provided
     if auth_header and auth_header.startswith("Bearer "):
-        # TODO: Validate JWT and extract owner
-        pass
+        token = auth_header[7:]
 
-    # Check for X-Owner header (development only)
-    owner = request.headers.get("X-Owner")
-    if owner:
-        return owner
+        # Validate API Key (if configured)
+        if security.api_key:
+            if token == security.api_key:
+                return "default"  # Single-tenant, fixed owner
+            raise UnauthorizedError("Invalid API key")
 
-    # Default owner for development
-    return "default"
+        # No API key configured, accept any token in anonymous mode
+        if security.allow_anonymous:
+            return "default"
+        raise UnauthorizedError("Authentication required")
+
+    # 2. No token - check anonymous mode
+    if security.allow_anonymous:
+        # Development mode: allow X-Owner header for testing
+        owner = request.headers.get("X-Owner")
+        if owner:
+            return owner
+        return "default"
+
+    # 3. Production mode, authentication required
+    raise UnauthorizedError("Authentication required")
 
 
 # Type aliases for cleaner dependency injection
@@ -82,4 +109,4 @@ DriverDep = Annotated[Driver, Depends(get_driver)]
 SessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 SandboxManagerDep = Annotated[SandboxManager, Depends(get_sandbox_manager)]
 IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
-OwnerDep = Annotated[str, Depends(get_current_owner)]
+AuthDep = Annotated[str, Depends(authenticate)]

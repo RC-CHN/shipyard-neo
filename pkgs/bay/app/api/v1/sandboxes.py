@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.api.dependencies import IdempotencyServiceDep, OwnerDep, SandboxManagerDep
+from app.api.dependencies import AuthDep, IdempotencyServiceDep, SandboxManagerDep
 from app.config import get_settings
 from app.models.sandbox import SandboxStatus
 
@@ -75,7 +75,7 @@ async def create_sandbox(
     request: CreateSandboxRequest,
     sandbox_mgr: SandboxManagerDep,
     idempotency_svc: IdempotencyServiceDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> SandboxResponse | JSONResponse:
     """Create a new sandbox.
@@ -131,7 +131,7 @@ async def create_sandbox(
 @router.get("", response_model=SandboxListResponse)
 async def list_sandboxes(
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     limit: int = Query(50, ge=1, le=200),
     cursor: str | None = Query(None),
     status: str | None = Query(None),
@@ -160,7 +160,7 @@ async def list_sandboxes(
 async def get_sandbox(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> SandboxResponse:
     """Get sandbox details."""
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
@@ -172,7 +172,7 @@ async def get_sandbox(
 async def keepalive(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> dict[str, str]:
     """Keep sandbox alive - extends idle timeout only, not TTL.
     
@@ -187,7 +187,7 @@ async def keepalive(
 async def stop_sandbox(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> dict[str, str]:
     """Stop sandbox - reclaims compute, keeps workspace.
     
@@ -202,7 +202,7 @@ async def stop_sandbox(
 async def delete_sandbox(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> None:
     """Delete sandbox permanently.
     

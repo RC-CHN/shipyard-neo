@@ -25,7 +25,9 @@ _bay_port = os.environ.get("E2E_BAY_PORT", "8001")
 BAY_BASE_URL = f"http://127.0.0.1:{_bay_port}"
 
 # Test configuration
-OWNER_HEADER = {"X-Owner": "e2e-test-user"}
+# API Key for E2E tests (must match config in tests/scripts/docker-host/config.yaml)
+E2E_API_KEY = os.environ.get("E2E_API_KEY", "e2e-test-api-key")
+AUTH_HEADERS = {"Authorization": f"Bearer {E2E_API_KEY}"}
 DEFAULT_PROFILE = "python-default"
 
 
@@ -107,6 +109,36 @@ pytestmark = [
 ]
 
 
+class TestE2E00Auth:
+    """E2E-00: Authentication.
+
+    Purpose: Verify API Key auth is enforced when Bay is started with
+    `security.allow_anonymous=false`.
+
+    Notes:
+    - The correct API key is provided via AUTH_HEADERS.
+    - Tests/scripts config uses api_key="e2e-test-api-key".
+    """
+
+    async def test_missing_authorization_returns_401(self):
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL) as client:
+            resp = await client.get("/v1/sandboxes")
+            assert resp.status_code == 401, resp.text
+
+    async def test_wrong_api_key_returns_401(self):
+        async with httpx.AsyncClient(
+            base_url=BAY_BASE_URL,
+            headers={"Authorization": "Bearer wrong-key"},
+        ) as client:
+            resp = await client.get("/v1/sandboxes")
+            assert resp.status_code == 401, resp.text
+
+    async def test_valid_api_key_allows_access(self):
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+            resp = await client.get("/v1/sandboxes")
+            assert resp.status_code == 200, resp.text
+
+
 class TestE2E01MinimalPath:
     """E2E-01: Minimal path (create → python/exec).
     
@@ -115,7 +147,7 @@ class TestE2E01MinimalPath:
 
     async def test_create_and_exec_python(self):
         """Create sandbox and execute Python code."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Step 1: Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -161,7 +193,7 @@ class TestE2E01MinimalPath:
 
     async def test_create_response_format(self):
         """Verify create response has correct format."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             create_response = await client.post(
                 "/v1/sandboxes",
                 json={"profile": DEFAULT_PROFILE},
@@ -193,7 +225,7 @@ class TestE2E02Stop:
 
     async def test_stop_preserves_workspace(self):
         """Stop should destroy session but keep workspace."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create and run sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -237,7 +269,7 @@ class TestE2E02Stop:
 
     async def test_stop_is_idempotent(self):
         """Stop should be idempotent - repeated calls don't fail."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox (no session yet)
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -264,7 +296,7 @@ class TestE2E03Delete:
 
     async def test_delete_returns_404_after(self):
         """Delete should make sandbox return 404."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -290,7 +322,7 @@ class TestE2E03Delete:
 
     async def test_delete_removes_container(self):
         """Delete should remove the container."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create and run sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -322,7 +354,7 @@ class TestE2E03Delete:
 
     async def test_delete_removes_managed_workspace_volume(self):
         """Delete should remove managed workspace volume."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -357,7 +389,7 @@ class TestE2E04ConcurrentEnsureRunning:
 
     async def test_concurrent_exec_creates_single_session(self):
         """Concurrent python/exec calls should result in single session."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -428,7 +460,7 @@ class TestE2E05FileUploadDownload:
 
     async def test_upload_and_download_text_file(self):
         """Upload a text file and download it back."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -470,7 +502,7 @@ class TestE2E05FileUploadDownload:
 
     async def test_upload_and_download_binary_file(self):
         """Upload a binary file and download it back."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -508,7 +540,7 @@ class TestE2E05FileUploadDownload:
 
     async def test_upload_to_nested_path(self):
         """Upload a file to a nested directory path."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -546,7 +578,7 @@ class TestE2E05FileUploadDownload:
 
     async def test_download_nonexistent_file(self):
         """Download of non-existent file should return 404."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -584,7 +616,7 @@ class TestE2E06Filesystem:
 
     async def test_write_and_read_file(self):
         """Write a file and read it back."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -622,7 +654,7 @@ class TestE2E06Filesystem:
 
     async def test_list_directory(self):
         """List directory after creating files."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -665,7 +697,7 @@ class TestE2E06Filesystem:
 
     async def test_delete_file(self):
         """Delete a file and verify it's gone."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -714,7 +746,7 @@ class TestE2E06Filesystem:
 
     async def test_write_to_nested_directory(self):
         """Write file to nested directory path."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create sandbox
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -760,7 +792,7 @@ class TestE2E07Idempotency:
         """Same Idempotency-Key returns same sandbox on retry."""
         import uuid
         
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             idempotency_key = f"test-idem-{uuid.uuid4()}"
             request_body = {"profile": DEFAULT_PROFILE}
             
@@ -798,7 +830,7 @@ class TestE2E07Idempotency:
         """Same Idempotency-Key with different body returns 409."""
         import uuid
         
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             idempotency_key = f"test-conflict-{uuid.uuid4()}"
             
             # First request
@@ -831,7 +863,7 @@ class TestE2E07Idempotency:
 
     async def test_create_without_idempotency_key(self):
         """Create without Idempotency-Key works normally."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create two sandboxes without idempotency key
             response1 = await client.post(
                 "/v1/sandboxes",
@@ -858,7 +890,7 @@ class TestE2E07Idempotency:
 
     async def test_invalid_idempotency_key_format(self):
         """Invalid Idempotency-Key format returns 409."""
-        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=OWNER_HEADER) as client:
+        async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Key with invalid characters
             response = await client.post(
                 "/v1/sandboxes",

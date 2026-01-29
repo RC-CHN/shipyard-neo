@@ -32,9 +32,9 @@ workspace:
   mount_path: "/workspace"
 
 security:
-  jwt_secret: "dev-secret-do-not-use-in-production"
-  jwt_algorithm: "HS256"
-  jwt_expire_minutes: 60
+  # Development mode: no API key required
+  api_key: null
+  allow_anonymous: true
 
 profiles:
   - id: python-default

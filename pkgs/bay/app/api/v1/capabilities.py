@@ -13,7 +13,7 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.api.dependencies import OwnerDep, SandboxManagerDep
+from app.api.dependencies import AuthDep, SandboxManagerDep
 from app.router.capability import CapabilityRouter
 
 router = APIRouter()
@@ -100,7 +100,7 @@ async def exec_python(
     sandbox_id: str,
     request: PythonExecRequest,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> PythonExecResponse:
     """Execute Python code in sandbox.
     
@@ -131,7 +131,7 @@ async def exec_shell(
     sandbox_id: str,
     request: ShellExecRequest,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> ShellExecResponse:
     """Execute shell command in sandbox."""
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
@@ -156,7 +156,7 @@ async def exec_shell(
 async def read_file(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     path: str = Query(..., description="File path relative to /workspace"),
 ) -> FileReadResponse:
     """Read file from sandbox."""
@@ -173,7 +173,7 @@ async def write_file(
     sandbox_id: str,
     request: FileWriteRequest,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
 ) -> dict[str, str]:
     """Write file to sandbox."""
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
@@ -192,7 +192,7 @@ async def write_file(
 async def list_files(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     path: str = Query(".", description="Directory path relative to /workspace"),
 ) -> FileListResponse:
     """List directory contents in sandbox."""
@@ -208,7 +208,7 @@ async def list_files(
 async def delete_file(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     path: str = Query(..., description="File/directory path relative to /workspace"),
 ) -> dict[str, str]:
     """Delete file or directory from sandbox."""
@@ -235,7 +235,7 @@ class FileUploadResponse(BaseModel):
 async def upload_file(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     file: UploadFile = File(..., description="File to upload"),
     path: str = Form(..., description="Target path relative to /workspace"),
 ) -> FileUploadResponse:
@@ -258,7 +258,7 @@ async def upload_file(
 async def download_file(
     sandbox_id: str,
     sandbox_mgr: SandboxManagerDep,
-    owner: OwnerDep,
+    owner: AuthDep,
     path: str = Query(..., description="File path relative to /workspace"),
 ) -> Response:
     """Download file from sandbox.

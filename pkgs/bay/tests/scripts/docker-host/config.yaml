@@ -32,9 +32,9 @@ workspace:
   mount_path: "/workspace"
 
 security:
-  jwt_secret: "e2e-test-secret-do-not-use-in-production"
-  jwt_algorithm: "HS256"
-  jwt_expire_minutes: 60
+  # E2E test mode: require API key for authentication testing
+  api_key: "e2e-test-api-key"
+  allow_anonymous: false
 
 profiles:
   - id: python-default

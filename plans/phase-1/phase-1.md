@@ -22,7 +22,7 @@
 | 统一错误模型 | ✅ 100% | BayError 层级完整 |
 | Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
-| 鉴权 | ⏳ 0% | 框架已预留，待实现 JWT 验证 |
+| 鉴权 | ✅ 100% | API Key 认证（`authenticate()` + `AuthDep`）已实现；可配置 `allow_anonymous` 与开发 `X-Owner` |
 
 ## 1. 已达成的里程碑
 
@@ -140,7 +140,7 @@
 
 | # | 任务 | 状态 | 说明 |
 |:--|:--|:--|:--|
-| 1 | JWT Token 验证 | ⏳ | 框架预留，待实现 |
+| 1 | API Key 鉴权（替代 JWT） | ✅ | `authenticate()` + `AuthDep`，支持 `allow_anonymous`；E2E 覆盖缺失/错误 key |
 | 2 | 路径安全校验 | ⏳ | Ship 有 resolve_path，Bay 侧待实现 |
 | 3 | 可观测性增强 | ⏳ | request_id 基础有，metrics 未做 |
 
@@ -158,24 +158,26 @@
 2. ~~把 `Idempotency-Key` 接入 `POST /v1/sandboxes`~~ ✅
 3. ~~写 E2E 脚本并校验资源回收~~ ✅
 4. ~~并发 ensure_running 竞态修复~~ ✅
-5. **JWT Token 验证实现** - 参考 [`auth-design.md`](auth-design.md:277)
-6. **路径安全校验** - 参考 [`auth-design.md`](auth-design.md:373)
+5. ~~鉴权实现（API Key/AuthDep）~~ ✅ 参考 [`dependencies.authenticate()`](../../pkgs/bay/app/api/dependencies.py:59)
+6. **路径安全校验** - 参考 [`auth-design.md`](auth-design.md)
 
 ## 8. 测试覆盖
 
-### 8.1 单元测试（69 tests）
+### 8.1 单元测试（91 tests）
 
 | 文件 | 测试数 | 说明 |
 |:--|:--|:--|
+| `test_auth.py` | 18 | API Key/allow_anonymous/X-Owner 行为 |
 | `test_docker_driver.py` | 12 | DockerDriver endpoint 解析 |
 | `test_sandbox_manager.py` | 12 | SandboxManager 生命周期 |
 | `test_ship_adapter.py` | 21 | ShipAdapter HTTP 请求/响应（含 write_file, delete_file） |
 | `test_idempotency.py` | 24 | IdempotencyService 完整测试 |
 
-### 8.2 E2E 测试（20 tests）
+### 8.2 E2E 测试（23 tests）
 
 | 测试类 | 测试数 | 说明 |
 |:--|:--|:--|
+| `TestE2E00Auth` | 3 | 认证：缺失/错误/正确 API Key |
 | `TestE2E01MinimalPath` | 2 | 最小链路 (create → exec) |
 | `TestE2E02Stop` | 2 | stop 语义（回收算力） |
 | `TestE2E03Delete` | 3 | delete 语义（彻底销毁） |

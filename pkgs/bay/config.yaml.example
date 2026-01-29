@@ -44,9 +44,18 @@ workspace:
   mount_path: "/workspace"  # Fixed, do not change
 
 security:
-  jwt_secret: "${JWT_SECRET:dev-secret-change-in-production}"
-  jwt_algorithm: "HS256"
-  jwt_expire_minutes: 60
+  # API Key authentication
+  # Set to enable API key validation, requests must include:
+  #   Authorization: Bearer <api_key>
+  # Leave null/empty to disable API key validation
+  api_key: null  # Production: "your-secret-api-key"
+  
+  # Allow anonymous access (no authentication required)
+  # Development: true (default) - allows unauthenticated requests
+  # Production: false - requires valid API key
+  allow_anonymous: true
+  
+  # Network blocklist (Phase 2)
   blocked_hosts:
     - "169.254.0.0/16"  # Cloud metadata
     - "10.0.0.0/8"

@@ -127,9 +127,16 @@ class IdempotencyConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
-    jwt_secret: str = "dev-secret-change-in-production"
-    jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60
+    # API Key authentication
+    # None = no API key validation (check allow_anonymous only)
+    api_key: str | None = None
+
+    # Allow anonymous access (no authentication required)
+    # Development: True (default)
+    # Production: False
+    allow_anonymous: bool = True
+
+    # Network blocklist (Phase 2)
     blocked_hosts: list[str] = Field(
         default_factory=lambda: [
             "169.254.0.0/16",
