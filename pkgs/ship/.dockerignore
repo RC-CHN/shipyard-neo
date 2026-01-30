@@ -1,0 +1,60 @@
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Test artifacts
+.pytest_cache/
+test_output/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Logs
+*.log
+
+# Local development
+.env
+.python-version
+
+# uv lock file (not needed at runtime)
+uv.lock
+
+# Tests (not needed in production image)
+tests/
+
+# Skills documentation
+skills/
+
+# Makefile (not needed in image)
+Makefile

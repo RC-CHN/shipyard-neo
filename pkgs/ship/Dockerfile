@@ -1,13 +1,12 @@
-FROM python:3.13-slim AS builder
+# ===== 构建阶段 =====
+FROM python:3.13-slim-bookworm AS builder
 
-# 设置工作目录
-WORKDIR /app
+WORKDIR /build
 
 # 安装构建依赖（临时）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    musl-dev \
     python3-dev \
     libffi-dev \
     libpng-dev \
@@ -16,16 +15,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件并安装Python依赖
+# 使用 uv 安装 Python 依赖到指定目录
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# 安装依赖，禁用缓存
+RUN uv pip install --no-cache --prefix=/install -r requirements.txt \
+    # 删除不需要的文件以减小体积
+    && find /install -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true \
+    && find /install -name '*.pyc' -delete 2>/dev/null || true \
+    && find /install -name '*.pyo' -delete 2>/dev/null || true
 
 # ===== 最终镜像 =====
-FROM python:3.13-slim
+FROM python:3.13-slim-bookworm
 
 WORKDIR /app
 
-# 只安装运行时必需的依赖
+# 单个 RUN 命令安装所有运行时依赖和配置用户，减少镜像层数
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # 图像处理运行时库（Pillow / OpenCV headless）
     libpng16-16 \
@@ -37,49 +43,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # 字体显示
     fontconfig \
     fonts-noto-cjk \
-    fonts-noto-color-emoji \
-    # 网络工具
-    net-tools \
+    fonts-symbola \
     # 用户管理工具
     sudo \
-    passwd \
-    adduser \
     # Node.js 安装需要的工具
     curl \
     gnupg \
     git \
-    # 常用文本编辑器和工具（方便终端直连调试）
+    # 调试工具（可选，生产环境可移除）
     vim-tiny \
     nano \
     less \
     procps \
     htop \
-    && rm -rf /var/lib/apt/lists/*
-
-# 从builder阶段复制Python包
-COPY --from=builder /install /usr/local
-
-# 安装 Node.js (LTS)
-RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* \
-    && npm install -g pnpm vercel \
-    && npm cache clean --force
-
-# 创建固定用户 shipyard（UID 1000）和 workspace 目录
-RUN groupadd -g 1000 shipyard \
+    # 创建用户和目录
+    && groupadd -g 1000 shipyard \
     && useradd -u 1000 -g shipyard -d /workspace -s /bin/bash shipyard \
     && mkdir -p /workspace \
     && chown shipyard:shipyard /workspace \
-    && chmod 755 /workspace
-
-# 配置 sudo（允许 root 无密码执行 sudo，用于切换到 shipyard 用户）
-RUN echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    && chmod 755 /workspace \
+    # 配置 sudo
+    && echo "root ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
     && echo "Defaults:root !requiretty" >> /etc/sudoers \
-    && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-
-# 创建 .bashrc（login shell 时自动 cd 到 /workspace）
-RUN echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
+    && echo "shipyard ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers \
+    # 创建 .bashrc
+    && echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
     && echo "export PS1='\\u@shipyard:\\w\\$ '" >> /workspace/.bashrc \
     && echo 'export PATH=/usr/local/bin:/usr/bin:/bin' >> /workspace/.bashrc \
     && echo 'export HOME=/workspace' >> /workspace/.bashrc \
@@ -87,7 +76,18 @@ RUN echo '# Basic shell configuration for shipyard user' > /workspace/.bashrc \
     && chown shipyard:shipyard /workspace/.bashrc \
     && chmod 644 /workspace/.bashrc
 
-# 复制项目文件
+# 从 builder 阶段复制 Python 包
+COPY --from=builder /install /usr/local
+
+# 安装 Node.js (LTS) - 使用单个 RUN 层并清理缓存
+RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g pnpm vercel --no-audit --no-fund \
+    && npm cache clean --force \
+    && rm -rf /root/.npm
+
+# 复制项目文件（依赖 .dockerignore 排除不需要的文件）
 COPY . .
 
 # 设置入口脚本权限

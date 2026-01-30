@@ -73,12 +73,20 @@ if os.path.exists(cache_dir):
 # 重建字体列表
 fm._load_fontmanager(try_read_cache=False)
 
-# 配置中文字体
-font_path = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-if os.path.exists(font_path):
-    # 使用 sans-serif 字体族并设置回退
-    plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC', 'DejaVu Sans']
-    plt.rcParams['axes.unicode_minus'] = False
+# 配置中文字体 + Symbola 作为 emoji fallback
+# Symbola 是矢量字体，支持任意缩放的 emoji 符号
+font_candidates = ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC']
+
+# 检查 Symbola 字体是否可用
+symbola_available = any('Symbola' in f.name for f in fm.fontManager.ttflist)
+if symbola_available:
+    # 将 Symbola 加入 fallback 列表（用于 emoji）
+    font_candidates.append('Symbola')
+
+font_candidates.append('DejaVu Sans')
+
+plt.rcParams['font.sans-serif'] = font_candidates
+plt.rcParams['axes.unicode_minus'] = False
 """
 
 
