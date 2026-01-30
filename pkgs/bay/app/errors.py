@@ -115,6 +115,22 @@ class ConflictError(BayError):
     status_code = 409
 
 
+class SandboxExpiredError(BayError):
+    """Sandbox TTL already expired; cannot be extended (no resurrection)."""
+
+    code = "sandbox_expired"
+    message = "sandbox is expired, cannot extend ttl"
+    status_code = 409
+
+
+class SandboxTTLInfiniteError(BayError):
+    """Sandbox has infinite TTL (expires_at is null); extending is meaningless."""
+
+    code = "sandbox_ttl_infinite"
+    message = "sandbox ttl is infinite, cannot extend ttl"
+    status_code = 409
+
+
 class ValidationError(BayError):
     """Request validation error."""
 

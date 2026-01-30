@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.config import get_settings
-from app.errors import NotFoundError, ValidationError
+from app.errors import (
+    NotFoundError,
+    SandboxExpiredError,
+    SandboxTTLInfiniteError,
+    ValidationError,
+)
 from app.managers.session import SessionManager
 from app.managers.workspace import WorkspaceManager
 from app.models.sandbox import Sandbox, SandboxStatus
@@ -279,6 +284,50 @@ class SandboxManager:
             await self._db.commit()
 
             return session
+
+    async def extend_ttl(
+        self,
+        sandbox_id: str,
+        owner: str,
+        *,
+        extend_by: int,
+    ) -> Sandbox:
+        """Extend sandbox TTL (expires_at) by N seconds.
+
+        Rules:
+        - If expires_at is None (infinite TTL): reject (409 sandbox_ttl_infinite)
+        - If expires_at < now: reject (409 sandbox_expired)
+        - Else: expires_at = max(old, now) + extend_by
+
+        Note: Phase 1 accepts lost updates under concurrent calls.
+        """
+        if extend_by <= 0:
+            raise ValidationError("extend_by must be a positive integer")
+
+        sandbox = await self.get(sandbox_id, owner)
+
+        old = sandbox.expires_at
+        if old is None:
+            raise SandboxTTLInfiniteError(
+                details={
+                    "sandbox_id": sandbox_id,
+                }
+            )
+
+        now = datetime.utcnow()
+        if old < now:
+            raise SandboxExpiredError(
+                details={
+                    "sandbox_id": sandbox_id,
+                    "expires_at": old.isoformat(),
+                }
+            )
+
+        base = old if old > now else now
+        sandbox.expires_at = base + timedelta(seconds=extend_by)
+        await self._db.commit()
+        await self._db.refresh(sandbox)
+        return sandbox
 
     async def get_current_session(self, sandbox: Sandbox) -> Session | None:
         """Get current session for sandbox."""

@@ -6,7 +6,7 @@ See: plans/phase-1/tests.md section 2.1-2.3
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, select
 
 from app.config import ProfileConfig, ResourceSpec, Settings
+from app.errors import SandboxExpiredError, SandboxTTLInfiniteError, ValidationError
 from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session, SessionStatus
@@ -407,6 +408,76 @@ class TestSandboxManagerDelete:
         )
         deleted_sandbox = result.scalars().first()
         assert deleted_sandbox.current_session_id is None
+
+
+class TestSandboxManagerExtendTTL:
+    """Unit-XX: SandboxManager.extend_ttl tests."""
+
+    async def test_extend_ttl_success(self, sandbox_manager: SandboxManager):
+        sandbox = await sandbox_manager.create(
+            owner="test-user",
+            profile_id="python-default",
+            ttl=3600,
+        )
+        assert sandbox.expires_at is not None
+        old = sandbox.expires_at
+
+        updated = await sandbox_manager.extend_ttl(
+            sandbox_id=sandbox.id,
+            owner="test-user",
+            extend_by=600,
+        )
+        assert updated.expires_at is not None
+        # allow small timing drift
+        assert (updated.expires_at - old).total_seconds() >= 590
+
+    async def test_extend_ttl_rejects_infinite(self, sandbox_manager: SandboxManager):
+        sandbox = await sandbox_manager.create(
+            owner="test-user",
+            profile_id="python-default",
+            ttl=None,
+        )
+        assert sandbox.expires_at is None
+
+        with pytest.raises(SandboxTTLInfiniteError):
+            await sandbox_manager.extend_ttl(
+                sandbox_id=sandbox.id,
+                owner="test-user",
+                extend_by=10,
+            )
+
+    async def test_extend_ttl_rejects_expired(self, sandbox_manager: SandboxManager):
+        sandbox = await sandbox_manager.create(
+            owner="test-user",
+            profile_id="python-default",
+            ttl=3600,
+        )
+        assert sandbox.expires_at is not None
+
+        # force expires_at to past
+        sandbox.expires_at = datetime.utcnow() - timedelta(seconds=5)
+        await sandbox_manager._db.commit()
+
+        with pytest.raises(SandboxExpiredError):
+            await sandbox_manager.extend_ttl(
+                sandbox_id=sandbox.id,
+                owner="test-user",
+                extend_by=10,
+            )
+
+    async def test_extend_ttl_rejects_non_positive(self, sandbox_manager: SandboxManager):
+        sandbox = await sandbox_manager.create(
+            owner="test-user",
+            profile_id="python-default",
+            ttl=3600,
+        )
+
+        with pytest.raises(ValidationError):
+            await sandbox_manager.extend_ttl(
+                sandbox_id=sandbox.id,
+                owner="test-user",
+                extend_by=0,
+            )
 
 
 class TestRuntimeTypeFromProfile:

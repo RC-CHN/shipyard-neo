@@ -41,8 +41,7 @@ class TestCapabilityEnforcementE2E:
             response = await client.post(
                 "/v1/sandboxes",
                 json={
-                    "profile_id": RESTRICTED_PROFILE,
-                    "name": "capability-test-sandbox",
+                    "profile": RESTRICTED_PROFILE,
                 },
                 headers=AUTH_HEADERS,
             )
@@ -195,8 +194,7 @@ class TestFullProfileAllowsAll:
             response = await client.post(
                 "/v1/sandboxes",
                 json={
-                    "profile_id": "python-default",
-                    "name": "full-access-test-sandbox",
+                    "profile": "python-default",
                 },
                 headers=AUTH_HEADERS,
             )

@@ -13,6 +13,7 @@ Test Modules (Core API):
 - test_file_transfer.py: E2E-05 File upload and download
 - test_filesystem.py: E2E-06 Filesystem operations
 - test_idempotency_e2e.py: E2E-07 Idempotency-Key support
+- test_extend_ttl.py: E2E-XX Sandbox TTL extension (extend_ttl)
 - test_capability_enforcement.py: E2E-12 Profile-level capability enforcement
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
@@ -20,6 +21,8 @@ Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_script_development.py: E2E-09 Script Development and Debugging (Scenario 2)
 - test_project_init.py: E2E-10 Project Initialization and Dependencies (Scenario 3)
 - test_serverless_execution.py: E2E-11 Simple Quick Execution (Scenario 4)
+- test_long_running_extend_ttl.py: E2E-13 Long Running Task with TTL Extension (Scenario 5)
+- test_agent_coding_workflow.py: E2E-14 AI Agent Code Generation and Iterative Fix (Scenario 6)
 
 Prerequisites:
 - Docker daemon running and accessible
@@ -42,10 +45,13 @@ from .test_concurrent import TestE2E04ConcurrentEnsureRunning
 from .test_file_transfer import TestE2E05FileUploadDownload
 from .test_filesystem import TestE2E06Filesystem
 from .test_idempotency_e2e import TestE2E07Idempotency
+from .test_extend_ttl import TestE2EExtendTTL
 from .test_interactive_workflow import TestE2E08InteractiveDataAnalysis
 from .test_script_development import TestE2E09ScriptDevelopment
 from .test_project_init import TestE2E10ProjectInitialization
 from .test_serverless_execution import TestE2E11ServerlessExecution
+from .test_long_running_extend_ttl import TestE2E13LongRunningExtendTTL
+from .test_agent_coding_workflow import TestE2E14AgentCodingWorkflow
 from .test_capability_enforcement import (
     TestCapabilityEnforcementE2E,
     TestFullProfileAllowsAll,
@@ -74,11 +80,14 @@ __all__ = [
     "TestE2E05FileUploadDownload",
     "TestE2E06Filesystem",
     "TestE2E07Idempotency",
+    "TestE2EExtendTTL",
     # Test classes - Workflow Scenarios
     "TestE2E08InteractiveDataAnalysis",
     "TestE2E09ScriptDevelopment",
     "TestE2E10ProjectInitialization",
     "TestE2E11ServerlessExecution",
+    "TestE2E13LongRunningExtendTTL",
+    "TestE2E14AgentCodingWorkflow",
     # Test classes - Capability Enforcement
     "TestCapabilityEnforcementE2E",
     "TestFullProfileAllowsAll",

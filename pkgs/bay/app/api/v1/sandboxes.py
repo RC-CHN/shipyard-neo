@@ -49,6 +49,12 @@ class SandboxListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class ExtendTTLRequest(BaseModel):
+    """Request to extend sandbox TTL."""
+
+    extend_by: int
+
+
 def _sandbox_to_response(sandbox, current_session=None) -> SandboxResponse:
     """Convert Sandbox model to API response."""
     settings = get_settings()
@@ -166,6 +172,66 @@ async def get_sandbox(
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
     current_session = await sandbox_mgr.get_current_session(sandbox)
     return _sandbox_to_response(sandbox, current_session)
+
+
+@router.post(
+    "/{sandbox_id}/extend_ttl",
+    response_model=SandboxResponse,
+    status_code=200,
+)
+async def extend_ttl(
+    sandbox_id: str,
+    request: ExtendTTLRequest,
+    sandbox_mgr: SandboxManagerDep,
+    idempotency_svc: IdempotencyServiceDep,
+    owner: AuthDep,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+) -> SandboxResponse | JSONResponse:
+    """Extend sandbox TTL (expires_at) by N seconds.
+
+    - Does not resurrect expired sandboxes
+    - Does not apply to infinite TTL sandboxes
+    - Supports Idempotency-Key for safe retries
+    """
+    request_body = request.model_dump_json()
+    request_path = f"/v1/sandboxes/{sandbox_id}/extend_ttl"
+
+    # 1. Check idempotency key if provided
+    if idempotency_key:
+        cached = await idempotency_svc.check(
+            owner=owner,
+            key=idempotency_key,
+            path=request_path,
+            method="POST",
+            body=request_body,
+        )
+        if cached:
+            return JSONResponse(
+                content=cached.response,
+                status_code=cached.status_code,
+            )
+
+    # 2. Execute business logic
+    sandbox = await sandbox_mgr.extend_ttl(
+        sandbox_id=sandbox_id,
+        owner=owner,
+        extend_by=request.extend_by,
+    )
+    response = _sandbox_to_response(sandbox)
+
+    # 3. Save idempotency key if provided
+    if idempotency_key:
+        await idempotency_svc.save(
+            owner=owner,
+            key=idempotency_key,
+            path=request_path,
+            method="POST",
+            body=request_body,
+            response=response,
+            status_code=200,
+        )
+
+    return response
 
 
 @router.post("/{sandbox_id}/keepalive", status_code=200)

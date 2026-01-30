@@ -214,7 +214,14 @@ class IdempotencyService:
         fingerprint = self.compute_fingerprint(path, method, body)
 
         # Serialize response
-        if hasattr(response, "model_dump"):
+        #
+        # IMPORTANT: for Pydantic models, use model_dump_json() so datetime fields
+        # are encoded in the same ISO-8601 format FastAPI uses in normal responses.
+        # Otherwise, default=str would produce "YYYY-MM-DD HH:MM:SS" which breaks
+        # idempotency replay byte-for-byte comparisons.
+        if hasattr(response, "model_dump_json"):
+            response_json = response.model_dump_json()
+        elif hasattr(response, "model_dump"):
             response_json = json.dumps(response.model_dump(), default=str)
         elif isinstance(response, dict):
             response_json = json.dumps(response, default=str)

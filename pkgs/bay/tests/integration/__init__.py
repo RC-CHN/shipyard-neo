@@ -9,6 +9,7 @@ Core API Test Modules:
 - test_file_transfer: E2E-05 File upload and download
 - test_filesystem: E2E-06 Filesystem operations
 - test_idempotency_e2e: E2E-07 Idempotency-Key support
+- test_extend_ttl: E2E-XX Extend sandbox TTL (POST /v1/sandboxes/{id}/extend_ttl)
 - test_capability_enforcement: E2E-12 Profile-level capability enforcement
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
@@ -16,6 +17,8 @@ Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_script_development: E2E-09 Script Development and Debugging (Scenario 2)
 - test_project_init: E2E-10 Project Initialization and Dependencies (Scenario 3)
 - test_serverless_execution: E2E-11 Simple Quick Execution (Scenario 4)
+- test_long_running_extend_ttl: E2E-13 Long Running Task with TTL Extension (Scenario 5)
+- test_agent_coding_workflow: E2E-14 AI Agent Code Generation and Iterative Fix (Scenario 6)
 
 Configuration:
 - conftest: Shared fixtures and helper functions

@@ -50,3 +50,16 @@ profiles:
       - python
     idle_timeout: 300  # Shorter timeout for tests
     env: {}
+
+  # Restricted profile for capability enforcement testing
+  - id: python-only-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - python  # Only python - no shell/filesystem access
+    idle_timeout: 300
+    env: {}
