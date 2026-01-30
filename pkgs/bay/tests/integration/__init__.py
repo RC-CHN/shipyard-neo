@@ -9,6 +9,7 @@ Core API Test Modules:
 - test_file_transfer: E2E-05 File upload and download
 - test_filesystem: E2E-06 Filesystem operations
 - test_idempotency_e2e: E2E-07 Idempotency-Key support
+- test_capability_enforcement: E2E-12 Profile-level capability enforcement
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_interactive_workflow: E2E-08 Interactive Data Analysis (Scenario 1)

@@ -13,6 +13,7 @@ Test Modules (Core API):
 - test_file_transfer.py: E2E-05 File upload and download
 - test_filesystem.py: E2E-06 Filesystem operations
 - test_idempotency_e2e.py: E2E-07 Idempotency-Key support
+- test_capability_enforcement.py: E2E-12 Profile-level capability enforcement
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_interactive_workflow.py: E2E-08 Interactive Data Analysis (Scenario 1)
@@ -27,6 +28,7 @@ Prerequisites:
 
 See: plans/phase-1/tests.md section 1
 See: plans/phase-1/e2e-workflow-scenarios.md for workflow scenarios
+See: plans/phase-1/profile-capability-enforcement.md for capability enforcement
 """
 
 from __future__ import annotations
@@ -44,6 +46,10 @@ from .test_interactive_workflow import TestE2E08InteractiveDataAnalysis
 from .test_script_development import TestE2E09ScriptDevelopment
 from .test_project_init import TestE2E10ProjectInitialization
 from .test_serverless_execution import TestE2E11ServerlessExecution
+from .test_capability_enforcement import (
+    TestCapabilityEnforcementE2E,
+    TestFullProfileAllowsAll,
+)
 
 # Re-export shared configuration for convenience
 from .conftest import (
@@ -73,6 +79,9 @@ __all__ = [
     "TestE2E09ScriptDevelopment",
     "TestE2E10ProjectInitialization",
     "TestE2E11ServerlessExecution",
+    # Test classes - Capability Enforcement
+    "TestCapabilityEnforcementE2E",
+    "TestFullProfileAllowsAll",
     # Configuration
     "BAY_BASE_URL",
     "E2E_API_KEY",

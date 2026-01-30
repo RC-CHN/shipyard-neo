@@ -1,8 +1,8 @@
 # Bay Phase 1 进度追踪
 
-> 更新日期：2026-01-29 16:15 (UTC+8)
+> 更新日期：2026-01-30 15:05 (UTC+8)
 >
-> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)、[`auth-design.md`](auth-design.md)
+> 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)、[`auth-design.md`](auth-design.md)、[`profile-capability-enforcement.md`](profile-capability-enforcement.md)
 
 ## 1. 总体进度
 
@@ -17,6 +17,7 @@
 | Idempotency | ✅ 100% | Service + API 已接入，E2E 测试通过 |
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
 | 鉴权 | ✅ 100% | API Key 认证 + `AuthDep` 注入，支持 dev 模式 `X-Owner` |
+| **Profile 能力检查** | ✅ 100% | **新增** 前置能力拦截，依赖注入实现 |
 
 ## 2. Capability Adapter 重构详情
 
@@ -74,7 +75,7 @@
 
 ## 6. 测试状态
 
-### 6.1 单元测试（91 tests）
+### 6.1 单元测试（97 tests）
 
 | 文件 | 测试数 | 状态 |
 |:--|:--|:--|
@@ -83,8 +84,9 @@
 | `test_sandbox_manager.py` | 12 | ✅ |
 | `test_ship_adapter.py` | 21 | ✅ （含 write_file, delete_file） |
 | `test_idempotency.py` | 24 | ✅ |
+| `test_capability_check.py` | 6 | ✅ **新增** Profile 能力检查单元测试 |
 
-### 6.2 E2E 测试（23 tests）
+### 6.2 E2E 测试（33 tests）
 
 | 测试类 | 测试数 | 状态 |
 |:--|:--|:--|
@@ -94,8 +96,10 @@
 | `TestE2E03Delete` | 3 | ✅ |
 | `TestE2E04ConcurrentEnsureRunning` | 1 | ✅ |
 | `TestE2E05FileUploadDownload` | 4 | ✅ |
-| `TestE2E06Filesystem` | 4 | ✅ **新增** read/write/list/delete |
+| `TestE2E06Filesystem` | 4 | ✅ read/write/list/delete |
 | `TestE2E07Idempotency` | 4 | ✅ |
+| `TestCapabilityEnforcementE2E` | 8 | ✅ **新增** Profile 能力拦截 |
+| `TestFullProfileAllowsAll` | 3 | ✅ **新增** 全能力 Profile 验证 |
 
 ### 6.3 测试运行命令
 
@@ -160,6 +164,48 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 | 存储 | SQLite 同库 |
 | 过期清理 | 惰性删除 |
 
+## 10. Profile 能力检查实现详情
+
+根据 [`profile-capability-enforcement.md`](profile-capability-enforcement.md) 实现：
+
+| # | 任务 | 状态 | 文件 |
+|:--|:--|:--|:--|
+| 1 | 设计文档 | ✅ | `profile-capability-enforcement.md` |
+| 2 | require_capability() 工厂函数 | ✅ | `app/api/dependencies.py` |
+| 3 | 能力依赖类型别名 | ✅ | `PythonCapabilityDep`, `ShellCapabilityDep`, `FilesystemCapabilityDep` |
+| 4 | 更新 capabilities.py endpoints | ✅ | 所有 endpoint 使用能力依赖 |
+| 5 | 单元测试 | ✅ | `tests/unit/test_capability_check.py` (6 tests) |
+| 6 | E2E 测试 | ✅ | `tests/integration/test_capability_enforcement.py` (11 tests) |
+
+### 10.1 关键设计决策
+
+| 决策项 | 选择 |
+|:--|:--|
+| 检查层级 | 双层：Profile (Bay) + Runtime (Ship /meta) |
+| Profile 优先级 | ✅ Profile 声明为硬约束，Runtime 为二次保障 |
+| 粒度 | 粗粒度（filesystem, shell, python）Phase 1 |
+| 实现方式 | FastAPI 依赖注入 |
+| 错误码 | `capability_not_supported` (400) |
+
+### 10.2 能力检查流程
+
+```
+API Request (e.g., POST /sandboxes/{id}/shell/exec)
+    ↓
+ShellCapabilityDep (dependency injection)
+    ↓
+require_capability("shell")
+    ↓
+sandbox_mgr.get(sandbox_id, owner)  # 获取 sandbox
+    ↓
+settings.get_profile(sandbox.profile_id)  # 获取 profile 配置
+    ↓
+if "shell" not in profile.capabilities:
+    raise CapabilityNotSupportedError(400)  # ← 前置拦截，不启动容器
+    ↓
+return sandbox → CapabilityRouter → Ship Adapter → 容器
+```
+
 ---
 
 ## 附录：关键错误类型
@@ -172,3 +218,4 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 | SessionNotReadyError | `session_not_ready` | 503 |
 | TimeoutError | `timeout` | 504 |
 | ValidationError | `validation_error` | 400 |
+| CapabilityNotSupportedError | `capability_not_supported` | 400 |

@@ -6,6 +6,7 @@ Provides dependency injection for:
 - Driver
 - Services (Idempotency)
 - Authentication
+- Capability checks
 """
 
 from __future__ import annotations
@@ -20,8 +21,9 @@ from app.config import get_settings
 from app.db.session import get_session_dependency
 from app.drivers.base import Driver
 from app.drivers.docker import DockerDriver
-from app.errors import UnauthorizedError
+from app.errors import CapabilityNotSupportedError, UnauthorizedError
 from app.managers.sandbox import SandboxManager
+from app.models.sandbox import Sandbox
 from app.services.idempotency import IdempotencyService
 
 
@@ -110,3 +112,58 @@ SessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 SandboxManagerDep = Annotated[SandboxManager, Depends(get_sandbox_manager)]
 IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
 AuthDep = Annotated[str, Depends(authenticate)]
+
+
+# ---- Capability enforcement ----
+
+
+def require_capability(capability: str):
+    """Factory for capability check dependency.
+
+    Creates a dependency that validates the sandbox's profile supports
+    the requested capability BEFORE starting any container.
+
+    This is Level 1 (Profile) enforcement. Level 2 (Runtime) enforcement
+    is done in CapabilityRouter._require_capability().
+
+    Args:
+        capability: Capability name (python, shell, filesystem, etc.)
+
+    Returns:
+        A dependency function that returns the Sandbox if allowed.
+
+    Raises:
+        CapabilityNotSupportedError: If profile doesn't allow the capability.
+    """
+
+    async def dependency(
+        sandbox_id: str,
+        sandbox_mgr: SandboxManagerDep,
+        owner: AuthDep,
+    ) -> Sandbox:
+        sandbox = await sandbox_mgr.get(sandbox_id, owner)
+        settings = get_settings()
+        profile = settings.get_profile(sandbox.profile_id)
+
+        if profile is None:
+            raise CapabilityNotSupportedError(
+                message=f"Profile not found: {sandbox.profile_id}",
+                capability=capability,
+            )
+
+        if capability not in profile.capabilities:
+            raise CapabilityNotSupportedError(
+                message=f"Profile '{sandbox.profile_id}' does not support capability: {capability}",
+                capability=capability,
+                available=profile.capabilities,
+            )
+
+        return sandbox
+
+    return dependency
+
+
+# Capability-specific sandbox dependencies
+PythonCapabilityDep = Annotated[Sandbox, Depends(require_capability("python"))]
+ShellCapabilityDep = Annotated[Sandbox, Depends(require_capability("shell"))]
+FilesystemCapabilityDep = Annotated[Sandbox, Depends(require_capability("filesystem"))]
