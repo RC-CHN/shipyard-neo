@@ -310,6 +310,8 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 | [`plans/phase-1/progress.md`](plans/phase-1/progress.md) | Phase 1 详细进度追踪 |
 | [`plans/phase-1/gc-design.md`](plans/phase-1/gc-design.md) | GC 机制设计 |
 | [`plans/phase-2/phase-2.md`](plans/phase-2/phase-2.md) | Phase 2 规划 |
+| [`plans/phase-3/phase-3.md`](plans/phase-3/phase-3.md) | Phase 3 轻量化重构概览 |
+| [`plans/phase-3/bay-go-design.md`](plans/phase-3/bay-go-design.md) | Bay Go 重写详细设计 |
 | [`plans/ship-refactor-and-mcp.md`](plans/ship-refactor-and-mcp.md) | Ship MCP 集成设计 |
 
 ---
