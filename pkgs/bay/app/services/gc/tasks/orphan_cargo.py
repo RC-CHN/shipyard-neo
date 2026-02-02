@@ -10,8 +10,8 @@ from sqlalchemy.orm import aliased
 from sqlmodel import select
 
 from app.managers.cargo import CargoManager
-from app.models.sandbox import Sandbox
 from app.models.cargo import Cargo
+from app.models.sandbox import Sandbox
 from app.services.gc.base import GCResult, GCTask
 
 if TYPE_CHECKING:

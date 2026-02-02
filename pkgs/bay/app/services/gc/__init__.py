@@ -8,7 +8,7 @@ This module provides background garbage collection for:
 
 Usage:
     from app.services.gc import GCScheduler
-    
+
     scheduler = GCScheduler(...)
     await scheduler.start()
 """

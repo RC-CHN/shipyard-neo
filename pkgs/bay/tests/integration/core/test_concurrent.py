@@ -11,7 +11,6 @@ import asyncio
 from typing import Any
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -60,7 +59,9 @@ async def test_concurrent_exec_creates_single_session():
             )
 
             # At least some should succeed or be retryable (503 during startup is expected)
-            assert successes + retryable >= 1, f"Expected at least 1 success/retryable, got: {results}"
+            assert successes + retryable >= 1, (
+                f"Expected at least 1 success/retryable, got: {results}"
+            )
 
             # Wait for session to stabilize, then verify sandbox is accessible
             await asyncio.sleep(2.0)

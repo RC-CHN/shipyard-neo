@@ -130,7 +130,10 @@ class IdempotencyService:
         # Validate key format
         if not self.validate_key(key):
             raise ConflictError(
-                message=f"Invalid Idempotency-Key format: must be 1-128 alphanumeric characters, dash, or underscore",
+                message=(
+                    "Invalid Idempotency-Key format: must be 1-128 alphanumeric characters, "
+                    "dash, or underscore"
+                ),
                 details={"key": key},
             )
 

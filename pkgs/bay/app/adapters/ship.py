@@ -36,10 +36,8 @@ def _get_shared_client() -> httpx.AsyncClient | None:
 
 class ShipAdapter(BaseAdapter):
     """HTTP adapter for Ship runtime.
-    
-    Supports connection pooling via shared HTTP client for better
-    performance under high concurrency.
-    
+
+    Supports connection pooling via shared HTTP client for better performance.
     Supported capabilities: python, shell, filesystem (includes upload/download), terminal
     """
 

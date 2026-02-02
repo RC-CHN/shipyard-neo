@@ -9,9 +9,8 @@ See: plans/phase-1.5/admin-gc-api-design.md
 from __future__ import annotations
 
 import time
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from app.api.dependencies import AuthDep

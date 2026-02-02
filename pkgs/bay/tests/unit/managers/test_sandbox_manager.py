@@ -17,9 +17,9 @@ from sqlmodel import SQLModel, select
 from app.config import ProfileConfig, ResourceSpec, Settings
 from app.errors import SandboxExpiredError, SandboxTTLInfiniteError, ValidationError
 from app.managers.sandbox import SandboxManager
+from app.models.cargo import Cargo
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session, SessionStatus
-from app.models.cargo import Cargo
 from tests.fakes import FakeDriver
 
 
@@ -86,7 +86,7 @@ def sandbox_manager(
 
 class TestSandboxManagerCreate:
     """Unit-01: SandboxManager.create tests.
-    
+
     Purpose: Verify sandbox creation also creates managed cargo correctly.
     """
 
@@ -117,12 +117,12 @@ class TestSandboxManagerCreate:
             select(Cargo).where(Cargo.id == sandbox.cargo_id)
         )
         cargo = result.scalars().first()
-        
+
         assert cargo is not None
         assert cargo.managed is True
         assert cargo.managed_by_sandbox_id == sandbox.id
         assert cargo.owner == "test-user"
-        
+
         # Assert volume was created via driver
         assert len(fake_driver.create_volume_calls) == 1
         volume_call = fake_driver.create_volume_calls[0]
@@ -182,7 +182,7 @@ class TestSandboxManagerCreate:
 
 class TestSandboxManagerStop:
     """Unit-02: SandboxManager.stop tests.
-    
+
     Purpose: Verify stop stops session but keeps cargo.
     """
 
@@ -196,7 +196,7 @@ class TestSandboxManagerStop:
         """Stop should clear current_session_id on sandbox."""
         # Arrange: Create sandbox with a session
         sandbox = await sandbox_manager.create(owner="test-user")
-        
+
         # Create a session manually
         session = Session(
             id="sess-test-123",
@@ -210,14 +210,14 @@ class TestSandboxManagerStop:
         )
         db_session.add(session)
         await db_session.commit()
-        
+
         # Update sandbox with current session
         sandbox.current_session_id = session.id
         await db_session.commit()
-        
+
         # Act
         await sandbox_manager.stop(sandbox)
-        
+
         # Refresh from DB
         await db_session.refresh(sandbox)
 
@@ -234,7 +234,7 @@ class TestSandboxManagerStop:
         """Stop should call driver.stop for container."""
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
-        
+
         session = Session(
             id="sess-test-456",
             sandbox_id=sandbox.id,
@@ -246,7 +246,7 @@ class TestSandboxManagerStop:
         db_session.add(session)
         sandbox.current_session_id = session.id
         await db_session.commit()
-        
+
         # Act
         await sandbox_manager.stop(sandbox)
 
@@ -263,7 +263,7 @@ class TestSandboxManagerStop:
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
         cargo_id = sandbox.cargo_id
-        
+
         # Act
         await sandbox_manager.stop(sandbox)
 
@@ -273,7 +273,7 @@ class TestSandboxManagerStop:
         )
         cargo = result.scalars().first()
         assert cargo is not None
-        
+
         # Assert no delete_volume calls
         assert len(fake_driver.delete_volume_calls) == 0
 
@@ -286,7 +286,7 @@ class TestSandboxManagerStop:
         """Stop should be idempotent - repeated calls should not fail."""
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
-        
+
         # Act - call stop multiple times
         await sandbox_manager.stop(sandbox)
         await sandbox_manager.stop(sandbox)
@@ -318,7 +318,7 @@ class TestSandboxManagerStop:
 
 class TestSandboxManagerDelete:
     """Unit-03: SandboxManager.delete tests.
-    
+
     Purpose: Verify delete cascade deletes managed cargo.
     """
 
@@ -331,10 +331,10 @@ class TestSandboxManagerDelete:
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
         sandbox_id = sandbox.id
-        
+
         # Act
         await sandbox_manager.delete(sandbox)
-        
+
         # Assert - sandbox has deleted_at set
         result = await db_session.execute(
             select(Sandbox).where(Sandbox.id == sandbox_id)
@@ -353,14 +353,14 @@ class TestSandboxManagerDelete:
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
         cargo_id = sandbox.cargo_id
-        
+
         # Get cargo driver_ref for assertion
         result = await db_session.execute(
             select(Cargo).where(Cargo.id == cargo_id)
         )
         cargo = result.scalars().first()
         volume_name = cargo.driver_ref
-        
+
         # Act
         await sandbox_manager.delete(sandbox)
 
@@ -383,7 +383,7 @@ class TestSandboxManagerDelete:
         """Delete should destroy all sessions."""
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
-        
+
         # Create sessions
         session1 = Session(
             id="sess-1",
@@ -398,7 +398,7 @@ class TestSandboxManagerDelete:
         db_session.add(session1)
         db_session.add(session2)
         await db_session.commit()
-        
+
         # Act
         await sandbox_manager.delete(sandbox)
 
@@ -417,7 +417,7 @@ class TestSandboxManagerDelete:
         sandbox.current_session_id = "some-session"
         await db_session.commit()
         sandbox_id = sandbox.id
-        
+
         # Act
         await sandbox_manager.delete(sandbox)
 
@@ -501,7 +501,7 @@ class TestSandboxManagerExtendTTL:
 
 class TestRuntimeTypeFromProfile:
     """Unit tests for runtime_type configuration.
-    
+
     Purpose: Verify runtime_type is correctly read from ProfileConfig.
     """
 

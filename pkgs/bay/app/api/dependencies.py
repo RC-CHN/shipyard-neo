@@ -31,7 +31,7 @@ from app.services.idempotency import IdempotencyService
 @lru_cache
 def get_driver() -> Driver:
     """Get cached driver instance.
-    
+
     Uses lru_cache to ensure single driver instance across requests.
     """
     settings = get_settings()

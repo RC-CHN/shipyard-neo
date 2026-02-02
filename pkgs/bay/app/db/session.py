@@ -9,11 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from app.config import get_settings
-
 # Import all models to ensure they are registered with SQLModel metadata
 # This is required for relationship resolution at runtime
 import app.models  # noqa: F401
+from app.config import get_settings
 
 # Lazy initialization - engine created on first use
 _engine = None
@@ -47,7 +46,7 @@ def _get_session_factory():
 
 async def init_db() -> None:
     """Initialize database tables.
-    
+
     Note: In production, use Alembic migrations instead.
     This is for development/testing convenience.
     """
@@ -68,7 +67,7 @@ async def close_db() -> None:
 @asynccontextmanager
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session as context manager.
-    
+
     Usage:
         async with get_async_session() as session:
             result = await session.exec(select(Model))
@@ -85,7 +84,7 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def get_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency for getting database session.
-    
+
     Usage:
         @app.get("/items")
         async def get_items(session: AsyncSession = Depends(get_session_dependency)):

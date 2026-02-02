@@ -8,7 +8,6 @@ Parallel-safe: Yes - each test creates/deletes its own sandbox.
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, create_sandbox, e2e_skipif_marks
 

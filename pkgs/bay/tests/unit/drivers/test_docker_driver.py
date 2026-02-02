@@ -13,7 +13,7 @@ from app.drivers.docker.docker import DockerDriver
 
 class TestDockerDriverEndpointResolution:
     """Unit-04: DockerDriver endpoint resolution logic.
-    
+
     Purpose: Verify host_port/container_network/auto endpoint calculation.
     These are pure function tests using mock container info structures.
     """
@@ -82,9 +82,9 @@ class TestDockerDriverEndpointResolution:
         # We'll test the internal methods directly
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = "bay-network"
-        
+
         ip = driver._resolve_container_ip(sample_container_info_with_network)
-        
+
         assert ip == "172.18.0.5"
 
     def test_resolve_container_ip_fallback_to_first_network(
@@ -94,9 +94,9 @@ class TestDockerDriverEndpointResolution:
         """Should fallback to first network if specified not found."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = "non-existent-network"
-        
+
         ip = driver._resolve_container_ip(sample_container_info_with_network)
-        
+
         # Falls back to first available network
         assert ip == "172.18.0.5"
 
@@ -107,9 +107,9 @@ class TestDockerDriverEndpointResolution:
         """Should return None when no networks attached."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = None
-        
+
         ip = driver._resolve_container_ip(sample_container_info_host_port_only)
-        
+
         assert ip is None
 
     def test_resolve_host_port_success(
@@ -119,12 +119,12 @@ class TestDockerDriverEndpointResolution:
         """Should resolve host port correctly."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._host_address = "127.0.0.1"
-        
+
         result = driver._resolve_host_port(
             sample_container_info_with_network,
             runtime_port=8123,
         )
-        
+
         assert result is not None
         host, port = result
         assert host == "127.0.0.1"
@@ -137,12 +137,12 @@ class TestDockerDriverEndpointResolution:
         """Should return None when no port bindings."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._host_address = "127.0.0.1"
-        
+
         result = driver._resolve_host_port(
             sample_container_info_no_ports,
             runtime_port=8123,
         )
-        
+
         assert result is None
 
     def test_resolve_host_port_wrong_port(
@@ -152,35 +152,35 @@ class TestDockerDriverEndpointResolution:
         """Should return None when requested port not bound."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._host_address = "127.0.0.1"
-        
+
         result = driver._resolve_host_port(
             sample_container_info_with_network,
             runtime_port=9999,  # Wrong port
         )
-        
+
         assert result is None
 
     def test_endpoint_from_hostport(self):
         """Should format host:port endpoint correctly."""
         driver = DockerDriver.__new__(DockerDriver)
-        
+
         endpoint = driver._endpoint_from_hostport("127.0.0.1", 32768)
-        
+
         assert endpoint == "http://127.0.0.1:32768"
 
     def test_endpoint_from_container_ip(self):
         """Should format container IP endpoint correctly."""
         driver = DockerDriver.__new__(DockerDriver)
-        
+
         endpoint = driver._endpoint_from_container_ip("172.18.0.5", 8123)
-        
+
         assert endpoint == "http://172.18.0.5:8123"
 
     def test_resolve_host_port_invalid_port_value(self):
         """Should handle non-numeric HostPort gracefully."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._host_address = "127.0.0.1"
-        
+
         container_info = {
             "NetworkSettings": {
                 "Ports": {
@@ -190,11 +190,11 @@ class TestDockerDriverEndpointResolution:
                 },
             },
         }
-        
+
         # Should raise ValueError or return None depending on implementation
         # Test that it doesn't crash
         try:
-            result = driver._resolve_host_port(container_info, runtime_port=8123)
+            driver._resolve_host_port(container_info, runtime_port=8123)
             # If it doesn't raise, it should return None or raise later
         except ValueError:
             # Expected behavior - invalid port value
@@ -204,7 +204,7 @@ class TestDockerDriverEndpointResolution:
         """Should handle empty string HostPort gracefully."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._host_address = "127.0.0.1"
-        
+
         container_info = {
             "NetworkSettings": {
                 "Ports": {
@@ -214,10 +214,10 @@ class TestDockerDriverEndpointResolution:
                 },
             },
         }
-        
+
         # Should handle empty string gracefully
         try:
-            result = driver._resolve_host_port(container_info, runtime_port=8123)
+            driver._resolve_host_port(container_info, runtime_port=8123)
         except ValueError:
             # Expected behavior - empty string is not a valid port
             pass
@@ -226,14 +226,14 @@ class TestDockerDriverEndpointResolution:
         """Should handle missing Networks field gracefully."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = None
-        
+
         container_info = {
             "NetworkSettings": {
                 # Networks field is missing
                 "Ports": {},
             },
         }
-        
+
         # Should return None, not crash
         ip = driver._resolve_container_ip(container_info)
         assert ip is None
@@ -242,14 +242,14 @@ class TestDockerDriverEndpointResolution:
         """Should handle Networks=None gracefully."""
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = None
-        
+
         container_info = {
             "NetworkSettings": {
                 "Networks": None,
                 "Ports": {},
             },
         }
-        
+
         # Should return None, not crash
         ip = driver._resolve_container_ip(container_info)
         assert ip is None
@@ -257,7 +257,7 @@ class TestDockerDriverEndpointResolution:
 
 class TestDockerDriverConnectModes:
     """Test different connect modes produce correct endpoints.
-    
+
     These tests verify the connect mode logic for choosing between
     container_network, host_port, and auto modes.
     """
@@ -286,13 +286,13 @@ class TestDockerDriverConnectModes:
         driver._network = "bay-net"
         driver._connect_mode = "container_network"
         driver._host_address = "127.0.0.1"
-        
+
         # Simulate the logic in start() for container_network mode
         if driver._connect_mode in ("container_network", "auto"):
             ip = driver._resolve_container_ip(container_info_both_available)
             if ip:
                 endpoint = driver._endpoint_from_container_ip(ip, 8123)
-        
+
         assert endpoint == "http://172.20.0.100:8123"
 
     def test_host_port_mode_uses_host_port(
@@ -304,21 +304,21 @@ class TestDockerDriverConnectModes:
         driver._network = "bay-net"
         driver._connect_mode = "host_port"
         driver._host_address = "127.0.0.1"
-        
+
         endpoint = None
-        
+
         # container_network mode would not be checked for host_port
         if driver._connect_mode in ("container_network", "auto"):
             ip = driver._resolve_container_ip(container_info_both_available)
             if ip:
                 endpoint = driver._endpoint_from_container_ip(ip, 8123)
-        
+
         # host_port mode
         if endpoint is None and driver._connect_mode in ("host_port", "auto"):
             hp = driver._resolve_host_port(container_info_both_available, runtime_port=8123)
             if hp:
                 endpoint = driver._endpoint_from_hostport(hp[0], hp[1])
-        
+
         assert endpoint == "http://127.0.0.1:33333"
 
     def test_auto_mode_prefers_container_network(
@@ -330,21 +330,21 @@ class TestDockerDriverConnectModes:
         driver._network = "bay-net"
         driver._connect_mode = "auto"
         driver._host_address = "127.0.0.1"
-        
+
         endpoint = None
-        
+
         # auto mode prefers container network
         if driver._connect_mode in ("container_network", "auto"):
             ip = driver._resolve_container_ip(container_info_both_available)
             if ip:
                 endpoint = driver._endpoint_from_container_ip(ip, 8123)
-        
+
         # Would fallback to host_port if no container IP
         if endpoint is None and driver._connect_mode in ("host_port", "auto"):
             hp = driver._resolve_host_port(container_info_both_available, runtime_port=8123)
             if hp:
                 endpoint = driver._endpoint_from_hostport(hp[0], hp[1])
-        
+
         assert endpoint == "http://172.20.0.100:8123"
 
     def test_auto_mode_falls_back_to_host_port(self):
@@ -358,22 +358,22 @@ class TestDockerDriverConnectModes:
                 },
             },
         }
-        
+
         driver = DockerDriver.__new__(DockerDriver)
         driver._network = None
         driver._connect_mode = "auto"
         driver._host_address = "127.0.0.1"
-        
+
         endpoint = None
-        
+
         if driver._connect_mode in ("container_network", "auto"):
             ip = driver._resolve_container_ip(container_info)
             if ip:
                 endpoint = driver._endpoint_from_container_ip(ip, 8123)
-        
+
         if endpoint is None and driver._connect_mode in ("host_port", "auto"):
             hp = driver._resolve_host_port(container_info, runtime_port=8123)
             if hp:
                 endpoint = driver._endpoint_from_hostport(hp[0], hp[1])
-        
+
         assert endpoint == "http://127.0.0.1:44444"

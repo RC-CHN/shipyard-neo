@@ -170,7 +170,7 @@ class CapabilityNotSupportedError(BayError):
 
 class InvalidPathError(BayError):
     """Invalid file path (absolute, traversal, etc.).
-    
+
     Raised when a path fails validation:
     - Empty path
     - Absolute path (starts with /)

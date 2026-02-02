@@ -85,7 +85,7 @@ async def create_sandbox(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ) -> SandboxResponse | JSONResponse:
     """Create a new sandbox.
-    
+
     - Lazy session creation: status may be 'idle' initially
     - ttl=null or ttl=0 means no expiry
     - Supports Idempotency-Key header for safe retries
@@ -93,7 +93,7 @@ async def create_sandbox(
     # Serialize request body for fingerprinting
     request_body = request.model_dump_json()
     request_path = "/v1/sandboxes"
-    
+
     # 1. Check idempotency key if provided
     if idempotency_key:
         cached = await idempotency_svc.check(
@@ -109,7 +109,7 @@ async def create_sandbox(
                 content=cached.response,
                 status_code=cached.status_code,
             )
-    
+
     # 2. Create sandbox
     sandbox = await sandbox_mgr.create(
         owner=owner,
@@ -118,7 +118,7 @@ async def create_sandbox(
         ttl=request.ttl,
     )
     response = _sandbox_to_response(sandbox)
-    
+
     # 3. Save idempotency key if provided
     if idempotency_key:
         await idempotency_svc.save(
@@ -241,7 +241,7 @@ async def keepalive(
     owner: AuthDep,
 ) -> dict[str, str]:
     """Keep sandbox alive - extends idle timeout only, not TTL.
-    
+
     Does not implicitly start compute if no session exists.
     """
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
@@ -256,7 +256,7 @@ async def stop_sandbox(
     owner: AuthDep,
 ) -> dict[str, str]:
     """Stop sandbox - reclaims compute, keeps workspace.
-    
+
     Idempotent: repeated calls maintain final state consistency.
     """
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
@@ -271,7 +271,7 @@ async def delete_sandbox(
     owner: AuthDep,
 ) -> None:
     """Delete sandbox permanently.
-    
+
     - Destroys all running sessions
     - Cascade deletes managed cargo
     - Does NOT cascade delete external cargo

@@ -14,7 +14,6 @@ Note: workflow 场景测试默认会被 SERIAL_GROUPS["workflows"] 归类为 ser
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -54,7 +53,9 @@ class TestInteractiveDataAnalysisWorkflow:
                 assert exec2.status_code == 200
                 result2 = exec2.json()
                 assert result2["success"] is True
-                assert "84" in result2["output"], f"Expected '84' in output, got: {result2['output']}"
+                assert "84" in result2["output"], (
+                    f"Expected '84' in output, got: {result2['output']}"
+                )
 
                 # Round 3: Define another variable using the first
                 exec3 = await client.post(
@@ -65,7 +66,9 @@ class TestInteractiveDataAnalysisWorkflow:
                 assert exec3.status_code == 200
                 result3 = exec3.json()
                 assert result3["success"] is True
-                assert "50" in result3["output"], f"Expected '50' in output, got: {result3['output']}"
+                assert "50" in result3["output"], (
+                    f"Expected '50' in output, got: {result3['output']}"
+                )
 
             finally:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
@@ -128,7 +131,9 @@ class TestInteractiveDataAnalysisWorkflow:
                 result3 = exec3.json()
                 # Should fail - variable not defined in new session
                 assert result3["success"] is False, "Expected NameError after stop/resume"
-                assert "NameError" in (result3.get("error") or ""), f"Expected NameError, got: {result3}"
+                assert "NameError" in (result3.get("error") or ""), (
+                    f"Expected NameError, got: {result3}"
+                )
 
                 # But file should still exist
                 read_response = await client.get(

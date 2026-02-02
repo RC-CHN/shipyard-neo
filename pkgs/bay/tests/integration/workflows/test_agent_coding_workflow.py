@@ -18,7 +18,6 @@ from __future__ import annotations
 import uuid
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -179,12 +178,17 @@ for i in [10, 20, 30]:
                 # Step 10: Verify variable sharing - use function from previous exec
                 exec4 = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/python/exec",
-                    json={"code": "print(f'fib(40) = {calculate_fibonacci(40)}')", "timeout": 30},
+                    json={
+                        "code": "print(f'fib(40) = {calculate_fibonacci(40)}')",
+                        "timeout": 30,
+                    },
                     timeout=30.0,
                 )
                 assert exec4.status_code == 200
                 result4 = exec4.json()
-                assert result4["success"] is True, f"Should use function from previous exec: {result4}"
+                assert result4["success"] is True, (
+                    f"Should use function from previous exec: {result4}"
+                )
                 assert "fib(40) = 102334155" in result4["output"]
 
                 # Step 11: Download final code
@@ -284,7 +288,9 @@ for i in [10, 20, 30]:
                 )
                 assert create2.status_code == 201
                 sandbox2 = create2.json()
-                assert sandbox2["id"] == sandbox_id1, "Same idempotency key should return same sandbox"
+                assert sandbox2["id"] == sandbox_id1, (
+                    "Same idempotency key should return same sandbox"
+                )
 
                 # Different key - should create new sandbox
                 create3 = await client.post(
@@ -295,7 +301,9 @@ for i in [10, 20, 30]:
                 assert create3.status_code == 201
                 sandbox3 = create3.json()
                 sandbox_id3 = sandbox3["id"]
-                assert sandbox_id3 != sandbox_id1, "Different idempotency key should create new sandbox"
+                assert sandbox_id3 != sandbox_id1, (
+                    "Different idempotency key should create new sandbox"
+                )
 
                 # Cleanup second sandbox
                 await client.delete(f"/v1/sandboxes/{sandbox_id3}")

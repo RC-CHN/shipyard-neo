@@ -12,8 +12,8 @@ from app.services.gc.scheduler import GCScheduler
 from app.services.gc.tasks import (
     ExpiredSandboxGC,
     IdleSessionGC,
-    OrphanContainerGC,
     OrphanCargoGC,
+    OrphanContainerGC,
 )
 
 logger = structlog.get_logger()

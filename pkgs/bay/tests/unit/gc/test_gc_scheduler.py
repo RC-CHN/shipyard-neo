@@ -7,7 +7,6 @@ Includes edge cases: stop without start, run_lock reentry, etc.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
