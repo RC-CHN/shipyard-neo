@@ -58,7 +58,7 @@ M2: Driver 层
     └── Docker Driver 实现与测试
 
 M3: Manager 层
-    └── Sandbox/Session/Workspace Manager + 并发测试
+    └── Sandbox/Session/Cargo Manager + 并发测试
 
 M4: API 层
     └── HTTP 路由、认证、错误处理

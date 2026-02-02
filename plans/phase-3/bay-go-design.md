@@ -119,7 +119,7 @@ pkgs/bay-go/
 │   │   └── queries/             # sqlc 查询定义
 │   │       ├── sandbox.sql
 │   │       ├── session.sql
-│   │       ├── workspace.sql
+│   │       ├── cargo.sql
 │   │       └── idempotency.sql
 │   ├── repo/                    # sqlc 生成的代码
 │   │   ├── db.go
@@ -134,7 +134,7 @@ pkgs/bay-go/
 │   ├── manager/
 │   │   ├── sandbox.go           # SandboxManager
 │   │   ├── session.go           # SessionManager
-│   │   └── workspace.go         # WorkspaceManager
+│   │   └── cargo.go             # CargoManager
 │   ├── router/
 │   │   └── capability.go        # CapabilityRouter
 │   ├── client/
@@ -165,7 +165,7 @@ CREATE TABLE sandboxes (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     profile_id TEXT NOT NULL,
-    workspace_id TEXT NOT NULL,
+    cargo_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     ttl_seconds INTEGER,
     expires_at TIMESTAMP,
@@ -173,7 +173,7 @@ CREATE TABLE sandboxes (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    FOREIGN KEY (cargo_id) REFERENCES cargos(id)
 );
 
 CREATE TABLE sessions (
@@ -188,7 +188,7 @@ CREATE TABLE sessions (
     FOREIGN KEY (sandbox_id) REFERENCES sandboxes(id)
 );
 
-CREATE TABLE workspaces (
+CREATE TABLE cargos (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     driver_ref TEXT NOT NULL,
@@ -212,7 +212,7 @@ CREATE TABLE idempotency_keys (
 CREATE INDEX idx_sandboxes_owner ON sandboxes(owner);
 CREATE INDEX idx_sandboxes_expires_at ON sandboxes(expires_at) WHERE expires_at IS NOT NULL;
 CREATE INDEX idx_sessions_sandbox_id ON sessions(sandbox_id);
-CREATE INDEX idx_workspaces_owner ON workspaces(owner);
+CREATE INDEX idx_cargos_owner ON cargos(owner);
 CREATE INDEX idx_idempotency_expires ON idempotency_keys(expires_at);
 ```
 
@@ -280,7 +280,7 @@ type ContainerInfo struct {
 type CreateParams struct {
     SessionID   string
     SandboxID   string
-    WorkspaceID string
+    CargoID     string
     ProfileID   string
     Image       string
     RuntimePort int
@@ -358,7 +358,7 @@ import (
 type Router struct {
     sandboxManager   *manager.SandboxManager
     sessionManager   *manager.SessionManager
-    workspaceManager *manager.WorkspaceManager
+    cargoManager     *manager.CargoManager
     capabilityRouter *router.CapabilityRouter
     auth             *auth.Authenticator
 }
@@ -410,8 +410,8 @@ func (m *SandboxManager) Create(ctx context.Context, params CreateParams) (*Sand
 
     qtx := m.repo.WithTx(tx)
 
-    // 1. 创建 workspace
-    workspace, err := qtx.CreateWorkspace(ctx, ...)
+    // 1. 创建 cargo
+    cargo, err := qtx.CreateCargo(ctx, ...)
     if err != nil {
         return nil, err
     }
@@ -623,7 +623,7 @@ M2: Driver 层
 M3: Manager 层
   ├── SandboxManager
   ├── SessionManager
-  ├── WorkspaceManager
+  ├── CargoManager
   └── 并发测试
 
 M4: API 层
