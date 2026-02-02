@@ -9,6 +9,7 @@ Purpose: Verify POST /v1/sandboxes/{id}/extend_ttl semantics:
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 
@@ -108,6 +109,7 @@ class TestE2EExtendTTL:
             finally:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
 
+    @pytest.mark.xdist_group("gc")
     async def test_extend_ttl_rejects_expired(self):
         """Tests TTL expiration detection - extend_ttl on expired sandbox should fail.
         
@@ -117,19 +119,23 @@ class TestE2EExtendTTL:
         
         Both are valid behaviors - the key point is that extend_ttl cannot
         resurrect an expired sandbox.
+        
+        Note: This test is marked with xdist_group("gc") to run serially with other
+        GC-related tests, as it depends on TTL expiration timing.
         """
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
-            # Create with short TTL (3s gives enough margin)
+            # Create with short TTL (4s gives enough margin for timing variations)
             create_resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "ttl": 3},
+                json={"profile": DEFAULT_PROFILE, "ttl": 4},
             )
             assert create_resp.status_code == 201
             sandbox_id = create_resp.json()["id"]
 
             try:
-                # wait for expiry (3s TTL + small buffer)
-                time.sleep(3.5)
+                # wait for expiry (4s TTL + 1s buffer)
+                # Use asyncio.sleep instead of time.sleep in async context
+                await asyncio.sleep(5)
 
                 extend_resp = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/extend_ttl",

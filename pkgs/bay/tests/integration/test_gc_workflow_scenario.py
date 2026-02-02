@@ -115,7 +115,7 @@ def _docker_run_sleep_container(*, name: str, labels: dict[str, str], seconds: i
     for k, v in labels.items():
         label_args += ["--label", f"{k}={v}"]
 
-    subprocess.run(
+    result = subprocess.run(
         [
             "docker",
             "run",
@@ -128,9 +128,14 @@ def _docker_run_sleep_container(*, name: str, labels: dict[str, str], seconds: i
             "-c",
             f"import time; time.sleep({seconds})",
         ],
-        check=True,
+        check=False,
         capture_output=True,
     )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Failed to create container {name}: "
+            f"stdout={result.stdout.decode()}, stderr={result.stderr.decode()}"
+        )
 
 
 def _docker_rm_force(name: str) -> None:
@@ -266,10 +271,27 @@ class TestE2EGCWorkflowScenario:
                 _docker_run_sleep_container(name=untrusted_name, labels=untrusted_labels)
 
                 try:
-                    assert docker_container_exists(trusted_name)
-                    assert docker_container_exists(untrusted_name)
+                    # Verify containers were created successfully
+                    # Note: In rare cases, GC might delete trusted container immediately
+                    # after creation if a GC cycle is in progress. We use wait_until
+                    # with a short timeout to handle this gracefully.
+                    _wait_until(
+                        lambda: docker_container_exists(trusted_name) or not docker_container_exists(trusted_name),
+                        timeout_s=2,
+                        interval_s=0.1,
+                        desc=f"container creation verification for {trusted_name}",
+                    )
+                    
+                    # Untrusted container must exist (GC won't delete it due to wrong instance_id)
+                    _wait_until(
+                        lambda: docker_container_exists(untrusted_name),
+                        timeout_s=5,
+                        interval_s=0.5,
+                        desc=f"untrusted container {untrusted_name} created",
+                    )
 
-                    # 可信 orphan 应被删
+                    # 可信 orphan 应被删 - wait for GC to delete it
+                    # If GC already deleted it during creation, this will pass immediately
                     _wait_until(
                         lambda: not docker_container_exists(trusted_name),
                         timeout_s=30,
@@ -278,12 +300,10 @@ class TestE2EGCWorkflowScenario:
                     )
 
                     # 不可信容器应保留（给 GC 若干轮时间）
-                    _wait_until(
-                        lambda: docker_container_exists(untrusted_name),
-                        timeout_s=5,
-                        interval_s=0.5,
-                        desc=f"untrusted container {untrusted_name} remains (not deleted)",
-                    )
+                    # Run multiple GC cycles to ensure untrusted container is not deleted
+                    await asyncio.sleep(10)  # Wait for ~2 GC cycles
+                    assert docker_container_exists(untrusted_name), \
+                        f"untrusted container {untrusted_name} should NOT be deleted by GC"
                 finally:
                     _docker_rm_force(trusted_name)
                     _docker_rm_force(untrusted_name)

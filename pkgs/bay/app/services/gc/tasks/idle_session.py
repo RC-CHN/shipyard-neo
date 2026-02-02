@@ -71,14 +71,19 @@ class IdleSessionGC(GCTask):
         db_result = await self._db.execute(query)
         sandboxes = db_result.scalars().all()
 
+        # Extract sandbox IDs upfront to avoid lazy loading issues after rollback.
+        # After _process_sandbox calls rollback, the sandbox objects become detached
+        # and accessing their attributes would trigger lazy loading in wrong context.
+        sandbox_ids = [sandbox.id for sandbox in sandboxes]
+
         self._log.info(
             "gc.idle_session.found",
-            count=len(sandboxes),
+            count=len(sandbox_ids),
         )
 
-        for sandbox in sandboxes:
+        for sandbox_id in sandbox_ids:
             try:
-                cleaned = await self._process_sandbox(sandbox.id)
+                cleaned = await self._process_sandbox(sandbox_id)
                 if cleaned:
                     result.cleaned_count += 1
                 else:
@@ -86,10 +91,10 @@ class IdleSessionGC(GCTask):
             except Exception as e:
                 self._log.exception(
                     "gc.idle_session.item_error",
-                    sandbox_id=sandbox.id,
+                    sandbox_id=sandbox_id,
                     error=str(e),
                 )
-                result.add_error(f"sandbox {sandbox.id}: {e}")
+                result.add_error(f"sandbox {sandbox_id}: {e}")
 
         return result
 
