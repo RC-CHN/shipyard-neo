@@ -1,4 +1,4 @@
-"""OrphanWorkspaceGC - Clean up orphan managed workspaces."""
+"""OrphanCargoGC - Clean up orphan managed cargos."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlmodel import select
 
-from app.managers.workspace import WorkspaceManager
+from app.managers.cargo import CargoManager
 from app.models.sandbox import Sandbox
-from app.models.workspace import Workspace
+from app.models.cargo import Cargo
 from app.services.gc.base import GCResult, GCTask
 
 if TYPE_CHECKING:
@@ -20,17 +20,17 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
-class OrphanWorkspaceGC(GCTask):
-    """GC task for cleaning up orphan managed workspaces.
+class OrphanCargoGC(GCTask):
+    """GC task for cleaning up orphan managed cargos.
 
     Trigger condition:
-        workspace.managed = True AND (
-            workspace.managed_by_sandbox_id IS NULL OR
+        cargo.managed = True AND (
+            cargo.managed_by_sandbox_id IS NULL OR
             sandbox.deleted_at IS NOT NULL
         )
 
     Action:
-        Delete workspace via WorkspaceManager.delete_internal_by_id()
+        Delete cargo via CargoManager.delete_internal_by_id()
     """
 
     def __init__(
@@ -40,76 +40,76 @@ class OrphanWorkspaceGC(GCTask):
     ) -> None:
         self._driver = driver
         self._db = db_session
-        self._log = logger.bind(gc_task="orphan_workspace")
-        self._workspace_mgr = WorkspaceManager(driver, db_session)
+        self._log = logger.bind(gc_task="orphan_cargo")
+        self._cargo_mgr = CargoManager(driver, db_session)
 
     @property
     def name(self) -> str:
-        return "orphan_workspace"
+        return "orphan_cargo"
 
     async def run(self) -> GCResult:
         """Execute orphan workspace cleanup."""
         result = GCResult(task_name=self.name)
 
-        # Find orphan managed workspaces
+        # Find orphan managed cargos
         # Case 1: managed_by_sandbox_id is NULL
         # Case 2: referenced sandbox is soft-deleted
         orphans = await self._find_orphans()
 
         self._log.info(
-            "gc.orphan_workspace.found",
+            "gc.orphan_cargo.found",
             count=len(orphans),
         )
 
-        for workspace_id in orphans:
+        for cargo_id in orphans:
             try:
-                await self._workspace_mgr.delete_internal_by_id(workspace_id)
+                await self._cargo_mgr.delete_internal_by_id(cargo_id)
                 result.cleaned_count += 1
                 self._log.info(
-                    "gc.orphan_workspace.deleted",
-                    workspace_id=workspace_id,
+                    "gc.orphan_cargo.deleted",
+                    cargo_id=cargo_id,
                 )
             except Exception as e:
                 self._log.exception(
-                    "gc.orphan_workspace.item_error",
-                    workspace_id=workspace_id,
+                    "gc.orphan_cargo.item_error",
+                    cargo_id=cargo_id,
                     error=str(e),
                 )
-                result.add_error(f"workspace {workspace_id}: {e}")
+                result.add_error(f"cargo {cargo_id}: {e}")
 
         return result
 
     async def _find_orphans(self) -> list[str]:
-        """Find orphan managed workspace IDs."""
+        """Find orphan managed cargo IDs."""
         orphan_ids: list[str] = []
 
         # Case 1: managed=True but managed_by_sandbox_id is NULL
-        query1 = select(Workspace.id).where(
-            Workspace.managed == True,  # noqa: E712
-            Workspace.managed_by_sandbox_id.is_(None),
+        query1 = select(Cargo.id).where(
+            Cargo.managed == True,  # noqa: E712
+            Cargo.managed_by_sandbox_id.is_(None),
         )
         result1 = await self._db.execute(query1)
-        for (workspace_id,) in result1:
-            orphan_ids.append(workspace_id)
+        for (cargo_id,) in result1:
+            orphan_ids.append(cargo_id)
 
         # Case 2: managed=True and referenced sandbox is soft-deleted
         # Use LEFT OUTER JOIN to find workspaces where sandbox.deleted_at IS NOT NULL
         SandboxAlias = aliased(Sandbox)
         query2 = (
-            select(Workspace.id)
+            select(Cargo.id)
             .outerjoin(
                 SandboxAlias,
-                Workspace.managed_by_sandbox_id == SandboxAlias.id,
+                Cargo.managed_by_sandbox_id == SandboxAlias.id,
             )
             .where(
-                Workspace.managed == True,  # noqa: E712
-                Workspace.managed_by_sandbox_id.is_not(None),
+                Cargo.managed == True,  # noqa: E712
+                Cargo.managed_by_sandbox_id.is_not(None),
                 SandboxAlias.deleted_at.is_not(None),
             )
         )
         result2 = await self._db.execute(query2)
-        for (workspace_id,) in result2:
-            if workspace_id not in orphan_ids:
-                orphan_ids.append(workspace_id)
+        for (cargo_id,) in result2:
+            if cargo_id not in orphan_ids:
+                orphan_ids.append(cargo_id)
 
         return orphan_ids

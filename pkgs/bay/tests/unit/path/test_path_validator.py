@@ -91,7 +91,7 @@ class TestValidateRelativePath:
         assert exc.value.code == "invalid_path"
         assert exc.value.details["reason"] == "absolute_path"
 
-    def test_rejects_absolute_path_workspace(self) -> None:
+    def test_rejects_absolute_path_container_mount(self) -> None:
         with pytest.raises(InvalidPathError) as exc:
             validate_relative_path("/workspace/file.txt")
         assert exc.value.details["reason"] == "absolute_path"
@@ -101,7 +101,7 @@ class TestValidateRelativePath:
             validate_relative_path("../file.txt")
         assert exc.value.details["reason"] == "path_traversal"
 
-    def test_rejects_traversal_escaping_workspace(self) -> None:
+    def test_rejects_traversal_escaping_mount(self) -> None:
         # a/../../b.txt escapes: a -> . -> error
         with pytest.raises(InvalidPathError) as exc:
             validate_relative_path("a/../../b.txt")

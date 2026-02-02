@@ -136,7 +136,7 @@ class TestExpiredSandboxGCQueryConditions:
         expired_sandbox = MagicMock()
         expired_sandbox.id = "sandbox-1"
         expired_sandbox.owner = "default"
-        expired_sandbox.workspace_id = "ws-1"
+        expired_sandbox.cargo_id = "ws-1"
         expired_sandbox.deleted_at = None
         expired_sandbox.expires_at = datetime.utcnow() - timedelta(hours=1)
 
@@ -226,7 +226,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-1",
                 "bay.sandbox_id": "sandbox-1",
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay",
                 "bay.managed": "true",
             },
@@ -258,7 +258,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-1",
                 # missing: "bay.sandbox_id"
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay",
                 "bay.managed": "true",
             },
@@ -290,7 +290,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-1",
                 "bay.sandbox_id": "sandbox-1",
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay-2",  # Different instance
                 "bay.managed": "true",
             },
@@ -321,7 +321,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-1",
                 "bay.sandbox_id": "sandbox-1",
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay",
                 "bay.managed": "false",  # Not managed
             },
@@ -352,7 +352,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-1",
                 "bay.sandbox_id": "sandbox-1",
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay",
                 "bay.managed": "true",
             },
@@ -388,7 +388,7 @@ class TestOrphanContainerGCStrictMode:
             labels={
                 "bay.session_id": "sess-orphan",
                 "bay.sandbox_id": "sandbox-1",
-                "bay.workspace_id": "ws-1",
+                "bay.cargo_id": "ws-1",
                 "bay.instance_id": "bay",
                 "bay.managed": "true",
             },
@@ -410,28 +410,28 @@ class TestOrphanContainerGCStrictMode:
         driver.destroy_runtime_instance.assert_called_once_with("container-1")
 
 
-class TestOrphanWorkspaceGC:
-    """Tests for OrphanWorkspaceGC."""
+class TestOrphanCargoGC:
+    """Tests for OrphanCargoGC."""
 
     @pytest.mark.asyncio
-    async def test_finds_orphan_workspaces(self):
-        """Should find managed workspaces without a valid sandbox."""
-        from app.services.gc.tasks.orphan_workspace import OrphanWorkspaceGC
+    async def test_finds_orphan_cargos(self):
+        """Should find managed cargos without a valid sandbox."""
+        from app.services.gc.tasks.orphan_cargo import OrphanCargoGC
         from tests.fakes import FakeDriver
 
         driver = FakeDriver()
         db_session = AsyncMock()
 
-        # Mock workspace manager
-        task = OrphanWorkspaceGC(driver, db_session)
+        # Mock cargo manager
+        task = OrphanCargoGC(driver, db_session)
         task._find_orphans = AsyncMock(return_value=["ws-orphan-1", "ws-orphan-2"])
-        task._workspace_mgr = MagicMock()
-        task._workspace_mgr.delete_internal_by_id = AsyncMock()
+        task._cargo_mgr = MagicMock()
+        task._cargo_mgr.delete_internal_by_id = AsyncMock()
 
         result = await task.run()
 
         assert result.cleaned_count == 2
-        assert task._workspace_mgr.delete_internal_by_id.call_count == 2
+        assert task._cargo_mgr.delete_internal_by_id.call_count == 2
 
     @pytest.mark.asyncio
     async def test_orphan_workspace_no_orphans(self):
@@ -487,7 +487,7 @@ class TestGCTaskConfig:
         config = GCConfig()
         assert config.idle_session.enabled is True
         assert config.expired_sandbox.enabled is True
-        assert config.orphan_workspace.enabled is True
+        assert config.orphan_cargo.enabled is True
 
     def test_gc_enabled_by_default(self):
         """GC should be enabled by default."""

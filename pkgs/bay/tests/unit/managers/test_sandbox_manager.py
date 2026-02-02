@@ -19,7 +19,7 @@ from app.errors import SandboxExpiredError, SandboxTTLInfiniteError, ValidationE
 from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session, SessionStatus
-from app.models.workspace import Workspace
+from app.models.cargo import Cargo
 from tests.fakes import FakeDriver
 
 
@@ -79,7 +79,7 @@ def sandbox_manager(
 ) -> SandboxManager:
     """Create SandboxManager with FakeDriver."""
     with patch("app.managers.sandbox.sandbox.get_settings", return_value=fake_settings):
-        with patch("app.managers.workspace.workspace.get_settings", return_value=fake_settings):
+        with patch("app.managers.cargo.cargo.get_settings", return_value=fake_settings):
             manager = SandboxManager(driver=fake_driver, db_session=db_session)
             yield manager
 
@@ -87,7 +87,7 @@ def sandbox_manager(
 class TestSandboxManagerCreate:
     """Unit-01: SandboxManager.create tests.
     
-    Purpose: Verify sandbox creation also creates managed workspace correctly.
+    Purpose: Verify sandbox creation also creates managed cargo correctly.
     """
 
     async def test_create_sandbox_creates_managed_workspace(
@@ -96,7 +96,7 @@ class TestSandboxManagerCreate:
         fake_driver: FakeDriver,
         db_session: AsyncSession,
     ):
-        """Create sandbox should create a managed workspace."""
+        """Create sandbox should create a managed cargo."""
         # Act
         sandbox = await sandbox_manager.create(
             owner="test-user",
@@ -108,25 +108,25 @@ class TestSandboxManagerCreate:
         assert sandbox.id.startswith("sandbox-")
         assert sandbox.owner == "test-user"
         assert sandbox.profile_id == "python-default"
-        assert sandbox.workspace_id is not None
+        assert sandbox.cargo_id is not None
         assert sandbox.current_session_id is None  # No session created initially
         assert sandbox.deleted_at is None
 
-        # Assert workspace was created and is managed
+        # Assert cargo was created and is managed
         result = await db_session.execute(
-            select(Workspace).where(Workspace.id == sandbox.workspace_id)
+            select(Cargo).where(Cargo.id == sandbox.cargo_id)
         )
-        workspace = result.scalars().first()
+        cargo = result.scalars().first()
         
-        assert workspace is not None
-        assert workspace.managed is True
-        assert workspace.managed_by_sandbox_id == sandbox.id
-        assert workspace.owner == "test-user"
+        assert cargo is not None
+        assert cargo.managed is True
+        assert cargo.managed_by_sandbox_id == sandbox.id
+        assert cargo.owner == "test-user"
         
         # Assert volume was created via driver
         assert len(fake_driver.create_volume_calls) == 1
         volume_call = fake_driver.create_volume_calls[0]
-        assert volume_call["name"].startswith("bay-workspace-")
+        assert volume_call["name"].startswith("bay-cargo-")
 
     async def test_create_sandbox_with_ttl(
         self,
@@ -183,7 +183,7 @@ class TestSandboxManagerCreate:
 class TestSandboxManagerStop:
     """Unit-02: SandboxManager.stop tests.
     
-    Purpose: Verify stop stops session but keeps workspace.
+    Purpose: Verify stop stops session but keeps cargo.
     """
 
     async def test_stop_clears_current_session(
@@ -253,26 +253,26 @@ class TestSandboxManagerStop:
         # Assert driver.stop was called
         assert "fake-container-1" in fake_driver.stop_calls
 
-    async def test_stop_preserves_workspace(
+    async def test_stop_preserves_cargo(
         self,
         sandbox_manager: SandboxManager,
         fake_driver: FakeDriver,
         db_session: AsyncSession,
     ):
-        """Stop should NOT delete the workspace."""
+        """Stop should NOT delete the cargo."""
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
-        workspace_id = sandbox.workspace_id
+        cargo_id = sandbox.cargo_id
         
         # Act
         await sandbox_manager.stop(sandbox)
 
-        # Assert workspace still exists
+        # Assert cargo still exists
         result = await db_session.execute(
-            select(Workspace).where(Workspace.id == workspace_id)
+            select(Cargo).where(Cargo.id == cargo_id)
         )
-        workspace = result.scalars().first()
-        assert workspace is not None
+        cargo = result.scalars().first()
+        assert cargo is not None
         
         # Assert no delete_volume calls
         assert len(fake_driver.delete_volume_calls) == 0
@@ -319,7 +319,7 @@ class TestSandboxManagerStop:
 class TestSandboxManagerDelete:
     """Unit-03: SandboxManager.delete tests.
     
-    Purpose: Verify delete cascade deletes managed workspace.
+    Purpose: Verify delete cascade deletes managed cargo.
     """
 
     async def test_delete_sets_deleted_at(
@@ -343,22 +343,22 @@ class TestSandboxManagerDelete:
         assert deleted_sandbox is not None
         assert deleted_sandbox.deleted_at is not None
 
-    async def test_delete_cascade_deletes_managed_workspace(
+    async def test_delete_cascade_deletes_managed_cargo(
         self,
         sandbox_manager: SandboxManager,
         fake_driver: FakeDriver,
         db_session: AsyncSession,
     ):
-        """Delete should cascade delete managed workspace."""
+        """Delete should cascade delete managed cargo."""
         # Arrange
         sandbox = await sandbox_manager.create(owner="test-user")
-        workspace_id = sandbox.workspace_id
+        cargo_id = sandbox.cargo_id
         
-        # Get workspace driver_ref for assertion
+        # Get cargo driver_ref for assertion
         result = await db_session.execute(
-            select(Workspace).where(Workspace.id == workspace_id)
+            select(Cargo).where(Cargo.id == cargo_id)
         )
-        workspace = result.scalars().first()
+        cargo = result.scalars().first()
         volume_name = workspace.driver_ref
         
         # Act
@@ -366,10 +366,10 @@ class TestSandboxManagerDelete:
 
         # Assert - workspace record deleted
         result = await db_session.execute(
-            select(Workspace).where(Workspace.id == workspace_id)
+            select(Cargo).where(Cargo.id == cargo_id)
         )
-        workspace = result.scalars().first()
-        assert workspace is None
+        cargo = result.scalars().first()
+        assert cargo is None
 
         # Assert - driver.delete_volume called
         assert volume_name in fake_driver.delete_volume_calls

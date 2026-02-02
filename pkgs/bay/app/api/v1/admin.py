@@ -30,7 +30,7 @@ class GCRunRequest(BaseModel):
     tasks: list[str] | None = Field(
         default=None,
         description="List of task names to run. None = all enabled tasks. "
-        "Valid names: idle_session, expired_sandbox, orphan_workspace, orphan_container",
+        "Valid names: idle_session, expired_sandbox, orphan_cargo, orphan_container",
     )
 
 
@@ -159,7 +159,7 @@ async def get_gc_status(
         tasks={
             "idle_session": {"enabled": gc_config.idle_session.enabled},
             "expired_sandbox": {"enabled": gc_config.expired_sandbox.enabled},
-            "orphan_workspace": {"enabled": gc_config.orphan_workspace.enabled},
+            "orphan_cargo": {"enabled": gc_config.orphan_cargo.enabled},
             "orphan_container": {"enabled": gc_config.orphan_container.enabled},
         },
     )

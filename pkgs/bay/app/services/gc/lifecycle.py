@@ -13,7 +13,7 @@ from app.services.gc.tasks import (
     ExpiredSandboxGC,
     IdleSessionGC,
     OrphanContainerGC,
-    OrphanWorkspaceGC,
+    OrphanCargoGC,
 )
 
 logger = structlog.get_logger()
@@ -46,8 +46,8 @@ def _create_gc_tasks_factory():
             if gc_config.expired_sandbox.enabled:
                 tasks.append(ExpiredSandboxGC(driver, db_session))
 
-            if gc_config.orphan_workspace.enabled:
-                tasks.append(OrphanWorkspaceGC(driver, db_session))
+            if gc_config.orphan_cargo.enabled:
+                tasks.append(OrphanCargoGC(driver, db_session))
 
             if gc_config.orphan_container.enabled:
                 tasks.append(OrphanContainerGC(driver, db_session, gc_config))
@@ -95,8 +95,8 @@ class SessionPerCycleGCScheduler(GCScheduler):
                 if gc_config.expired_sandbox.enabled:
                     tasks.append(ExpiredSandboxGC(self._driver, db_session))
 
-                if gc_config.orphan_workspace.enabled:
-                    tasks.append(OrphanWorkspaceGC(self._driver, db_session))
+                if gc_config.orphan_cargo.enabled:
+                    tasks.append(OrphanCargoGC(self._driver, db_session))
 
                 if gc_config.orphan_container.enabled:
                     tasks.append(OrphanContainerGC(self._driver, db_session, gc_config))
@@ -140,7 +140,7 @@ async def init_gc_scheduler() -> GCScheduler | None:
         tasks={
             "idle_session": gc_config.idle_session.enabled,
             "expired_sandbox": gc_config.expired_sandbox.enabled,
-            "orphan_workspace": gc_config.orphan_workspace.enabled,
+            "orphan_cargo": gc_config.orphan_cargo.enabled,
             "orphan_container": gc_config.orphan_container.enabled,
         },
     )

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.config import ProfileConfig
     from app.models.session import Session
-    from app.models.workspace import Workspace
+    from app.models.cargo import Cargo
 
 
 class ContainerStatus(str, Enum):
@@ -69,7 +69,7 @@ class Driver(ABC):
     - owner
     - sandbox_id
     - session_id
-    - workspace_id
+    - cargo_id
     - profile_id
 
     Note:
@@ -82,7 +82,7 @@ class Driver(ABC):
         self,
         session: "Session",
         profile: "ProfileConfig",
-        workspace: "Workspace",
+        workspace: "Cargo",
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
@@ -91,7 +91,7 @@ class Driver(ABC):
         Args:
             session: Session model
             profile: Profile configuration
-            workspace: Workspace to mount
+            workspace: Cargo to mount
             labels: Additional labels for the container
             
         Returns:
@@ -157,7 +157,7 @@ class Driver(ABC):
         """
         ...
 
-    # Volume management (for Workspace)
+    # Volume management (for Cargo)
 
     @abstractmethod
     async def create_volume(self, name: str, labels: dict[str, str] | None = None) -> str:

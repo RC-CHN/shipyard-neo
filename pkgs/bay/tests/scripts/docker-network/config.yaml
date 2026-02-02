@@ -27,7 +27,7 @@ driver:
     publish_ports: false
     host_port: null
 
-workspace:
+cargo:
   root_path: "/var/lib/bay/workspaces"
   default_size_limit_mb: 1024
   mount_path: "/workspace"
@@ -99,7 +99,7 @@ gc:
     enabled: true
   expired_sandbox:
     enabled: true
-  orphan_workspace:
+  orphan_cargo:
     enabled: true
   orphan_container:
     enabled: true

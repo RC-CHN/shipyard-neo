@@ -1,7 +1,7 @@
 """SandboxManager - manages sandbox lifecycle.
 
 Sandbox is the external-facing resource that aggregates
-Workspace + Profile + Session(s).
+Cargo + Profile + Session(s).
 
 See: plans/bay-design.md section 2.4
 """
@@ -26,7 +26,7 @@ from app.errors import (
     ValidationError,
 )
 from app.managers.session import SessionManager
-from app.managers.workspace import WorkspaceManager
+from app.managers.cargo import CargoManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
 
@@ -50,7 +50,7 @@ class SandboxManager:
         self._settings = get_settings()
 
         # Sub-managers
-        self._workspace_mgr = WorkspaceManager(driver, db_session)
+        self._cargo_mgr = CargoManager(driver, db_session)
         self._session_mgr = SessionManager(driver, db_session)
 
     async def create(
@@ -58,7 +58,7 @@ class SandboxManager:
         owner: str,
         *,
         profile_id: str = "python-default",
-        workspace_id: str | None = None,
+        cargo_id: str | None = None,
         ttl: int | None = None,
     ) -> Sandbox:
         """Create a new sandbox.
@@ -66,7 +66,7 @@ class SandboxManager:
         Args:
             owner: Owner identifier
             profile_id: Profile ID
-            workspace_id: Optional existing workspace ID
+            cargo_id: Optional existing workspace ID
             ttl: Time-to-live in seconds (None/0 = no expiry)
             
         Returns:
@@ -87,12 +87,12 @@ class SandboxManager:
         )
 
         # Create or get workspace
-        if workspace_id:
+        if cargo_id:
             # Use existing external workspace
-            workspace = await self._workspace_mgr.get(workspace_id, owner)
+            workspace = await self._cargo_mgr.get(cargo_id, owner)
         else:
             # Create managed workspace
-            workspace = await self._workspace_mgr.create(
+            workspace = await self._cargo_mgr.create(
                 owner=owner,
                 managed=True,
                 managed_by_sandbox_id=sandbox_id,
@@ -108,7 +108,7 @@ class SandboxManager:
             id=sandbox_id,
             owner=owner,
             profile_id=profile_id,
-            workspace_id=workspace.id,
+            cargo_id=workspace.id,
             expires_at=expires_at,
             created_at=datetime.utcnow(),
             last_active_at=datetime.utcnow(),
@@ -204,9 +204,9 @@ class SandboxManager:
         if profile is None:
             raise ValidationError(f"Invalid profile: {sandbox.profile_id}")
 
-        # Get sandbox_id and workspace_id before acquiring lock (avoid lazy loading issues inside lock)
+        # Get sandbox_id and cargo_id before acquiring lock (avoid lazy loading issues inside lock)
         sandbox_id = sandbox.id
-        workspace_id = sandbox.workspace_id
+        cargo_id = sandbox.cargo_id
         
         # In-memory lock for single-instance deployments (SQLite doesn't support FOR UPDATE)
         sandbox_lock = await get_sandbox_lock(sandbox_id)
@@ -228,9 +228,9 @@ class SandboxManager:
                 raise NotFoundError(f"Sandbox not found: {sandbox_id}")
 
             # Re-fetch workspace after rollback (objects are expired after rollback)
-            workspace = await self._workspace_mgr.get_by_id(workspace_id)
+            workspace = await self._cargo_mgr.get_by_id(cargo_id)
             if workspace is None:
-                raise NotFoundError(f"Workspace not found: {workspace_id}")
+                raise NotFoundError(f"Cargo not found: {cargo_id}")
 
             # Check if we have a current session (re-check after acquiring lock)
             session = None
@@ -393,7 +393,7 @@ class SandboxManager:
         """
         sandbox_id = sandbox.id
         owner = sandbox.owner
-        workspace_id = sandbox.workspace_id
+        cargo_id = sandbox.cargo_id
         self._log.info("sandbox.delete", sandbox_id=sandbox_id)
 
         # Use same lock as ensure_running to prevent race conditions with GC
@@ -423,7 +423,7 @@ class SandboxManager:
                 await self._session_mgr.destroy(session)
 
             # Get workspace (re-fetch after rollback)
-            workspace = await self._workspace_mgr.get_by_id(workspace_id)
+            workspace = await self._cargo_mgr.get_by_id(cargo_id)
 
             # Soft delete sandbox
             locked_sandbox.deleted_at = datetime.utcnow()
@@ -432,7 +432,7 @@ class SandboxManager:
 
             # Cascade delete managed workspace
             if workspace and workspace.managed:
-                await self._workspace_mgr.delete(
+                await self._cargo_mgr.delete(
                     workspace.id,
                     owner,
                     force=True,  # Allow deleting managed workspace

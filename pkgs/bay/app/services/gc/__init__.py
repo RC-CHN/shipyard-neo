@@ -3,7 +3,7 @@
 This module provides background garbage collection for:
 - Idle sessions (IdleSessionGC)
 - Expired sandboxes (ExpiredSandboxGC)
-- Orphan workspaces (OrphanWorkspaceGC)
+- Orphan cargos (OrphanCargoGC)
 - Orphan containers (OrphanContainerGC)
 
 Usage:

@@ -38,7 +38,7 @@ class GCTask(ABC):
     Each GC task is responsible for cleaning up a specific type of resource:
     - IdleSessionGC: Reclaim compute for idle sandboxes
     - ExpiredSandboxGC: Delete sandboxes past their TTL
-    - OrphanWorkspaceGC: Clean up orphan managed workspaces
+    - OrphanCargoGC: Clean up orphan managed cargos
     - OrphanContainerGC: Clean up orphan containers (strict mode)
     """
 

@@ -242,7 +242,7 @@ async def trigger_gc(
 
     Args:
         tasks: Specific tasks to run, or None for full GC.
-               Options: idle_session, expired_sandbox, orphan_workspace, orphan_container
+               Options: idle_session, expired_sandbox, orphan_cargo, orphan_container
     """
     body = {"tasks": tasks} if tasks else None
     delay = retry_delay

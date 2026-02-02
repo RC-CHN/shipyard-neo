@@ -2,7 +2,7 @@
 
 Sandbox is the only external-facing resource.
 - Stable ID that clients hold onto
-- Aggregates Workspace + Profile + Session(s)
+- Aggregates Cargo + Profile + Session(s)
 - Session can be recycled/recreated transparently
 """
 
@@ -14,7 +14,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from app.models.session import Session
-    from app.models.workspace import Workspace
+    from app.models.cargo import Cargo
 
 
 class SandboxStatus(str, Enum):
@@ -39,12 +39,12 @@ class Sandbox(SQLModel, table=True):
     # Profile (runtime specification)
     profile_id: str = Field(default="python-default")
 
-    # Workspace relationship
-    # Note: workspace_id can become NULL after sandbox is soft-deleted and
-    # its managed workspace is cascade-deleted. For active sandboxes (deleted_at IS NULL),
-    # workspace_id is guaranteed to be set at creation time.
-    workspace_id: Optional[str] = Field(
-        default=None, foreign_key="workspaces.id", index=True
+    # Cargo relationship
+    # Note: cargo_id can become NULL after sandbox is soft-deleted and
+    # its managed cargo is cascade-deleted. For active sandboxes (deleted_at IS NULL),
+    # cargo_id is guaranteed to be set at creation time.
+    cargo_id: Optional[str] = Field(
+        default=None, foreign_key="cargos.id", index=True
     )
 
     # Current session (single session for Phase 1)
@@ -65,7 +65,7 @@ class Sandbox(SQLModel, table=True):
     last_active_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships
-    workspace: "Workspace" = Relationship(back_populates="sandboxes")
+    cargo: "Cargo" = Relationship(back_populates="sandboxes")
     sessions: list["Session"] = Relationship(back_populates="sandbox")
 
     @property

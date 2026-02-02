@@ -1,10 +1,10 @@
-"""Workspace data model.
+"""Cargo data model.
 
-Workspace represents a persistent data volume that can be shared across Sessions.
+Cargo represents a persistent data volume that can be shared across Sessions.
 
 Types:
 - managed: Created implicitly by POST /sandboxes, cascade-deleted with Sandbox
-- external: Created explicitly by POST /workspaces, never cascade-deleted
+- external: Created explicitly by POST /cargos, never cascade-deleted
 """
 
 from datetime import datetime
@@ -16,10 +16,10 @@ if TYPE_CHECKING:
     from app.models.sandbox import Sandbox
 
 
-class Workspace(SQLModel, table=True):
-    """Workspace - persistent data storage."""
+class Cargo(SQLModel, table=True):
+    """Cargo - persistent data storage."""
 
-    __tablename__ = "workspaces"
+    __tablename__ = "cargos"
 
     id: str = Field(primary_key=True)
     owner: str = Field(index=True)
@@ -40,7 +40,7 @@ class Workspace(SQLModel, table=True):
     last_accessed_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Relationships
-    sandboxes: list["Sandbox"] = Relationship(back_populates="workspace")
+    sandboxes: list["Sandbox"] = Relationship(back_populates="cargo")
 
     # Fixed mount path (not stored, constant)
     @property

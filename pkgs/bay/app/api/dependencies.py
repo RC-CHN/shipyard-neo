@@ -2,7 +2,7 @@
 
 Provides dependency injection for:
 - Database sessions
-- Managers (Sandbox, Session, Workspace)
+- Managers (Sandbox, Session, Cargo)
 - Driver
 - Services (Idempotency)
 - Authentication

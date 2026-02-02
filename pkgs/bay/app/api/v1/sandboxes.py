@@ -25,7 +25,7 @@ class CreateSandboxRequest(BaseModel):
     """Request to create a sandbox."""
 
     profile: str = "python-default"
-    workspace_id: str | None = None
+    cargo_id: str | None = None
     ttl: int | None = None  # seconds, null/0 = no expiry
 
 
@@ -35,7 +35,7 @@ class SandboxResponse(BaseModel):
     id: str
     status: str
     profile: str
-    workspace_id: str
+    cargo_id: str
     capabilities: list[str]
     created_at: datetime
     expires_at: datetime | None
@@ -65,7 +65,7 @@ def _sandbox_to_response(sandbox, current_session=None) -> SandboxResponse:
         id=sandbox.id,
         status=sandbox.compute_status(current_session).value,
         profile=sandbox.profile_id,
-        workspace_id=sandbox.workspace_id,
+        cargo_id=sandbox.cargo_id,
         capabilities=capabilities,
         created_at=sandbox.created_at,
         expires_at=sandbox.expires_at,
@@ -114,7 +114,7 @@ async def create_sandbox(
     sandbox = await sandbox_mgr.create(
         owner=owner,
         profile_id=request.profile,
-        workspace_id=request.workspace_id,
+        cargo_id=request.cargo_id,
         ttl=request.ttl,
     )
     response = _sandbox_to_response(sandbox)
@@ -273,8 +273,8 @@ async def delete_sandbox(
     """Delete sandbox permanently.
     
     - Destroys all running sessions
-    - Cascade deletes managed workspace
-    - Does NOT cascade delete external workspace
+    - Cascade deletes managed cargo
+    - Does NOT cascade delete external cargo
     """
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
     await sandbox_mgr.delete(sandbox)

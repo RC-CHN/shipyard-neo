@@ -38,7 +38,7 @@ driver:
     # container_network/auto 时可指定网络名；host_port 模式可不填
     network: null
 
-workspace:
+cargo:
   root_path: "/var/lib/bay/workspaces"
   default_size_limit_mb: 1024
   mount_path: "/workspace"  # Fixed, do not change
@@ -89,8 +89,8 @@ gc:
   expired_sandbox:
     enabled: true
 
-  # OrphanWorkspaceGC: Cleans up managed workspaces whose sandbox is deleted or missing
-  orphan_workspace:
+  # OrphanCargoGC: Cleans up managed cargos whose sandbox is deleted or missing
+  orphan_cargo:
     enabled: true
 
   # OrphanContainerGC: Cleans up orphan containers (DB record missing)

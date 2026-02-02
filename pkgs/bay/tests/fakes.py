@@ -13,7 +13,7 @@ from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInst
 if TYPE_CHECKING:
     from app.config import ProfileConfig
     from app.models.session import Session
-    from app.models.workspace import Workspace
+    from app.models.cargo import Cargo
 
 
 @dataclass
@@ -23,7 +23,7 @@ class FakeContainerState:
     container_id: str
     session_id: str
     profile_id: str
-    workspace_id: str
+    cargo_id: str
     status: ContainerStatus = ContainerStatus.CREATED
     endpoint: str | None = None
 
@@ -59,7 +59,7 @@ class FakeDriver(Driver):
         self,
         session: "Session",
         profile: "ProfileConfig",
-        workspace: "Workspace",
+        cargo: "Cargo",
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
@@ -71,14 +71,14 @@ class FakeDriver(Driver):
             container_id=container_id,
             session_id=session.id,
             profile_id=profile.id,
-            workspace_id=workspace.id,
+            cargo_id=workspace.id,
             status=ContainerStatus.CREATED,
         )
         
         self.create_calls.append({
             "session_id": session.id,
             "profile_id": profile.id,
-            "workspace_id": workspace.id,
+            "cargo_id": workspace.id,
             "labels": labels,
         })
         
@@ -172,7 +172,7 @@ class FakeDriver(Driver):
                     name=f"bay-session-{state.session_id}",
                     labels={
                         "bay.session_id": state.session_id,
-                        "bay.workspace_id": state.workspace_id,
+                        "bay.cargo_id": state.cargo_id,
                         "bay.profile_id": state.profile_id,
                         "bay.managed": "true",
                         "bay.instance_id": "bay",

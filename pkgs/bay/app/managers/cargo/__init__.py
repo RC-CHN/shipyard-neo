@@ -1,5 +1,5 @@
-"""Workspace manager module."""
+"""Cargo manager module."""
 
-from app.managers.workspace.workspace import WorkspaceManager
+from app.managers.cargo.cargo import CargoManager
 
-__all__ = ["WorkspaceManager"]
+__all__ = ["CargoManager"]

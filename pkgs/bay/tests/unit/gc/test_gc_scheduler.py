@@ -64,7 +64,7 @@ def gc_config():
         interval_seconds=1,
         idle_session=GCTaskConfig(enabled=True),
         expired_sandbox=GCTaskConfig(enabled=True),
-        orphan_workspace=GCTaskConfig(enabled=True),
+        orphan_cargo=GCTaskConfig(enabled=True),
         orphan_container=GCTaskConfig(enabled=False),
     )
 

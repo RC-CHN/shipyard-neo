@@ -107,11 +107,11 @@ class ProfileConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-class WorkspaceConfig(BaseModel):
-    """Workspace storage configuration."""
+class CargoConfig(BaseModel):
+    """Cargo storage configuration."""
 
     # 宿主机路径，仅用于 Bay 管理，不暴露给运行时
-    root_path: str = "/var/lib/bay/workspaces"
+    root_path: str = "/var/lib/bay/cargos"
     default_size_limit_mb: int = 1024
     # 容器内挂载路径 (固定)
     mount_path: str = "/workspace"
@@ -155,7 +155,7 @@ class GCConfig(BaseModel):
     # Per-task configuration
     idle_session: GCTaskConfig = Field(default_factory=GCTaskConfig)
     expired_sandbox: GCTaskConfig = Field(default_factory=GCTaskConfig)
-    orphan_workspace: GCTaskConfig = Field(default_factory=GCTaskConfig)
+    orphan_cargo: GCTaskConfig = Field(default_factory=GCTaskConfig)
     # OrphanContainerGC is disabled by default due to strict safety requirements
     orphan_container: GCTaskConfig = Field(
         default_factory=lambda: GCTaskConfig(enabled=False)
@@ -205,7 +205,7 @@ class Settings(BaseSettings):
     server: ServerConfig = Field(default_factory=ServerConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     driver: DriverConfig = Field(default_factory=DriverConfig)
-    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
+    cargo: CargoConfig = Field(default_factory=CargoConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     gc: GCConfig = Field(default_factory=GCConfig)

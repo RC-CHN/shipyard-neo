@@ -119,7 +119,7 @@ class TestServerlessExecutionWorkflow:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
 
     async def test_delete_cleans_up_all_resources(self):
-        """Delete should clean up workspace volume."""
+        """Delete should clean up cargo volume."""
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             create_response = await client.post(
                 "/v1/sandboxes",
@@ -128,11 +128,13 @@ class TestServerlessExecutionWorkflow:
             assert create_response.status_code == 201
             sandbox = create_response.json()
             sandbox_id = sandbox["id"]
-            workspace_id = sandbox["workspace_id"]
-            volume_name = f"bay-workspace-{workspace_id}"
+            cargo_id = sandbox["cargo_id"]
+            volume_name = f"bay-cargo-{cargo_id}"
 
+            # Verify volume was created
             assert docker_volume_exists(volume_name), f"Volume {volume_name} should exist after create"
 
+            # Execute to start container
             await client.post(
                 f"/v1/sandboxes/{sandbox_id}/python/exec",
                 json={"code": "print('hello')", "timeout": 30},

@@ -32,7 +32,7 @@ logger = structlog.get_logger()
 REQUIRED_LABELS = [
     "bay.session_id",
     "bay.sandbox_id",
-    "bay.workspace_id",
+    "bay.cargo_id",
     "bay.instance_id",
     "bay.managed",
 ]

@@ -26,11 +26,11 @@ from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInst
 if TYPE_CHECKING:
     from app.config import ProfileConfig
     from app.models.session import Session
-    from app.models.workspace import Workspace
+    from app.models.cargo import Cargo
 
 logger = structlog.get_logger()
 
-# Workspace mount path inside container (fixed)
+# Cargo mount path inside container (fixed)
 WORKSPACE_MOUNT_PATH = "/workspace"
 
 
@@ -135,7 +135,7 @@ class DockerDriver(Driver):
         self,
         session: "Session",
         profile: "ProfileConfig",
-        workspace: "Workspace",
+        workspace: "Cargo",
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
@@ -153,7 +153,7 @@ class DockerDriver(Driver):
             "bay.owner": "default",  # TODO: get from session/sandbox
             "bay.sandbox_id": session.sandbox_id,
             "bay.session_id": session.id,
-            "bay.workspace_id": workspace.id,
+            "bay.cargo_id": workspace.id,
             "bay.profile_id": profile.id,
             "bay.runtime_port": str(runtime_port),
             # Labels for GC OrphanContainerGC Strict mode

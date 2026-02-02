@@ -11,7 +11,7 @@ from sqlmodel import select
 
 from app.concurrency.locks import cleanup_sandbox_lock, get_sandbox_lock
 from app.managers.session import SessionManager
-from app.managers.workspace import WorkspaceManager
+from app.managers.cargo import CargoManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
 from app.services.gc.base import GCResult, GCTask
@@ -33,7 +33,7 @@ class ExpiredSandboxGC(GCTask):
         2. Double-check expires_at < now (user may have extended TTL)
         3. Destroy all sessions
         4. Soft-delete sandbox (set deleted_at)
-        5. Cascade delete managed workspace
+        5. Cascade delete managed cargo
     """
 
     def __init__(
@@ -45,7 +45,7 @@ class ExpiredSandboxGC(GCTask):
         self._db = db_session
         self._log = logger.bind(gc_task="expired_sandbox")
         self._session_mgr = SessionManager(driver, db_session)
-        self._workspace_mgr = WorkspaceManager(driver, db_session)
+        self._cargo_mgr = CargoManager(driver, db_session)
 
     @property
     def name(self) -> str:
@@ -78,7 +78,7 @@ class ExpiredSandboxGC(GCTask):
         # After _process_sandbox calls rollback, the sandbox objects become detached
         # and accessing their attributes would trigger lazy loading in wrong context.
         sandbox_data = [
-            (sandbox.id, sandbox.owner, sandbox.workspace_id)
+            (sandbox.id, sandbox.owner, sandbox.cargo_id)
             for sandbox in sandboxes
         ]
 
@@ -87,9 +87,9 @@ class ExpiredSandboxGC(GCTask):
             count=len(sandbox_data),
         )
 
-        for sandbox_id, owner, workspace_id in sandbox_data:
+        for sandbox_id, owner, cargo_id in sandbox_data:
             try:
-                cleaned = await self._process_sandbox(sandbox_id, owner, workspace_id)
+                cleaned = await self._process_sandbox(sandbox_id, owner, cargo_id)
                 if cleaned:
                     result.cleaned_count += 1
                 else:
@@ -105,7 +105,7 @@ class ExpiredSandboxGC(GCTask):
         return result
 
     async def _process_sandbox(
-        self, sandbox_id: str, owner: str, workspace_id: str
+        self, sandbox_id: str, owner: str, cargo_id: str
     ) -> bool:
         """Process a single sandbox. Returns True if cleaned, False if skipped."""
         lock = await get_sandbox_lock(sandbox_id)
@@ -157,25 +157,25 @@ class ExpiredSandboxGC(GCTask):
                     )
 
             # Get workspace for cascade delete
-            workspace = await self._workspace_mgr.get_by_id(workspace_id)
+            cargo = await self._cargo_mgr.get_by_id(cargo_id)
 
             # Soft delete sandbox
             sandbox.deleted_at = datetime.utcnow()
             sandbox.current_session_id = None
             await self._db.commit()
 
-            # Cascade delete managed workspace
-            if workspace and workspace.managed:
+            # Cascade delete managed cargo
+            if cargo and cargo.managed:
                 try:
-                    await self._workspace_mgr.delete(
-                        workspace.id,
+                    await self._cargo_mgr.delete(
+                        cargo.id,
                         owner,
                         force=True,
                     )
                 except Exception as e:
                     self._log.warning(
-                        "gc.expired_sandbox.workspace_delete_error",
-                        workspace_id=workspace.id,
+                        "gc.expired_sandbox.cargo_delete_error",
+                        cargo_id=cargo.id,
                         error=str(e),
                     )
 
