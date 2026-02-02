@@ -48,6 +48,20 @@ class ContainerInfo:
     exit_code: int | None = None
 
 
+@dataclass
+class RuntimeInstance:
+    """Runtime instance information for GC discovery.
+
+    Used by OrphanContainerGC to discover and clean up orphan containers.
+    """
+
+    id: str  # Container ID / Pod name
+    name: str  # Container name
+    labels: dict[str, str]
+    state: str  # "running", "exited", etc.
+    created_at: str | None = None  # ISO format timestamp
+
+
 class Driver(ABC):
     """Abstract driver interface for container lifecycle management.
 
@@ -176,5 +190,36 @@ class Driver(ABC):
             
         Returns:
             True if volume exists
+        """
+        ...
+
+    # Runtime instance discovery (for GC)
+
+    @abstractmethod
+    async def list_runtime_instances(
+        self, *, labels: dict[str, str]
+    ) -> list[RuntimeInstance]:
+        """List runtime instances matching labels.
+
+        Used by OrphanContainerGC to discover containers that may be orphaned.
+        Only returns instances that match ALL specified labels.
+
+        Args:
+            labels: Label filters (all must match)
+
+        Returns:
+            List of matching runtime instances
+        """
+        ...
+
+    @abstractmethod
+    async def destroy_runtime_instance(self, instance_id: str) -> None:
+        """Force destroy a runtime instance.
+
+        Used by OrphanContainerGC to clean up orphan containers.
+        This is a low-level method that bypasses normal session cleanup.
+
+        Args:
+            instance_id: Instance ID (container ID / Pod name)
         """
         ...

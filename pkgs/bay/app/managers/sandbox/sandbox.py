@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.concurrency.locks import cleanup_sandbox_lock, get_sandbox_lock
 from app.config import get_settings
 from app.errors import (
     NotFoundError,
@@ -33,29 +34,6 @@ if TYPE_CHECKING:
     from app.drivers.base import Driver
 
 logger = structlog.get_logger()
-
-# Lock map for sandbox-level concurrency control (single-instance only)
-# Key: sandbox_id, Value: asyncio.Lock
-_sandbox_locks: dict[str, asyncio.Lock] = {}
-_sandbox_locks_lock = asyncio.Lock()
-
-
-async def _get_sandbox_lock(sandbox_id: str) -> asyncio.Lock:
-    """Get or create a lock for a specific sandbox.
-    
-    This ensures concurrent ensure_running calls for the same sandbox
-    are serialized, preventing multiple session creation.
-    """
-    async with _sandbox_locks_lock:
-        if sandbox_id not in _sandbox_locks:
-            _sandbox_locks[sandbox_id] = asyncio.Lock()
-        return _sandbox_locks[sandbox_id]
-
-
-async def _cleanup_sandbox_lock(sandbox_id: str) -> None:
-    """Cleanup lock for a deleted sandbox."""
-    async with _sandbox_locks_lock:
-        _sandbox_locks.pop(sandbox_id, None)
 
 
 class SandboxManager:
@@ -231,7 +209,7 @@ class SandboxManager:
         workspace_id = sandbox.workspace_id
         
         # In-memory lock for single-instance deployments (SQLite doesn't support FOR UPDATE)
-        sandbox_lock = await _get_sandbox_lock(sandbox_id)
+        sandbox_lock = await get_sandbox_lock(sandbox_id)
         async with sandbox_lock:
             # Rollback any pending transaction to ensure we start fresh
             # This is critical for SQLite where different sessions may have stale snapshots
@@ -358,25 +336,44 @@ class SandboxManager:
         """Stop sandbox - reclaim compute, keep workspace.
         
         Idempotent: repeated calls maintain final state consistency.
+        Uses same lock as ensure_running to prevent race conditions.
         
         Args:
             sandbox: Sandbox to stop
         """
-        self._log.info("sandbox.stop", sandbox_id=sandbox.id)
+        sandbox_id = sandbox.id
+        self._log.info("sandbox.stop", sandbox_id=sandbox_id)
 
-        # Stop all sessions for this sandbox
-        result = await self._db.execute(
-            select(Session).where(Session.sandbox_id == sandbox.id)
-        )
-        sessions = result.scalars().all()
+        # Use same lock as ensure_running to prevent race conditions with GC
+        sandbox_lock = await get_sandbox_lock(sandbox_id)
+        async with sandbox_lock:
+            # Rollback and refetch to get fresh state
+            await self._db.rollback()
+            
+            result = await self._db.execute(
+                select(Sandbox)
+                .where(Sandbox.id == sandbox_id)
+                .with_for_update()
+            )
+            locked_sandbox = result.scalars().first()
+            
+            if locked_sandbox is None or locked_sandbox.deleted_at is not None:
+                # Already deleted, nothing to stop
+                return
 
-        for session in sessions:
-            await self._session_mgr.stop(session)
+            # Stop all sessions for this sandbox
+            result = await self._db.execute(
+                select(Session).where(Session.sandbox_id == locked_sandbox.id)
+            )
+            sessions = result.scalars().all()
 
-        # Clear current session
-        sandbox.current_session_id = None
-        sandbox.idle_expires_at = None
-        await self._db.commit()
+            for session in sessions:
+                await self._session_mgr.stop(session)
+
+            # Clear current session
+            locked_sandbox.current_session_id = None
+            locked_sandbox.idle_expires_at = None
+            await self._db.commit()
 
     async def delete(self, sandbox: Sandbox) -> None:
         """Delete sandbox permanently.
@@ -384,36 +381,57 @@ class SandboxManager:
         - Destroys all sessions
         - Cascade deletes managed workspace
         - Does NOT cascade delete external workspace
+        Uses same lock as ensure_running to prevent race conditions.
         
         Args:
             sandbox: Sandbox to delete
         """
-        self._log.info("sandbox.delete", sandbox_id=sandbox.id)
+        sandbox_id = sandbox.id
+        owner = sandbox.owner
+        workspace_id = sandbox.workspace_id
+        self._log.info("sandbox.delete", sandbox_id=sandbox_id)
 
-        # Destroy all sessions
-        result = await self._db.execute(
-            select(Session).where(Session.sandbox_id == sandbox.id)
-        )
-        sessions = result.scalars().all()
-
-        for session in sessions:
-            await self._session_mgr.destroy(session)
-
-        # Get workspace
-        workspace = await self._workspace_mgr.get_by_id(sandbox.workspace_id)
-
-        # Soft delete sandbox
-        sandbox.deleted_at = datetime.utcnow()
-        sandbox.current_session_id = None
-        await self._db.commit()
-
-        # Cascade delete managed workspace
-        if workspace and workspace.managed:
-            await self._workspace_mgr.delete(
-                workspace.id,
-                sandbox.owner,
-                force=True,  # Allow deleting managed workspace
+        # Use same lock as ensure_running to prevent race conditions with GC
+        sandbox_lock = await get_sandbox_lock(sandbox_id)
+        async with sandbox_lock:
+            # Rollback and refetch to get fresh state
+            await self._db.rollback()
+            
+            result = await self._db.execute(
+                select(Sandbox)
+                .where(Sandbox.id == sandbox_id)
+                .with_for_update()
             )
+            locked_sandbox = result.scalars().first()
+            
+            if locked_sandbox is None or locked_sandbox.deleted_at is not None:
+                # Already deleted, nothing to do
+                return
 
-        # Cleanup in-memory lock for this sandbox
-        await _cleanup_sandbox_lock(sandbox.id)
+            # Destroy all sessions
+            result = await self._db.execute(
+                select(Session).where(Session.sandbox_id == locked_sandbox.id)
+            )
+            sessions = result.scalars().all()
+
+            for session in sessions:
+                await self._session_mgr.destroy(session)
+
+            # Get workspace (re-fetch after rollback)
+            workspace = await self._workspace_mgr.get_by_id(workspace_id)
+
+            # Soft delete sandbox
+            locked_sandbox.deleted_at = datetime.utcnow()
+            locked_sandbox.current_session_id = None
+            await self._db.commit()
+
+            # Cascade delete managed workspace
+            if workspace and workspace.managed:
+                await self._workspace_mgr.delete(
+                    workspace.id,
+                    owner,
+                    force=True,  # Allow deleting managed workspace
+                )
+
+        # Cleanup in-memory lock for this sandbox (outside of lock)
+        await cleanup_sandbox_lock(sandbox_id)

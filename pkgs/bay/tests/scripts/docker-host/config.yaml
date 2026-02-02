@@ -63,3 +63,22 @@ profiles:
       - python  # Only python - no shell/filesystem access
     idle_timeout: 300
     env: {}
+
+gc:
+  # Enable GC during E2E tests (interval set small for deterministic tests)
+  enabled: true
+  run_on_startup: false
+  interval_seconds: 1
+
+  # Make instance_id deterministic for strict orphan container cleanup
+  instance_id: "bay-e2e"
+
+  idle_session:
+    enabled: true
+  expired_sandbox:
+    enabled: true
+  orphan_workspace:
+    enabled: true
+  orphan_container:
+    enabled: true
+

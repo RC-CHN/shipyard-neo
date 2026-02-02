@@ -21,7 +21,7 @@ import structlog
 from aiodocker.exceptions import DockerError
 
 from app.config import get_settings
-from app.drivers.base import ContainerInfo, ContainerStatus, Driver
+from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInstance
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
@@ -144,7 +144,11 @@ class DockerDriver(Driver):
 
         runtime_port = int(profile.runtime_port or 8000)
 
-        # Build labels (required for reconciliation)
+        # Get GC instance_id for container labeling
+        settings = get_settings()
+        gc_instance_id = settings.gc.get_instance_id()
+
+        # Build labels (required for reconciliation and GC)
         container_labels = {
             "bay.owner": "default",  # TODO: get from session/sandbox
             "bay.sandbox_id": session.sandbox_id,
@@ -152,6 +156,9 @@ class DockerDriver(Driver):
             "bay.workspace_id": workspace.id,
             "bay.profile_id": profile.id,
             "bay.runtime_port": str(runtime_port),
+            # Labels for GC OrphanContainerGC Strict mode
+            "bay.instance_id": gc_instance_id,
+            "bay.managed": "true",
         }
         if labels:
             container_labels.update(labels)
@@ -415,3 +422,82 @@ class DockerDriver(Driver):
             if e.status == 404:
                 return False
             raise
+
+    # Runtime instance discovery (for GC)
+
+    async def list_runtime_instances(
+        self, *, labels: dict[str, str]
+    ) -> list[RuntimeInstance]:
+        """List containers matching labels.
+
+        Used by OrphanContainerGC to discover containers that may be orphaned.
+
+        Args:
+            labels: Label filters (all must match)
+
+        Returns:
+            List of matching runtime instances
+        """
+        client = await self._get_client()
+
+        # Build label filter for Docker API
+        # Format: label=key=value
+        filters = {"label": [f"{k}={v}" for k, v in labels.items()]}
+
+        self._log.debug(
+            "docker.list_runtime_instances",
+            filters=filters,
+        )
+
+        containers = await client.containers.list(all=True, filters=filters)
+
+        instances = []
+        for container in containers:
+            # container is DockerContainer, need to get info
+            info = await container.show()
+
+            container_id = info.get("Id", "")
+            name = info.get("Name", "").lstrip("/")
+            container_labels = info.get("Config", {}).get("Labels", {})
+            state = info.get("State", {}).get("Status", "unknown")
+            created_at = info.get("Created")
+
+            instances.append(
+                RuntimeInstance(
+                    id=container_id,
+                    name=name,
+                    labels=container_labels,
+                    state=state,
+                    created_at=created_at,
+                )
+            )
+
+        self._log.debug(
+            "docker.list_runtime_instances.result",
+            count=len(instances),
+        )
+
+        return instances
+
+    async def destroy_runtime_instance(self, instance_id: str) -> None:
+        """Force destroy a container.
+
+        Used by OrphanContainerGC to clean up orphan containers.
+
+        Args:
+            instance_id: Container ID
+        """
+        client = await self._get_client()
+        self._log.info("docker.destroy_runtime_instance", instance_id=instance_id)
+
+        try:
+            container = client.containers.container(instance_id)
+            await container.delete(force=True)
+        except DockerError as e:
+            if e.status == 404:
+                self._log.warning(
+                    "docker.destroy_runtime_instance.not_found",
+                    instance_id=instance_id,
+                )
+            else:
+                raise

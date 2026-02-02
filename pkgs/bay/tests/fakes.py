@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from app.drivers.base import ContainerInfo, ContainerStatus, Driver
+from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInstance
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
@@ -155,3 +155,34 @@ class FakeDriver(Driver):
     async def volume_exists(self, name: str) -> bool:
         """Check if fake volume exists."""
         return name in self._volumes
+
+    # GC-related methods
+
+    async def list_runtime_instances(
+        self, *, labels: dict[str, str]
+    ) -> list[RuntimeInstance]:
+        """List fake runtime instances matching labels."""
+        instances = []
+        for container_id, state in self._containers.items():
+            # For testing, we'll return all containers
+            # In a real implementation, we'd filter by labels
+            instances.append(
+                RuntimeInstance(
+                    id=container_id,
+                    name=f"bay-session-{state.session_id}",
+                    labels={
+                        "bay.session_id": state.session_id,
+                        "bay.workspace_id": state.workspace_id,
+                        "bay.profile_id": state.profile_id,
+                        "bay.managed": "true",
+                        "bay.instance_id": "bay",
+                    },
+                    state=state.status.value,
+                )
+            )
+        return instances
+
+    async def destroy_runtime_instance(self, instance_id: str) -> None:
+        """Force destroy a fake runtime instance."""
+        if instance_id in self._containers:
+            del self._containers[instance_id]

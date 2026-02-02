@@ -62,6 +62,43 @@ security:
     - "172.16.0.0/12"
     - "192.168.0.0/16"
 
+# Garbage Collection configuration
+# GC automatically cleans up idle sessions, expired sandboxes, and orphan resources.
+gc:
+  # Master switch for GC
+  enabled: true
+
+  # Run GC once immediately on startup (before entering background loop)
+  run_on_startup: true
+
+  # Interval between GC cycles (seconds)
+  interval_seconds: 300  # 5 minutes
+
+  # Instance identifier for OrphanContainerGC Strict mode.
+  # Containers with bay.instance_id != this value will NOT be touched.
+  # IMPORTANT: In multi-instance deployments, each instance MUST have a unique instance_id!
+  # Default derivation: BAY_GC__INSTANCE_ID env var → HOSTNAME → "bay"
+  instance_id: null  # Production: "bay-instance-1"
+
+  # Per-task configuration
+  # IdleSessionGC: Reclaims compute for sandboxes that have been idle beyond idle_timeout
+  idle_session:
+    enabled: true
+
+  # ExpiredSandboxGC: Deletes sandboxes that have exceeded their TTL (expires_at)
+  expired_sandbox:
+    enabled: true
+
+  # OrphanWorkspaceGC: Cleans up managed workspaces whose sandbox is deleted or missing
+  orphan_workspace:
+    enabled: true
+
+  # OrphanContainerGC: Cleans up orphan containers (DB record missing)
+  # DISABLED BY DEFAULT due to strict safety requirements.
+  # Only enable this if you understand the risks and have verified instance_id is unique.
+  orphan_container:
+    enabled: false
+
 # Runtime profiles
 # These define the available sandbox configurations
 profiles:

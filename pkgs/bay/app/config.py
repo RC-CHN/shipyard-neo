@@ -124,6 +124,52 @@ class IdempotencyConfig(BaseModel):
     ttl_hours: int = 1  # How long to keep idempotency keys
 
 
+class GCTaskConfig(BaseModel):
+    """GC task-specific configuration."""
+
+    enabled: bool = True
+
+
+class GCConfig(BaseModel):
+    """Garbage collection configuration.
+
+    Note on instance_id:
+    - Used by OrphanContainerGC Strict mode to prevent accidental deletion
+      of containers belonging to other Bay instances.
+    - In single-instance deployments, the default is sufficient.
+    - In multi-instance deployments, each instance MUST have a unique instance_id.
+    """
+
+    enabled: bool = True
+    run_on_startup: bool = True
+    interval_seconds: int = 300  # 5 minutes
+
+    # Instance identifier for strict orphan container detection.
+    # Containers with bay.instance_id != this value will NOT be touched.
+    # Default derivation order:
+    #   1. BAY_GC__INSTANCE_ID env var (recommended for multi-instance)
+    #   2. HOSTNAME env var
+    #   3. Fallback to "bay"
+    instance_id: str | None = None
+
+    # Per-task configuration
+    idle_session: GCTaskConfig = Field(default_factory=GCTaskConfig)
+    expired_sandbox: GCTaskConfig = Field(default_factory=GCTaskConfig)
+    orphan_workspace: GCTaskConfig = Field(default_factory=GCTaskConfig)
+    # OrphanContainerGC is disabled by default due to strict safety requirements
+    orphan_container: GCTaskConfig = Field(
+        default_factory=lambda: GCTaskConfig(enabled=False)
+    )
+
+    def get_instance_id(self) -> str:
+        """Get resolved instance_id with fallback logic."""
+        import os
+
+        if self.instance_id:
+            return self.instance_id
+        return os.environ.get("HOSTNAME", "bay")
+
+
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
@@ -162,6 +208,7 @@ class Settings(BaseSettings):
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
+    gc: GCConfig = Field(default_factory=GCConfig)
 
     # Default profiles
     profiles: list[ProfileConfig] = Field(

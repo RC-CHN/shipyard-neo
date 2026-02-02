@@ -208,3 +208,35 @@ class WorkspaceManager:
         if workspace:
             workspace.last_accessed_at = datetime.utcnow()
             await self._db.commit()
+
+    async def delete_internal_by_id(self, workspace_id: str) -> None:
+        """Internal delete without owner check. For GC / cascade use only.
+
+        This method is used by OrphanWorkspaceGC to clean up orphan workspaces.
+        It bypasses the owner check since GC runs in a system context.
+
+        Args:
+            workspace_id: Workspace ID to delete
+
+        Note:
+            - Idempotent: returns silently if workspace doesn't exist
+            - Deletes volume first, then DB record
+            - If volume delete fails, DB record is preserved
+        """
+        workspace = await self.get_by_id(workspace_id)
+        if workspace is None:
+            # Already deleted, idempotent
+            return
+
+        self._log.info(
+            "workspace.delete_internal",
+            workspace_id=workspace_id,
+            volume=workspace.driver_ref,
+        )
+
+        # Delete volume first (may fail)
+        await self._driver.delete_volume(workspace.driver_ref)
+
+        # Delete DB record
+        await self._db.delete(workspace)
+        await self._db.commit()

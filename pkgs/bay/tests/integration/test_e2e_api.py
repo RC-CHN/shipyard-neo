@@ -20,6 +20,8 @@ Test Modules (Core API):
 - test_container_isolation.py: E2E-17 Container isolation verification (Scenario 7 Part B)
 - test_shell_devops_workflow.py: E2E-18 Shell-driven DevOps automation (Scenario 8)
 - test_mega_workflow.py: E2E-19 Mega workflow integration (Scenario 9)
+- test_gc_e2e.py: E2E-GC Garbage Collection end-to-end tests
+- test_gc_workflow_scenario.py: E2E-GC-Workflow Long GC chaos workflow scenario
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_interactive_workflow.py: E2E-08 Interactive Data Analysis (Scenario 1)
@@ -77,6 +79,8 @@ from .test_shell_devops_workflow import (
     TestShellWorkingDirectoryE2E,
 )
 from .test_mega_workflow import TestMegaWorkflowE2E
+from .test_gc_e2e import TestE2EGC
+from .test_gc_workflow_scenario import TestE2EGCWorkflowScenario
 
 # Re-export shared configuration for convenience
 from .conftest import (
@@ -129,6 +133,9 @@ __all__ = [
     "TestShellWorkingDirectoryE2E",
     # Test classes - Mega Workflow (Scenario 9)
     "TestMegaWorkflowE2E",
+    # Test classes - GC
+    "TestE2EGC",
+    "TestE2EGCWorkflowScenario",
     # Configuration
     "BAY_BASE_URL",
     "E2E_API_KEY",

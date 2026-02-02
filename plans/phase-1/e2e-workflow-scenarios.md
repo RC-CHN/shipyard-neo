@@ -1059,3 +1059,117 @@ Shipyard 采用**纵深防御**策略：
 - [ ] 确认场景优先级
 - [ ] 将场景转化为 `test_e2e_api.py` 中的测试用例
 - [ ] 运行测试并修复发现的问题
+
+---
+
+## 场景 10: GC 混沌长工作流（资源回收 + 可恢复性验证）
+
+**用户画像**: 需要长时间、多阶段执行的用户/自动化系统；期间可能出现 Bay 重启、网络抖动、TTL/Idle 边界、以及“残留资源”问题。
+
+**目标**: 在一个“长且复杂”的真实工作流中，同时覆盖 4 个 GC 任务的关键语义与边界：
+
+- `IdleSessionGC`：空闲回收 compute（destroy sessions），且后续 `ensure_running` 可透明重建
+- `ExpiredSandboxGC`：TTL 到期后 sandbox 应被回收（不可复活），并级联清理 managed workspace
+- `OrphanWorkspaceGC`：异常情况下的 managed workspace 残留兜底清理（volume + DB）
+- `OrphanContainerGC`（strict）：只删除“可信且 DB 无 session”的孤儿容器（防误删）
+
+> 备注：此场景属于 Phase 1.5 GC，但建议补充到 Phase 1 的 workflow scenarios 里作为“长期回归/混沌测试”场景（对外行为仍是 API 组合）。
+
+### 架构行为说明（与 GC 的耦合点）
+
+1. **Idle 维度与 TTL 维度分离**
+   - `keepalive` 只延长 `idle_expires_at`，不影响 `expires_at`
+   - `extend_ttl` 只延长 `expires_at`，不影响 `idle_expires_at`
+
+2. **IdleSessionGC 回收的可恢复性**
+   - IdleSessionGC 会 destroy sandbox 下所有 session（DB 记录被硬删 + runtime 被删）
+   - sandbox 被置为 `current_session_id=null`、`idle_expires_at=null`
+   - 用户后续任何 `python/exec`/`shell/exec` 会触发 `ensure_running()` 创建新 session → 透明恢复
+
+3. **ExpiredSandboxGC 的不可逆性**
+   - 一旦 `expires_at < now`，GC 会走 delete 语义：session destroy + sandbox 软删除 + managed workspace 级联删除
+   - 此时用户再调用 `extend_ttl` 应返回 `409 sandbox_expired`（不可复活）
+
+4. **OrphanContainerGC 的 strict 防误删门槛**
+   - 只有满足 name 前缀 + 必要 labels + `bay.managed=true` + `bay.instance_id == gc.instance_id` 的容器才会进入 orphan 判定
+   - orphan 判定以 DB 为准：`labels["bay.session_id"]` 在 DB 中不存在才会删
+
+5. **OrphanWorkspaceGC 的兜底语义**
+   - managed workspace 发生“部分失败/级联未完成”时，依赖该任务兜底清理
+
+### 行为序列（建议实现为 1 条“长测试”，分 Phase 断言）
+
+> 推荐在 E2E 环境将 `gc.interval_seconds` 调小（例如 1s），并为 strict 模式配置固定 `gc.instance_id`，详见：[`pkgs/bay/tests/scripts/docker-host/config.yaml`](../../pkgs/bay/tests/scripts/docker-host/config.yaml)
+
+#### Phase A：建立真实工作负载（触发 session/container）
+
+1. 创建 sandbox（带 TTL，例如 120s）：`POST /v1/sandboxes`
+2. 执行 `python/exec` 写入一些文件（例如生成 `data/result.json`），确保容器与 workspace 都已创建
+3. 记录 `sandbox_id`、`workspace_id`，并通过 `GET /v1/sandboxes/{id}` 确认 `status` 从 `idle` 进入 `ready/starting`
+
+**断言**：
+- sandbox 可执行、workspace 中文件存在
+
+#### Phase B：IdleSessionGC 回收（可恢复性）
+
+4. 调用 `POST /v1/sandboxes/{id}/keepalive`（可选：证明 idle_expires_at 会变化）
+5. “人为制造 idle 超时”：将 `idle_expires_at` 强制改到过去（测试实现可直接 update E2E sqlite，如同 `test_gc_e2e.py` 的做法）
+6. 等待 GC 周期运行
+7. 再次 `GET /v1/sandboxes/{id}`
+
+**断言**：
+- `status == idle` 且 `idle_expires_at == null`（说明 compute 已被回收）
+- 再次调用 `python/exec` 仍成功（说明可透明重建 session）
+- workspace 中之前写入的文件仍存在（volume 持久化）
+
+#### Phase C：OrphanContainerGC（strict）清理“可信 orphan”
+
+8. 制造“可信 orphan container”（两种实现路径二选一）：
+   - 路径 1（更接近真实事故）：Bay 运行中对某 sandbox 触发 session/container 后，直接从 DB 删除对应 session 记录（保留容器），等待 OrphanContainerGC 对账删除容器
+   - 路径 2（更可控）：直接 `docker run -d` 创建一个带 strict labels 的容器（满足 `bay.instance_id == gc.instance_id`），但 DB 中没有该 session_id
+
+**断言**：
+- 该容器会被删除
+- 同时再制造 1 个“不可信容器”（缺少 label 或 instance_id 不匹配），断言不会被删除（防误删）
+
+#### Phase D：ExpiredSandboxGC 回收（不可复活 + workspace 清理）
+
+9. 创建另一个 sandbox（TTL 很短，例如 1s）
+10. 等待 TTL 过期
+11. 等待 GC 周期运行
+
+**断言**：
+- `GET /v1/sandboxes/{id}` 返回 404（软删除后不可见）
+- 对应 managed workspace volume 被删除（`docker volume inspect` 不存在）
+- `POST /extend_ttl` 返回 `409 sandbox_expired`（不可复活）
+
+#### Phase E：OrphanWorkspaceGC 兜底清理
+
+12. 制造“孤儿 managed workspace”（建议方式）：
+   - 创建 sandbox → 得到 workspace
+   - 再通过 DB 操作把 `workspaces.managed_by_sandbox_id` 置空，或将对应 sandbox 标记 deleted，使 workspace 满足 OrphanWorkspaceGC 的触发条件
+13. 等待 GC 周期
+
+**断言**：
+- 对应 workspace volume 被删除
+- workspace DB 记录被删除
+
+### 测试要点（为何它是“长复杂工作流”）
+
+| 覆盖面 | 关键点 | 预期 |
+|---|---|---|
+| Idle 回收 | 回收 compute 不丢数据 | session/container 被回收，但 workspace 文件保留，后续 exec 可恢复 |
+| TTL 回收 | TTL 到期不可复活 | sandbox 被回收，extend_ttl 409，workspace 被清理 |
+| Orphan 容器兜底 | strict 防误删 | 可信 orphan 会删，不可信不会删 |
+| Orphan workspace 兜底 | volume/DB 一致性 | orphan workspace 最终被清理 |
+
+### 建议落地到测试代码的位置
+
+- 作为单独的 E2E 测试模块：`pkgs/bay/tests/integration/test_gc_workflow_scenario.py`
+- 或者把它拆成 2~3 条 E2E 测试（更稳）：
+  - “IdleSessionGC 可恢复”
+  - “ExpiredSandboxGC 不可复活 + workspace 清理”
+  - “OrphanContainerGC strict 防误删”
+
+---
+

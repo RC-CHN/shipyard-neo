@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from app.config import get_settings
 from app.db import close_db, init_db
 from app.errors import BayError
+from app.services.gc.lifecycle import init_gc_scheduler, shutdown_gc_scheduler
 
 logger = structlog.get_logger()
 
@@ -23,9 +24,18 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("bay.startup", version="0.1.0")
     await init_db()
+
+    # Initialize and start GC scheduler
+    await init_gc_scheduler()
+
     yield
+
     # Shutdown
     logger.info("bay.shutdown")
+
+    # Stop GC scheduler
+    await shutdown_gc_scheduler()
+
     await close_db()
 
 
