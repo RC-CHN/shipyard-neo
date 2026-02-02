@@ -12,7 +12,7 @@
 │  (对外稳定句柄)                                                       │
 │                                                                     │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐ │
-│  │    Workspace    │    │     Profile     │    │    Session      │ │
+│  │    Cargo    │    │     Profile     │    │    Session      │ │
 │  │  (数据持久化)    │    │   (运行时规格)   │    │  (计算实例)      │ │
 │  │                 │    │                 │    │   1:1 容器      │ │
 │  │  - Docker Volume│    │  - 镜像/资源    │    │   可回收重建    │ │
@@ -29,7 +29,7 @@
 | **Sandbox** | `expires_at` (硬 TTL) | 创建时 `ttl` 参数 | **否** | 状态变为 `expired`，不可恢复 |
 | **Sandbox** | `idle_expires_at` | profile.idle_timeout | **是** (keepalive) | Session 被回收，Sandbox 仍存在 |
 | **Session** | 无独立 TTL | 跟随 Sandbox | N/A | 被 stop/回收 |
-| **Workspace** | 无 TTL | 跟随 Sandbox (managed) 或永久 (external) | N/A | N/A |
+| **Cargo** | 无 TTL | 跟随 Sandbox (managed) 或永久 (external) | N/A | N/A |
 | **Idempotency Key** | `expires_at` | config.ttl_hours | **否** | 被清理 |
 
 ### 0.3 详细说明
@@ -50,7 +50,7 @@
 - **可延长**: ✅ 通过 `POST /sandboxes/{id}/keepalive` 延长
 - **超时后**:
   - 仅回收 Session（释放容器/算力）
-  - Sandbox 和 Workspace 保留
+  - Sandbox 和 Cargo 保留
   - 下次调用能力时自动 `ensure_running` 重建 Session
 
 #### Session
@@ -64,12 +64,12 @@
   - 理由: Session 不对外暴露，无需审计追溯
   - 问题: 如果 `driver.destroy()` 失败，session 记录已删除但容器残留 → 需要孤儿容器 GC
 
-#### Workspace
+#### Cargo
 - **managed**: 生命周期绑定 Sandbox
   - Sandbox 删除时级联删除
 - **external**: 独立生命周期
   - 需要显式 `DELETE /v1/workspaces/{id}`
-  - 即使所有引用的 Sandbox 删除，workspace 仍保留
+  - 即使所有引用的 Sandbox 删除，cargo 仍保留
 
 #### Idempotency Key
 - **TTL**: config.idempotency.ttl_hours (默认 1 小时)
@@ -84,8 +84,8 @@ flowchart TB
     subgraph "DELETE /sandboxes/id"
         SB[Sandbox] --> S1[Session 1]
         SB --> S2[Session n]
-        SB -->|managed| MW[Managed Workspace]
-        SB -.->|external| EW[External Workspace]
+        SB -->|managed| MW[Managed Cargo]
+        SB -.->|external| EW[External Cargo]
     end
     
     S1 -->|destroy| C1[Container 1]
@@ -101,11 +101,11 @@ flowchart TB
 **级联规则:**
 - `DELETE /sandboxes/{id}`:
   - 销毁所有关联 Session → 销毁容器
-  - 若 Workspace 是 managed → 级联删除 Workspace → 删除 Volume
-  - 若 Workspace 是 external → 不级联删除
+  - 若 Cargo 是 managed → 级联删除 Cargo → 删除 Volume
+  - 若 Cargo 是 external → 不级联删除
 - `POST /sandboxes/{id}/stop`:
   - 仅销毁 Session → 销毁容器
-  - Sandbox 和 Workspace 保留
+  - Sandbox 和 Cargo 保留
 
 ## 1. 背景与动机
 
@@ -129,15 +129,15 @@ flowchart TB
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │  2. 过期 Sandbox (expires_at 过期)                                   │   │
 │  │     - 产生: Sandbox TTL 到期                                         │   │
-│  │     - 清理: 软删除 sandbox，级联清理 session + managed workspace      │   │
+│  │     - 清理: 软删除 sandbox，级联清理 session + managed cargo      │   │
 │  │     - 触发: GC 定时扫描                                              │   │
 │  │     - 优先级: ★★☆ 中（释放存储和算力）                               │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │  3. 孤儿 Managed Workspace                                           │   │
-│  │     - 产生: Sandbox 删除时级联删除 workspace 失败                     │   │
-│  │     - 清理: 删除 volume，删除 workspace 记录                          │   │
+│  │  3. 孤儿 Managed Cargo                                           │   │
+│  │     - 产生: Sandbox 删除时级联删除 cargo 失败                     │   │
+│  │     - 清理: 删除 volume，删除 cargo 记录                          │   │
 │  │     - 触发: GC 定时扫描                                              │   │
 │  │     - 优先级: ★★☆ 中（释放存储）                                     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
@@ -174,7 +174,7 @@ flowchart TB
 |---|----------|----------|----------|----------|----------------|--------|
 | 1 | 空闲 Session | idle_timeout 到期 | `idle_expires_at < now` | stop 容器，删 session | 算力浪费 | 高 |
 | 2 | 过期 Sandbox | TTL 到期 | `expires_at < now && deleted_at == null` | 软删除 + 级联清理 | 资源占用 | 中 |
-| 3 | 孤儿 Workspace | 级联删除失败 | `managed && (sandbox.deleted_at != null)` | 删 volume + 删记录 | 存储泄露 | 中 |
+| 3 | 孤儿 Cargo | 级联删除失败 | `managed && (sandbox.deleted_at != null)` | 删 volume + 删记录 | 存储泄露 | 中 |
 | 4 | 孤儿容器 | stop 失败/Bay 重启 | 容器存在但无对应 session | 强制删容器 | 算力泄露 | 高 |
 | 5 | 过期幂等键 | 正常过期 | `expires_at < now` | 删 DB 记录 | DB 膨胀 | 低 |
 | 6 | 僵尸 Sandbox | TTL=null 且长期未用 | `last_active_at < now - N days` | 警告/软删除 | 资源占用 | 低 |
@@ -187,7 +187,7 @@ flowchart TB
 |------|----------|------|
 | IdempotencyService | 懒清理 | check() 时删除过期记录 |
 | Sandbox 过期 | 仅状态计算 | `is_expired` 属性，无主动清理 |
-| Workspace | 级联删除 | sandbox 删除时同步级联 |
+| Cargo | 级联删除 | sandbox 删除时同步级联 |
 | Session/容器 | stop 时同步清理 | 无孤儿检测 |
 
 **问题**: 
@@ -313,7 +313,7 @@ class GCScheduler:
 
 ```python
 class OrphanWorkspaceGC(GCTask):
-    """清理孤儿 managed workspace"""
+    """清理孤儿 managed cargo"""
     
     def __init__(self, driver: Driver, db_session_factory):
         self._driver = driver
@@ -338,12 +338,12 @@ class OrphanWorkspaceGC(GCTask):
             #   sandbox.deleted_at IS NOT NULL
             # )
             orphans = await db.execute(
-                select(Workspace)
-                .outerjoin(Sandbox, Workspace.managed_by_sandbox_id == Sandbox.id)
-                .where(Workspace.managed == True)
+                select(Cargo)
+                .outerjoin(Sandbox, Cargo.managed_by_sandbox_id == Sandbox.id)
+                .where(Cargo.managed == True)
                 .where(
                     or_(
-                        Workspace.managed_by_sandbox_id.is_(None),
+                        Cargo.managed_by_sandbox_id.is_(None),
                         Sandbox.deleted_at.isnot(None),
                     )
                 )
@@ -488,7 +488,7 @@ GET /admin/gc/status
 ### 8.1 Sandbox 是什么？
 
 **Sandbox 是对外暴露的唯一稳定句柄**，它聚合了：
-- Workspace（数据）
+- Cargo（数据）
 - Profile（规格）
 - Session（算力）
 
@@ -499,7 +499,7 @@ GET /admin/gc/status
 ---------                    ---------
 sandbox_id  ─────────────►  Sandbox
   (稳定)                       │
-                               ├──► Workspace (Volume)
+                               ├──► Cargo (Volume)
                                ├──► Profile (Config)
                                └──► Session (Container)
                                       ↑
@@ -520,7 +520,7 @@ sandbox_id  ─────────────►  Sandbox
 #### 场景 B：长期开发环境
 ```
 1. 用户创建 Sandbox（TTL=null，永不过期）
-2. 关联一个 external workspace（代码仓库）
+2. 关联一个 external cargo（代码仓库）
 3. 每天使用几小时，其余时间 idle 回收
 4. 用完主动删除，或由管理员定期清理
 ```
@@ -558,20 +558,20 @@ sandbox_id  ─────────────►  Sandbox
 **优点**：
 - 完全符合当前设计
 - 用户持有稳定的 sandbox_id
-- 数据持久化在 managed workspace 中
+- 数据持久化在 managed cargo 中
 - 容器按需启动/回收
 
 **注意**：
 - TTL=null 需要配额策略兜底（限制每用户 sandbox 数量）
 - 需要定期清理长期不活跃的 sandbox（可选）
 
-**方式 2：Workspace 为主，Sandbox 临时创建**
+**方式 2：Cargo 为主，Sandbox 临时创建**
 ```
 1. POST /v1/workspaces → ws-persistent（external）
 2. 需要时：POST /v1/sandboxes {workspace_id: ws-persistent, ttl: 3600}
    → sandbox-temp-001
 3. 使用完毕或过期：DELETE sandbox 或自动过期
-4. 下次需要：创建新 sandbox 挂载同一 workspace
+4. 下次需要：创建新 sandbox 挂载同一 cargo
 ```
 
 **优点**：
@@ -586,12 +586,12 @@ sandbox_id  ─────────────►  Sandbox
 
 **比较两种方式**：
 
-| 方面 | 方式 1 (TTL=null Sandbox) | 方式 2 (External Workspace) |
+| 方面 | 方式 1 (TTL=null Sandbox) | 方式 2 (External Cargo) |
 |------|---------------------------|----------------------------|
 | ID 稳定性 | sandbox_id 稳定 | workspace_id 稳定，sandbox_id 变化 |
-| 资源占用 | Sandbox DB 记录常驻 | 只有 workspace 常驻 |
+| 资源占用 | Sandbox DB 记录常驻 | 只有 cargo 常驻 |
 | 使用复杂度 | 简单 | 需要管理两层 ID |
-| 计费模型 | 按 sandbox 存活时间? | 按 workspace 存储 + sandbox 运行时间 |
+| 计费模型 | 按 sandbox 存活时间? | 按 cargo 存储 + sandbox 运行时间 |
 | 配额管理 | 需要限制 TTL=null sandbox 数量 | 自然限制（sandbox 会过期） |
 
 **建议**：两种方式都支持，让用户根据场景选择

@@ -15,7 +15,7 @@
 
 - 对外唯一必需资源：`Sandbox`
 - `Session` 不对外暴露（仅内部运行实例）
-- `Workspace` 为可选的高级/管理面资源（可能受更高权限 scope 控制）
+- `Cargo` 为可选的高级/管理面资源（可能受更高权限 scope 控制）
 
 对应理念与生命周期规则参见：[plans/bay-design.md](plans/bay-design.md:128)。
 
@@ -58,7 +58,7 @@
 
 ## 2. 分页、过滤与排序
 
-适用：`GET /v1/sandboxes`、`GET /v1/workspaces` 等列表接口。
+适用：`GET /v1/sandboxes`、`GET /v1/cargos` 等列表接口。
 
 ### 2.1 请求参数
 
@@ -126,7 +126,7 @@
 建议对外 `Sandbox.status` 使用聚合状态，而不是直接暴露内部 `SessionStatus`（见：[plans/bay-design.md](plans/bay-design.md:83)）。
 
 推荐枚举：
-- `idle`：无运行实例（仅 workspace）
+- `idle`：无运行实例（仅 cargo）
 - `starting`：正在创建/启动运行实例
 - `ready`：运行实例就绪（运行时健康检查通过）
 - `failed`：最近一次启动失败（可重试）
@@ -172,7 +172,7 @@ stateDiagram-v2
 }
 ```
 
-### 5.2 Workspace（高级/管理面）
+### 5.2 Cargo（高级/管理面）
 
 ```json
 {
@@ -256,7 +256,7 @@ Response: `200`
 - `POST /v1/sandboxes/{id}/stop`
 
 语义：
-- 停止并销毁该 sandbox 下**所有**运行实例（当前可能只有 0/1 个；为未来多实例预留），保留 `Sandbox` 与 `Workspace`
+- 停止并销毁该 sandbox 下**所有**运行实例（当前可能只有 0/1 个；为未来多实例预留），保留 `Sandbox` 与 `Cargo`
 - 幂等：重复调用保持最终状态一致
 
 Response: `200`
@@ -267,8 +267,8 @@ Response: `200`
 
 语义：
 - 销毁所有运行实例
-- 若绑定 Workspace 为 `managed`：**强制级联删除** workspace
-- 若绑定 Workspace 为 `external`：不级联删除
+- 若绑定 Cargo 为 `managed`：**强制级联删除** cargo
+- 若绑定 Cargo 为 `external`：不级联删除
 
 Response: `204`
 
@@ -290,11 +290,11 @@ Response: `204`
 - `GET /v1/sandboxes/{id}/filesystem/download?path=...` — 下载文件
 
 路径语义（强约束）：
-- 所有路径参数必须是相对路径（相对容器内 workspace 根目录 `/workspace`）
+- 所有路径参数必须是相对路径（相对容器内 cargo 根目录 `/workspace`）
 - 禁止绝对路径与目录穿越（例如 `../`）
 
 约束：
-- 与 Workspace 直读写（6.3）相比，此处属于“通过运行时访问”，更适合与执行环境一致的权限/审计。
+- 与 Cargo 直读写（6.3）相比，此处属于“通过运行时访问”，更适合与执行环境一致的权限/审计。
 
 #### 6.2.2 Shell
 
@@ -305,27 +305,27 @@ Response: `204`
 
 - `POST /v1/sandboxes/{id}/python/exec`
 
-### 6.3 Workspace 数据面（高级/管理面）
+### 6.3 Cargo 数据面（高级/管理面）
 
 > 直读写不需要启动运行实例，但需要更严格的权限控制与审计。
 
-- `POST /v1/workspaces`
-- `GET /v1/workspaces`
-- `GET /v1/workspaces/{id}`
-- `DELETE /v1/workspaces/{id}`
-- `POST /v1/workspaces/{id}/files/read`
-- `POST /v1/workspaces/{id}/files/write`
+- `POST /v1/cargos`
+- `GET /v1/cargos`
+- `GET /v1/cargos/{id}`
+- `DELETE /v1/cargos/{id}`
+- `POST /v1/cargos/{id}/files/read`
+- `POST /v1/cargos/{id}/files/write`
 
 #### 6.3.1 与 Sandbox 文件接口的边界
 
 - `Sandbox /files/*`：面向“执行环境一致性”，默认开放给普通调用方
-- `Workspace /files/*`：面向“数据面管理”，建议：
+- `Cargo /files/*`：面向“数据面管理”，建议：
   - 需要更高权限 scope（例如 admin 或 service integration）
   - 必须记录审计日志
   - 并发写入策略：v1 采用“最后写入覆盖”，由用户在应用层自行控制并发写入（后续可新增可选的版本号/ETag 机制用于冲突检测）
 
 ## 7. 待定问题（需要在实现前拍板）
 
-- `DELETE /v1/workspaces/{id}` 对 managed workspace 的规则：
+- `DELETE /v1/cargos/{id}` 对 managed cargo 的规则：
   - 允许在 `managed_by_sandbox_id` 对应 sandbox 已彻底删除的情况下删除（Bay DB 采用软删除 tombstone，保留 `deleted_at`/retention，用于幂等、审计与判定）。
-  - 若 sandbox 仍存在（未 deleted），删除该 managed workspace 应返回 `409 conflict` 或 `403 forbidden`（实现前需确定）。
+  - 若 sandbox 仍存在（未 deleted），删除该 managed cargo 应返回 `409 conflict` 或 `403 forbidden`（实现前需确定）。

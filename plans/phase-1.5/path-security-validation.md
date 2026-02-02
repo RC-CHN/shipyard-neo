@@ -6,7 +6,7 @@
 
 ## 1. 背景与动机
 
-Shipyard 需要确保用户提供的文件路径不会逃逸 workspace 边界。当前 Ship 端已有校验逻辑，但 Bay 端缺乏前置验证，导致：
+Shipyard 需要确保用户提供的文件路径不会逃逸 cargo 边界。当前 Ship 端已有校验逻辑，但 Bay 端缺乏前置验证，导致：
 
 1. **资源浪费**：恶意或错误路径请求需到达 Ship 才被拒绝
 2. **错误信息泄露**：Ship 返回的 403 可能包含内部路径信息
@@ -22,7 +22,7 @@ Shipyard 需要确保用户提供的文件路径不会逃逸 workspace 边界。
 │                                                                          │
 │   ┌──────────────────┐                 ┌─────────────────────────────┐  │
 │   │       Bay        │                 │      Docker Volume          │  │
-│   │   (API Gateway)  │                 │  bay-workspace-ws-xxxx      │  │
+│   │   (API Gateway)  │                 │  bay-cargo-ws-xxxx      │  │
 │   └────────┬─────────┘                 └─────────────┬───────────────┘  │
 │            │ HTTP                                    │                   │
 │            ▼                                         │ mount             │
@@ -53,18 +53,18 @@ WORKSPACE_MOUNT_PATH = "/workspace"
 
 # 容器创建时挂载 Docker Volume
 host_config: dict = {
-    "Binds": [f"{workspace.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
+    "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
     ...
 }
 ```
 
-**Workspace 模型**
+**Cargo 模型**
 
 文件: `pkgs/bay/app/models/workspace.py:28-29, 46-49`
 
 ```python
 backend: str = Field(default="docker_volume")  # docker_volume | k8s_pvc
-driver_ref: str = Field(default="")  # Volume name: "bay-workspace-ws-xxxx"
+driver_ref: str = Field(default="")  # Volume name: "bay-cargo-ws-xxxx"
 
 @property
 def mount_path(self) -> str:
@@ -77,7 +77,7 @@ def mount_path(self) -> str:
 文件: `pkgs/bay/app/managers/workspace/workspace.py:51-69`
 
 ```python
-volume_name = f"bay-workspace-{workspace_id}"
+volume_name = f"bay-cargo-{workspace_id}"
 await self._driver.create_volume(
     name=volume_name,
     labels={"bay.owner": owner, "bay.workspace_id": workspace_id, ...},
@@ -100,7 +100,7 @@ chmod 755 /workspace
 ```
 /
 ├── app/                    # Ship 应用代码 (来自镜像)
-├── workspace/              # Docker Volume 挂载点 (用户数据)
+├── cargo/              # Docker Volume 挂载点 (用户数据)
 │   └── (用户文件...)
 ├── etc/                    # 系统配置 (来自镜像)
 ├── usr/                    # 系统程序 (来自镜像)
@@ -149,7 +149,7 @@ def resolve_path(path: str) -> Path:
     except ValueError:
         raise HTTPException(
             status_code=403,
-            detail=f"Access denied: path must be within workspace {workspace_dir}",
+            detail=f"Access denied: path must be within cargo {workspace_dir}",
         )
     return candidate
 ```
@@ -188,7 +188,7 @@ if cwd:
     except ValueError:
         raise HTTPException(
             status_code=403,
-            detail=f"Access denied: path must be within workspace: {WORKSPACE_ROOT}",
+            detail=f"Access denied: path must be within cargo: {WORKSPACE_ROOT}",
         )
 ```
 
@@ -325,13 +325,13 @@ from app.errors import InvalidPathError
 
 
 def validate_relative_path(path: str, *, field_name: str = "path") -> str:
-    """Validate and normalize path to ensure it stays within workspace.
+    """Validate and normalize path to ensure it stays within cargo.
 
     Rules:
     1. Must not be empty
     2. Must not be absolute (start with /)
     3. Must not contain null bytes
-    4. After normalization, must not escape workspace (start with ..)
+    4. After normalization, must not escape cargo (start with ..)
 
     Args:
         path: Path to validate
@@ -351,7 +351,7 @@ def validate_relative_path(path: str, *, field_name: str = "path") -> str:
         >>> validate_relative_path("./a/b/../c.txt")
         'a/c.txt'  # normalized
         >>> validate_relative_path("../file.txt")
-        InvalidPathError  # escapes workspace
+        InvalidPathError  # escapes cargo
     """
     if not path:
         raise InvalidPathError(
@@ -385,9 +385,9 @@ def validate_relative_path(path: str, *, field_name: str = "path") -> str:
             if parts:
                 parts.pop()
             else:
-                # Trying to go above workspace root
+                # Trying to go above cargo root
                 raise InvalidPathError(
-                    message=f"{field_name} escapes workspace boundary",
+                    message=f"{field_name} escapes cargo boundary",
                     details={"field": field_name, "reason": "path_traversal"},
                 )
         else:
@@ -497,7 +497,7 @@ async def read_file(
 
 ```json
 {
-  "detail": "Access denied: path must be within workspace /workspace"
+  "detail": "Access denied: path must be within cargo /workspace"
 }
 ```
 

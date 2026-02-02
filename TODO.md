@@ -143,7 +143,7 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 - [ ] **IdleSessionGC**：空闲 Session 回收（idle_expires_at 过期）
 - [ ] **ExpiredSandboxGC**：过期 Sandbox 清理（expires_at 过期）
-- [ ] **OrphanWorkspaceGC**：孤儿 managed workspace 清理
+- [ ] **OrphanCargoGC**：孤儿 managed workspace 清理
 - [ ] **OrphanContainerGC**：孤儿容器检测与清理
 - [ ] GC 调度器框架（GCTask + GCScheduler）
 - [ ] 启动时 reconcile
