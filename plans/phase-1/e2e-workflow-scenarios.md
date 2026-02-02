@@ -1105,7 +1105,7 @@ Shipyard 采用**纵深防御**策略：
 
 1. 创建 sandbox（带 TTL，例如 120s）：`POST /v1/sandboxes`
 2. 执行 `python/exec` 写入一些文件（例如生成 `data/result.json`），确保容器与 cargo 都已创建
-3. 记录 `sandbox_id`、`workspace_id`，并通过 `GET /v1/sandboxes/{id}` 确认 `status` 从 `idle` 进入 `ready/starting`
+3. 记录 `sandbox_id`、`cargo_id`，并通过 `GET /v1/sandboxes/{id}` 确认 `status` 从 `idle` 进入 `ready/starting`
 
 **断言**：
 - sandbox 可执行、cargo 中文件存在
@@ -1147,7 +1147,7 @@ Shipyard 采用**纵深防御**策略：
 
 12. 制造“孤儿 managed cargo”（建议方式）：
    - 创建 sandbox → 得到 cargo
-   - 再通过 DB 操作把 `workspaces.managed_by_sandbox_id` 置空，或将对应 sandbox 标记 deleted，使 cargo 满足 OrphanCargoGC 的触发条件
+   - 再通过 DB 操作把 `cargos.managed_by_sandbox_id` 置空，或将对应 sandbox 标记 deleted，使 cargo 满足 OrphanCargoGC 的触发条件
 13. 等待 GC 周期
 
 **断言**：
@@ -1172,4 +1172,3 @@ Shipyard 采用**纵深防御**策略：
   - “OrphanContainerGC strict 防误删”
 
 ---
-

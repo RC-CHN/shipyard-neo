@@ -54,7 +54,7 @@ flowchart LR
 
 > Cargo 分两类，解决“隐式创建 + 删除语义”问题：
 > - `managed`：由 `POST /sandboxes` 隐式创建，默认用于该 Sandbox；当 Sandbox 被彻底销毁时可级联删除。
-> - `external`：由 `POST /workspaces` 显式创建/导入；**永不**被 Sandbox 的销毁动作级联删除。
+> - `external`：由 `POST /cargos` 显式创建/导入；**永不**被 Sandbox 的销毁动作级联删除。
 
 ```python
 # 数据模型
@@ -103,7 +103,7 @@ class Profile:
 ```python
 class Session:
     id: str                    # 唯一标识
-    workspace_id: str          # 关联的 Cargo
+    cargo_id: str              # 关联的 Cargo
     profile_id: str            # 使用的 Profile
     status: SessionStatus      # pending/starting/running/stopped/failed
     container_id: str | None   # Docker Container ID / K8s Pod Name
@@ -253,14 +253,14 @@ class K8sDriver(Driver):
 
 #### 3.2.3 资源标记与重启恢复（reconcile）
 
-- 强制要求 Driver 创建的容器/卷（或 K8s 资源）携带 label/annotation：`owner, sandbox_id, session_id, workspace_id, profile_id`，用于诊断与对账。
+- 强制要求 Driver 创建的容器/卷（或 K8s 资源）携带 label/annotation：`owner, sandbox_id, session_id, cargo_id, profile_id`，用于诊断与对账。
 - Bay 重启后应执行一次 reconcile：
   - 用 DB 元数据与 Driver 实际资源对账，收敛 `observed_state`；
   - 识别并回收孤儿容器/孤儿卷（采取保守策略，避免误删）。
 
 ```python
 class SessionManager:
-    async def create_session(self, owner: str, profile_id: str, workspace_id: str | None) -> Session: ...
+    async def create_session(self, owner: str, profile_id: str, cargo_id: str | None) -> Session: ...
     async def get_session(self, session_id: str, owner: str) -> Session: ...
     async def ensure_running(self, session_id: str) -> Session: ...
     async def stop_session(self, session_id: str) -> None: ...
@@ -270,14 +270,14 @@ class SessionManager:
 
 
 class CargoManager:
-    async def create_workspace(self, owner: str) -> Cargo: ...
-    async def get_workspace(self, workspace_id: str, owner: str) -> Cargo: ...
-    async def delete_workspace(self, workspace_id: str) -> None: ...
-    async def list_workspaces(self, owner: str) -> list[Cargo]: ...
+    async def create_cargo(self, owner: str) -> Cargo: ...
+    async def get_cargo(self, cargo_id: str, owner: str) -> Cargo: ...
+    async def delete_cargo(self, cargo_id: str) -> None: ...
+    async def list_cargos(self, owner: str) -> list[Cargo]: ...
     # 直接文件操作（不经过 Ship）
-    async def read_file(self, workspace_id: str, path: str) -> bytes: ...
-    async def write_file(self, workspace_id: str, path: str, content: bytes) -> None: ...
-    async def list_files(self, workspace_id: str, path: str) -> list[FileInfo]: ...
+    async def read_file(self, cargo_id: str, path: str) -> bytes: ...
+    async def write_file(self, cargo_id: str, path: str, content: bytes) -> None: ...
+    async def list_files(self, cargo_id: str, path: str) -> list[FileInfo]: ...
 
 
 class CapabilityRouter:
@@ -323,7 +323,7 @@ class CapabilityRouter:
 ```json
 {
   "profile": "python-default",    // 可选，默认 python-default
-  "workspace_id": null,           // 可选，为空则自动创建
+  "cargo_id": null,               // 可选，为空则自动创建
   "ttl": 3600                     // 可选，Sandbox TTL（秒）；null 或 0 表示不过期
 }
 ```
@@ -334,7 +334,7 @@ class CapabilityRouter:
   "id": "sandbox-abc123",
   "status": "running",
   "profile": "python-default",
-  "workspace_id": "ws-xyz789",
+  "cargo_id": "ws-xyz789",
   "capabilities": ["filesystem", "shell", "ipython"],
   "created_at": "2026-01-28T06:00:00Z",
   "expires_at": "2026-01-28T07:00:00Z",
@@ -366,12 +366,12 @@ class CapabilityRouter:
 
 | 方法 | 路径 | 描述 |
 |:--|:--|:--|
-| `POST` | `/workspaces` | 创建独立 Cargo |
-| `GET` | `/workspaces` | 列出 Cargos |
-| `GET` | `/workspaces/{id}` | 获取 Cargo 详情 |
-| `DELETE` | `/workspaces/{id}` | 删除 Cargo |
-| `POST` | `/workspaces/{id}/files/read` | 直接读文件（不启动容器） |
-| `POST` | `/workspaces/{id}/files/write` | 直接写文件（不启动容器） |
+| `POST` | `/cargos` | 创建独立 Cargo |
+| `GET` | `/cargos` | 列出 Cargos |
+| `GET` | `/cargos/{id}` | 获取 Cargo 详情 |
+| `DELETE` | `/cargos/{id}` | 删除 Cargo |
+| `POST` | `/cargos/{id}/files/read` | 直接读文件（不启动容器） |
+| `POST` | `/cargos/{id}/files/write` | 直接写文件（不启动容器） |
 
 ### 4.4 管理 API
 
@@ -425,7 +425,7 @@ pkgs/bay/
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── sandbox.py             # SQLModel: sandboxes（含 tombstone）
-│   │   ├── cargo.py           # SQLModel: workspaces（managed/external）
+│   │   ├── cargo.py           # SQLModel: cargos（managed/external）
 │   │   ├── session.py             # SQLModel: sessions（desired/observed）
 │   │   └── idempotency.py         # SQLModel: idempotency_keys
 │   ├── drivers/
@@ -447,7 +447,7 @@ pkgs/bay/
 │   │   │   ├── __init__.py
 │   │   │   ├── sandboxes.py       # /v1/sandboxes + keepalive + stop
 │   │   │   ├── capabilities.py    # /v1/sandboxes/{id}/*
-│   │   │   ├── workspaces.py      # /v1/workspaces（可 feature-flag）
+│   │   │   ├── cargos.py          # /v1/cargos（可 feature-flag）
 │   │   │   └── profiles.py        # /v1/profiles
 │   │   └── admin.py               # 管理 API（可选）
 │   ├── auth/

@@ -97,7 +97,7 @@ new = max(old, now) + extend_by
   "id": "sandbox-abc123",
   "status": "idle",
   "profile": "python-default",
-  "workspace_id": "ws-xyz789",
+  "cargo_id": "ws-xyz789",
   "capabilities": ["filesystem", "shell", "python"],
   "created_at": "2026-01-30T07:00:00Z",
   "expires_at": "2026-01-30T09:00:00Z",

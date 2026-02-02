@@ -70,10 +70,10 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
   - `migrations/`：Alembic
 - `pkgs/bay/bay/models/`：SQLModel 实体（tables）
 - `pkgs/bay/bay/drivers/`：DockerDriver（Phase1）+ K8sDriver 占位
-- `pkgs/bay/bay/managers/`：WorkspaceManager / SessionManager / SandboxManager
+- `pkgs/bay/bay/managers/`：CargoManager / SessionManager / SandboxManager
 - `pkgs/bay/bay/clients/`：RuntimeClient 抽象 + ShipClient
 - `pkgs/bay/bay/router/`：CapabilityRouter（策略+路由）
-- `pkgs/bay/bay/api/`：FastAPI 路由模块（sandbox/workspace/admin）
+- `pkgs/bay/bay/api/`：FastAPI 路由模块（sandbox/cargo/admin）
 - `pkgs/bay/tests/`：unit + integration
 
 ## 3. 数据模型与表设计（Phase 1 必要字段）
@@ -85,13 +85,13 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 - `id`（sandbox_id）
 - `owner`
 - `profile_id`
-- `workspace_id`
+- `cargo_id`
 - `current_session_ids`（Phase 1 可先用单个 current_session_id；但 stop 语义按“所有运行实例”定义）
 - `expires_at`（TTL；允许 null/0 表示不过期）
 - `deleted_at`（tombstone：对外 404，但内部用于审计/判定）
 - `version`（乐观锁）
 
-### 3.2 workspaces
+### 3.2 cargos
 
 - `id`
 - `owner`
@@ -133,7 +133,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 
 必须保证：
 - cargo volume 挂载到 `/workspace`
-- 所有资源带 label：owner/sandbox_id/session_id/workspace_id/profile_id
+- 所有资源带 label：owner/sandbox_id/session_id/cargo_id/profile_id
 
 ### 4.2 SessionManager
 
@@ -149,7 +149,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 
 Ship 已支持 `GET /meta`：[`pkgs/ship/app/main.py`](pkgs/ship/app/main.py:62)。
 
-### 4.3 WorkspaceManager
+### 4.3 CargoManager
 
 - create: 创建 docker volume，落库，标记 managed/external
 - delete: 若 managed 且 sandbox deleted_at 非空才允许直接删（或返回 409/403，需按 API 文档统一）
@@ -188,7 +188,7 @@ Ship 已支持 `GET /meta`：[`pkgs/ship/app/main.py`](pkgs/ship/app/main.py:62)
 ## 7. 里程碑拆分（不估时，只定义交付物）
 
 - Milestone 1：Bay 工程骨架 + DB/迁移 + profile 静态配置加载
-- Milestone 2：DockerDriver + WorkspaceManager（volume）+ SessionManager.ensure_running
+- Milestone 2：DockerDriver + CargoManager（volume）+ SessionManager.ensure_running
 - Milestone 3：Sandbox API（create/get/list/stop/delete）+ /python/exec 最小链路
 - Milestone 4：Ship `GET /meta` 握手校验接入（已在 Ship 侧落地），完善错误模型/幂等键
 - Milestone 5：扩展到 filesystem/shell 能力 + cargo 管理面（可选）

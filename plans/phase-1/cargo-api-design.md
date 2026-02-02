@@ -16,7 +16,7 @@
 
 ### 0.2 字段命名一致性
 
-- `managed_by_sandbox_id`: 与 Sandbox 的 `workspace_id` 形成双向引用
+- `managed_by_sandbox_id`: 与 Sandbox 的 `cargo_id` 形成双向引用
 - 时间字段统一使用 `xxx_at` 后缀（`created_at`, `last_accessed_at`）
 - ID 字段使用 `xxx_id` 后缀
 
@@ -34,12 +34,12 @@
 
 | 方法 | 路径 | 描述 | 权限级别 |
 |------|------|------|----------|
-| `POST` | `/v1/workspaces` | 创建 external cargo | 标准 |
-| `GET` | `/v1/workspaces` | 列出 workspaces | 标准 |
-| `GET` | `/v1/workspaces/{id}` | 获取 cargo 详情 | 标准 |
-| `DELETE` | `/v1/workspaces/{id}` | 删除 cargo | 标准 |
-| `POST` | `/v1/workspaces/{id}/files/read` | 直接读文件 | 高级（Phase 2） |
-| `POST` | `/v1/workspaces/{id}/files/write` | 直接写文件 | 高级（Phase 2） |
+| `POST` | `/v1/cargos` | 创建 external cargo | 标准 |
+| `GET` | `/v1/cargos` | 列出 cargos | 标准 |
+| `GET` | `/v1/cargos/{id}` | 获取 cargo 详情 | 标准 |
+| `DELETE` | `/v1/cargos/{id}` | 删除 cargo | 标准 |
+| `POST` | `/v1/cargos/{id}/files/read` | 直接读文件 | 高级（Phase 2） |
+| `POST` | `/v1/cargos/{id}/files/write` | 直接写文件 | 高级（Phase 2） |
 
 ## 2. 资源模型
 
@@ -60,14 +60,14 @@
 ### 2.2 与 Sandbox 的关系
 
 - **managed cargo**: 由 `POST /v1/sandboxes` 隐式创建，生命周期绑定 sandbox
-- **external cargo**: 由 `POST /v1/workspaces` 显式创建，独立于任何 sandbox
+- **external cargo**: 由 `POST /v1/cargos` 显式创建，独立于任何 sandbox
 
 ## 3. 端点详细设计
 
 ### 3.1 创建 External Cargo
 
 ```
-POST /v1/workspaces
+POST /v1/cargos
 ```
 
 **Request Body:**
@@ -92,13 +92,13 @@ POST /v1/workspaces
 
 **语义:**
 - 创建独立的 external cargo（`managed=false`）
-- 可在后续 `POST /v1/sandboxes` 时通过 `workspace_id` 参数绑定
+- 可在后续 `POST /v1/sandboxes` 时通过 `cargo_id` 参数绑定
 - 多个 sandbox 可共享同一个 external cargo
 
-### 3.2 列出 Workspaces
+### 3.2 列出 Cargos
 
 ```
-GET /v1/workspaces?limit=50&cursor=...&managed=false
+GET /v1/cargos?limit=50&cursor=...&managed=false
 ```
 
 **Query Parameters:**
@@ -127,7 +127,7 @@ GET /v1/workspaces?limit=50&cursor=...&managed=false
 ### 3.3 获取 Cargo 详情
 
 ```
-GET /v1/workspaces/{id}
+GET /v1/cargos/{id}
 ```
 
 **Response: 200 OK**
@@ -146,7 +146,7 @@ GET /v1/workspaces/{id}
 ### 3.4 删除 Cargo
 
 ```
-DELETE /v1/workspaces/{id}
+DELETE /v1/cargos/{id}
 ```
 
 **Response: 204 No Content**
@@ -164,7 +164,7 @@ DELETE /v1/workspaces/{id}
     "code": "conflict",
     "message": "Cannot delete managed cargo. Delete the managing sandbox first.",
     "details": {
-      "workspace_id": "ws-abc123",
+      "cargo_id": "ws-abc123",
       "managed_by_sandbox_id": "sandbox-xyz"
     }
   }
@@ -176,11 +176,11 @@ DELETE /v1/workspaces/{id}
 ### 场景 1: External Cargo 被多个 Sandbox 共享
 
 **操作序列:**
-1. `POST /v1/workspaces` → `ws-001` (external, managed=false)
-2. `POST /v1/sandboxes {workspace_id: ws-001}` → `sandbox-A`
-3. `POST /v1/sandboxes {workspace_id: ws-001}` → `sandbox-B`
+1. `POST /v1/cargos` → `ws-001` (external, managed=false)
+2. `POST /v1/sandboxes {cargo_id: ws-001}` → `sandbox-A`
+3. `POST /v1/sandboxes {cargo_id: ws-001}` → `sandbox-B`
 4. `DELETE /v1/sandboxes/sandbox-A` → 成功，`ws-001` 保留
-5. `DELETE /v1/workspaces/ws-001` → **？**
+5. `DELETE /v1/cargos/ws-001` → **？**
 
 **核心问题:** `sandbox-B` 仍在使用 `ws-001`，直接删除会导致悬空引用。
 
@@ -189,8 +189,8 @@ DELETE /v1/workspaces/{id}
 | 选项 | 行为 | 优点 | 缺点 |
 |------|------|------|------|
 | A | 返回 409 Conflict | 避免悬空引用，数据一致性强 | 用户必须先删除所有 sandbox |
-| B | 允许删除，workspace_id 保持原值 | 灵活，用户可强制清理 | sandbox-B 后续操作失败 |
-| C | 允许删除，级联更新 workspace_id=NULL | 保持数据一致 | sandbox 变成无 cargo 状态 |
+| B | 允许删除，cargo_id 保持原值 | 灵活，用户可强制清理 | sandbox-B 后续操作失败 |
+| C | 允许删除，级联更新 cargo_id=NULL | 保持数据一致 | sandbox 变成无 cargo 状态 |
 
 **✅ 决策: 选项 A - 返回 409 Conflict**
 
@@ -206,7 +206,7 @@ DELETE /v1/workspaces/{id}
     "code": "conflict",
     "message": "Cargo is in use by active sandboxes",
     "details": {
-      "workspace_id": "ws-001",
+      "cargo_id": "ws-001",
       "active_sandbox_ids": ["sandbox-B"]
     }
   }
@@ -214,7 +214,7 @@ DELETE /v1/workspaces/{id}
 ```
 
 **实现要点:**
-- 在 `WorkspaceManager.delete()` 中查询所有 `workspace_id == target` 且 `deleted_at IS NULL` 的 sandbox
+- 在 `CargoManager.delete()` 中查询所有 `cargo_id == target` 且 `deleted_at IS NULL` 的 sandbox
 - 如果列表非空，返回 409 并附上 sandbox ID 列表
 
 ### 场景 2: Managed Cargo 的 Sandbox 已软删除
@@ -224,14 +224,14 @@ DELETE /v1/workspaces/{id}
 1. POST /v1/sandboxes → sandbox-A (自动创建 ws-001, managed=true)
 2. DELETE /v1/sandboxes/sandbox-A → sandbox-A.deleted_at 设置
 3. （gc 未运行，ws-001 仍存在）
-4. DELETE /v1/workspaces/ws-001
+4. DELETE /v1/cargos/ws-001
 
 预期行为:
 - sandbox-A 已软删除，ws-001 应该可以被清理
-- 但 WorkspaceManager.delete() 需要检查 sandbox.deleted_at
+- 但 CargoManager.delete() 需要检查 sandbox.deleted_at
 
 当前实现问题:
-- WorkspaceManager.delete() 检查 managed=True 就拒绝
+- CargoManager.delete() 检查 managed=True 就拒绝
 - 未检查 managed_by_sandbox_id 对应的 sandbox 是否已删除
 
 修复: 增加对 sandbox.deleted_at 的检查
@@ -242,7 +242,7 @@ DELETE /v1/workspaces/{id}
 ```
 操作序列 (并发):
 T1: DELETE /v1/sandboxes/sandbox-A 开始执行
-T2: DELETE /v1/workspaces/ws-001 开始执行
+T2: DELETE /v1/cargos/ws-001 开始执行
 
 潜在问题:
 - T1 正在级联删除 managed cargo
@@ -255,11 +255,11 @@ T2: DELETE /v1/workspaces/ws-001 开始执行
 - Phase 1 可接受：让 volume 删除幂等，捕获 NotFound 异常
 ```
 
-### 场景 4: 创建 Sandbox 时指定不存在的 workspace_id
+### 场景 4: 创建 Sandbox 时指定不存在的 cargo_id
 
 ```
 操作序列:
-1. POST /v1/sandboxes {workspace_id: ws-not-exist}
+1. POST /v1/sandboxes {cargo_id: ws-not-exist}
 
 预期行为: 400 Bad Request 或 404 Not Found
 
@@ -268,12 +268,12 @@ T2: DELETE /v1/workspaces/ws-001 开始执行
 需要确认: 查看 SandboxManager 实现
 ```
 
-### 场景 5: 创建 Sandbox 时指定别人的 workspace_id
+### 场景 5: 创建 Sandbox 时指定别人的 cargo_id
 
 ```
 操作序列:
-1. User A: POST /v1/workspaces → ws-001 (owner=A)
-2. User B: POST /v1/sandboxes {workspace_id: ws-001} (owner=B)
+1. User A: POST /v1/cargos → ws-001 (owner=A)
+2. User B: POST /v1/sandboxes {cargo_id: ws-001} (owner=B)
 
 预期行为: 403 Forbidden 或 404 Not Found
 
@@ -283,7 +283,7 @@ T2: DELETE /v1/workspaces/ws-001 开始执行
 ### 场景 6: Cargo 列表 - managed 过滤器歧义
 
 ```
-请求: GET /v1/workspaces?managed=true
+请求: GET /v1/cargos?managed=true
 
 问题: 返回所有 managed cargo 有意义吗？
 - managed cargo 本质上是 sandbox 的"附属品"
@@ -303,17 +303,17 @@ T2: DELETE /v1/workspaces/ws-001 开始执行
 | 场景 1 | 返回 409 如果仍有 sandbox 引用 | 避免悬空引用 |
 | 场景 2 | 允许删除如果 sandbox.deleted_at 非空 | 支持 gc 清理 |
 | 场景 3 | Volume 删除幂等 + 捕获异常 | Phase 1 简化方案 |
-| 场景 4 | 返回 404 | workspace_id 必须存在 |
+| 场景 4 | 返回 404 | cargo_id 必须存在 |
 | 场景 5 | 返回 404（隐藏权限信息） | 安全考虑 |
 | 场景 6 | 默认返回所有，支持 managed 过滤 | 保持灵活性 |
 
 ## 10. 需要修改的现有代码
 
-### 10.1 WorkspaceManager.delete() 改进
+### 10.1 CargoManager.delete() 改进
 
 ```python
-async def delete(self, workspace_id: str, owner: str, *, force: bool = False) -> None:
-    cargo = await self.get(workspace_id, owner)
+async def delete(self, cargo_id: str, owner: str, *, force: bool = False) -> None:
+    cargo = await self.get(cargo_id, owner)
     
     if cargo.managed and not force:
         # 检查关联的 sandbox 是否已删除
@@ -327,7 +327,7 @@ async def delete(self, workspace_id: str, owner: str, *, force: bool = False) ->
     
     # 检查是否有其他 sandbox 在使用（external cargo 场景）
     if not cargo.managed:
-        active_sandboxes = await self._get_sandboxes_using_workspace(workspace_id)
+        active_sandboxes = await self._get_sandboxes_using_cargo(cargo_id)
         if active_sandboxes:
             raise ConflictError(
                 f"Cargo is in use by {len(active_sandboxes)} sandbox(es). "
@@ -340,10 +340,10 @@ async def delete(self, workspace_id: str, owner: str, *, force: bool = False) ->
 ### 10.2 SandboxManager.create() 增加校验
 
 ```python
-async def create(self, owner: str, workspace_id: str | None = None, ...) -> Sandbox:
-    if workspace_id:
+async def create(self, owner: str, cargo_id: str | None = None, ...) -> Sandbox:
+    if cargo_id:
         # 校验 cargo 存在且属于当前用户
-        cargo = await self._workspace_mgr.get(workspace_id, owner)
+        cargo = await self._cargo_mgr.get(cargo_id, owner)
         # get() 已包含 owner 校验，不存在或不属于用户会抛 NotFoundError
 ```
 
@@ -351,29 +351,29 @@ async def create(self, owner: str, workspace_id: str | None = None, ...) -> Sand
 
 ### 4.1 Phase 1 核心（本次实现）
 
-1. **新建文件**: `pkgs/bay/app/api/v1/workspaces.py`
-   - `POST /v1/workspaces` - 创建 external cargo
-   - `GET /v1/workspaces` - 列出 workspaces
-   - `GET /v1/workspaces/{id}` - 获取详情
-   - `DELETE /v1/workspaces/{id}` - 删除
+1. **新建文件**: `pkgs/bay/app/api/v1/cargos.py`
+   - `POST /v1/cargos` - 创建 external cargo
+   - `GET /v1/cargos` - 列出 cargos
+   - `GET /v1/cargos/{id}` - 获取详情
+   - `DELETE /v1/cargos/{id}` - 删除
 
 2. **更新依赖注入**: `pkgs/bay/app/api/dependencies.py`
-   - 添加 `get_workspace_manager` 函数
-   - 添加 `WorkspaceManagerDep` 类型别名
+   - 添加 `get_cargo_manager` 函数
+   - 添加 `CargoManagerDep` 类型别名
 
 3. **注册路由**: `pkgs/bay/app/api/v1/__init__.py`
-   - 添加 workspaces router
+   - 添加 cargos router
 
 ### 4.2 Phase 2（后续扩展）
 
-- `POST /v1/workspaces/{id}/files/read` - 直接读文件
-- `POST /v1/workspaces/{id}/files/write` - 直接写文件
+- `POST /v1/cargos/{id}/files/read` - 直接读文件
+- `POST /v1/cargos/{id}/files/write` - 直接写文件
 - 更严格的权限控制（需要 admin scope）
 - 审计日志
 
-## 5. WorkspaceManager 改动
+## 5. CargoManager 改动
 
-现有的 [`WorkspaceManager`](../../pkgs/bay/app/managers/workspace/workspace.py:23) 已实现：
+现有的 [`CargoManager`](../../pkgs/bay/app/managers/cargo/cargo.py:1) 已实现：
 - `create()`: ✓ 已支持 `managed` 参数
 - `get()`: ✓ 已有 owner 校验
 - `list()`: ✓ 已支持分页
@@ -386,14 +386,14 @@ async def create(self, owner: str, workspace_id: str | None = None, ...) -> Sand
 
 ### 6.1 单元测试
 
-- WorkspaceManager CRUD 操作
+- CargoManager CRUD 操作
 - managed cargo 删除保护逻辑
 
 ### 6.2 集成测试
 
 - 创建 external cargo → 绑定 sandbox → 删除 sandbox → cargo 保留
 - 创建 sandbox（managed cargo）→ 尝试直接删除 cargo → 409
-- 列出 workspaces 分页与过滤
+- 列出 cargos 分页与过滤
 
 ## 7. 代码结构
 
@@ -401,8 +401,8 @@ async def create(self, owner: str, workspace_id: str | None = None, ...) -> Sand
 pkgs/bay/app/
 ├── api/
 │   └── v1/
-│       ├── __init__.py          # 添加 workspaces router
-│       ├── workspaces.py        # 新建 - Cargo API
+│       ├── __init__.py          # 添加 cargos router
+│       ├── cargos.py            # 新建 - Cargo API
 │       └── sandboxes.py         # 现有
 ├── managers/
 │   └── cargo/

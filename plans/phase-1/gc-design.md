@@ -68,7 +68,7 @@
 - **managed**: 生命周期绑定 Sandbox
   - Sandbox 删除时级联删除
 - **external**: 独立生命周期
-  - 需要显式 `DELETE /v1/workspaces/{id}`
+  - 需要显式 `DELETE /v1/cargos/{id}`
   - 即使所有引用的 Sandbox 删除，cargo 仍保留
 
 #### Idempotency Key
@@ -356,7 +356,7 @@ class OrphanWorkspaceGC(GCTask):
                     cleaned += 1
                 except Exception as e:
                     logger.warning("gc.orphan_workspace.item_failed", 
-                                   workspace_id=ws.id, error=str(e))
+                                   cargo_id=cargo.id, error=str(e))
                     errors += 1
             
             await db.commit()
@@ -567,8 +567,8 @@ sandbox_id  ─────────────►  Sandbox
 
 **方式 2：Cargo 为主，Sandbox 临时创建**
 ```
-1. POST /v1/workspaces → ws-persistent（external）
-2. 需要时：POST /v1/sandboxes {workspace_id: ws-persistent, ttl: 3600}
+1. POST /v1/cargos → ws-persistent（external）
+2. 需要时：POST /v1/sandboxes {cargo_id: ws-persistent, ttl: 3600}
    → sandbox-temp-001
 3. 使用完毕或过期：DELETE sandbox 或自动过期
 4. 下次需要：创建新 sandbox 挂载同一 cargo
@@ -580,7 +580,7 @@ sandbox_id  ─────────────►  Sandbox
 
 **缺点**：
 - 每次都要创建新 sandbox_id
-- 上层需要管理 workspace_id → sandbox_id 的映射
+- 上层需要管理 cargo_id → sandbox_id 的映射
 
 ---
 
@@ -588,7 +588,7 @@ sandbox_id  ─────────────►  Sandbox
 
 | 方面 | 方式 1 (TTL=null Sandbox) | 方式 2 (External Cargo) |
 |------|---------------------------|----------------------------|
-| ID 稳定性 | sandbox_id 稳定 | workspace_id 稳定，sandbox_id 变化 |
+| ID 稳定性 | sandbox_id 稳定 | cargo_id 稳定，sandbox_id 变化 |
 | 资源占用 | Sandbox DB 记录常驻 | 只有 cargo 常驻 |
 | 使用复杂度 | 简单 | 需要管理两层 ID |
 | 计费模型 | 按 sandbox 存活时间? | 按 cargo 存储 + sandbox 运行时间 |

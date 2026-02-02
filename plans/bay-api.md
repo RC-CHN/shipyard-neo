@@ -164,7 +164,7 @@ stateDiagram-v2
   "id": "sandbox-abc123",
   "status": "ready",
   "profile": "python-default",
-  "workspace_id": "ws-xyz789",
+  "cargo_id": "ws-xyz789",
   "capabilities": ["filesystem", "shell", "ipython"],
   "created_at": "2026-01-28T06:00:00Z",
   "expires_at": null,
@@ -200,7 +200,7 @@ Request:
 ```json
 {
   "profile": "python-default",
-  "workspace_id": null,
+  "cargo_id": null,
   "ttl": 3600
 }
 ```
@@ -211,7 +211,7 @@ Response: `201`
   "id": "sandbox-abc123",
   "status": "idle",
   "profile": "python-default",
-  "workspace_id": "ws-xyz789",
+  "cargo_id": "ws-xyz789",
   "capabilities": ["filesystem", "shell", "ipython"],
   "created_at": "...",
   "expires_at": "...",

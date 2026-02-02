@@ -35,7 +35,7 @@
 - DB（SQLite async）：[`pkgs/bay/app/db/session.py`](pkgs/bay/app/db/session.py:1)
 - Models：
   - Sandbox：[`pkgs/bay/app/models/sandbox.py`](pkgs/bay/app/models/sandbox.py:1)
-  - Cargo：[`pkgs/bay/app/models/workspace.py`](pkgs/bay/app/models/workspace.py:1)
+  - Cargo：[`pkgs/bay/app/models/cargo.py`](pkgs/bay/app/models/cargo.py:1)
   - Session：[`pkgs/bay/app/models/session.py`](pkgs/bay/app/models/session.py:1)
   - IdempotencyKey：[`pkgs/bay/app/models/idempotency.py`](pkgs/bay/app/models/idempotency.py:1)
 - Driver 抽象 + DockerDriver：
@@ -44,7 +44,7 @@
 - Managers：
   - SandboxManager：[`pkgs/bay/app/managers/sandbox/sandbox.py`](pkgs/bay/app/managers/sandbox/sandbox.py:1)
   - SessionManager：[`pkgs/bay/app/managers/session/session.py`](pkgs/bay/app/managers/session/session.py:1)
-  - WorkspaceManager：[`pkgs/bay/app/managers/workspace/workspace.py`](pkgs/bay/app/managers/workspace/workspace.py:1)
+  - CargoManager：[`pkgs/bay/app/managers/cargo/cargo.py`](pkgs/bay/app/managers/cargo/cargo.py:1)
 - Adapters（重构后）：
   - BaseAdapter：[`pkgs/bay/app/adapters/base.py`](pkgs/bay/app/adapters/base.py:1)
   - ShipAdapter：[`pkgs/bay/app/adapters/ship.py`](pkgs/bay/app/adapters/ship.py:1)

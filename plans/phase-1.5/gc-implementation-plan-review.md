@@ -15,46 +15,47 @@
 
 ## 🔴 需要修正的问题
 
-### 1. `bay.instance_id` Label 目前并不存在
+### 1. `bay.instance_id` / `bay.managed` Labels 已补齐
 
 **问题**：计划 4.4.2 提到 OrphanContainerGC 的强识别条件之一是 `labels["bay.instance_id"] == gc.instance_id`，并在第 254 行备注"Phase 1.5 需要补上 `bay.instance_id`"。
 
-**实际情况**：查看 [`DockerDriver.create()`](../../../pkgs/bay/app/drivers/docker/docker.py:134) 第 148-155 行：
+**实际情况**：查看 [`DockerDriver.create()`](../../../pkgs/bay/app/drivers/docker/docker.py:134) 第 156-167 行：
 
 ```python
 container_labels = {
     "bay.owner": "default",  # TODO: get from session/sandbox
     "bay.sandbox_id": session.sandbox_id,
     "bay.session_id": session.id,
-    "bay.workspace_id": cargo.id,
+    "bay.cargo_id": cargo.id,
     "bay.profile_id": profile.id,
     "bay.runtime_port": str(runtime_port),
+    # Labels for GC OrphanContainerGC Strict mode
+    "bay.instance_id": gc_instance_id,
+    "bay.managed": "true",
 }
 ```
 
-当前 labels **缺少**：
-- `bay.instance_id` ❌
-- `bay.managed` ❌
+结论：当前 labels 已包含 `bay.instance_id` 和 `bay.managed`，无需再补。
 
 **建议**：在计划的"需要新增/修改"章节明确列出此项变更，并在 todo list 中作为独立任务追踪。
 
 ---
 
-### 2. OrphanCargoGC 的 `delete_internal_by_model` 需要考虑 owner 缺失
+### 2. OrphanCargoGC 的 `delete_internal_by_id` 需要考虑 owner 缺失
 
-**问题**：计划 4.3 建议在 [`WorkspaceManager`](../../../pkgs/bay/app/managers/workspace/workspace.py:23) 增加 `delete_internal_by_model(cargo: Cargo)` 方法。
+**问题**：计划 4.3 建议在 `CargoManager` 增加 `delete_internal_by_model(cargo: Cargo)` 方法。
 
-**实际情况**：现有的 [`delete()`](../../../pkgs/bay/app/managers/workspace/workspace.py:158) 方法调用了 `self.get(workspace_id, owner)` 进行 owner 校验。但孤儿 cargo 的 owner 理论上还存在于 `cargo.owner` 字段，只是对应的 sandbox 已被删除。
+**实际情况**：现有的 [`delete()`](../../../pkgs/bay/app/managers/cargo/cargo.py:158) 方法调用了 `self.get(cargo_id, owner)` 进行 owner 校验。但孤儿 cargo 的 owner 理论上还存在于 `cargo.owner` 字段，只是对应的 sandbox 已被删除。
 
 **潜在问题**：
 - 如果 GC 直接传入 `Cargo` 对象，需要确保该对象是从数据库新鲜加载的，而不是 stale 的 detached 对象。
-- 建议方法签名改为 `delete_internal_by_id(workspace_id: str) -> None`，内部重新 fetch 后执行删除。
+- 建议方法签名改为 `delete_internal_by_id(cargo_id: str) -> None`，内部重新 fetch 后执行删除。
 
 **建议**：
 ```python
-async def delete_internal(self, workspace_id: str) -> None:
+async def delete_internal(self, cargo_id: str) -> None:
     """Internal delete without owner check. For GC / cascade use only."""
-    cargo = await self.get_by_id(workspace_id)
+    cargo = await self.get_by_id(cargo_id)
     if cargo is None:
         return  # Already deleted, idempotent
     
@@ -474,4 +475,3 @@ class GCTask(ABC):
     @abstractmethod
     async def run(self) -> GCResult: ...
 ```
-
