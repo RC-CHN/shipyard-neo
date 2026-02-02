@@ -102,7 +102,10 @@ class TestMegaWorkflow:
             response = client.post(
                 f"{BAY_BASE_URL}/v1/sandboxes/{self.sandbox_id}/python/exec",
                 json={
-                    "code": 'import sys; print(f"Python {sys.version_info.major}.{sys.version_info.minor}")'
+                    "code": (
+                        "import sys; "
+                        'print(f"Python {sys.version_info.major}.{sys.version_info.minor}")'
+                    )
                 },
                 headers=AUTH_HEADERS,
             )

@@ -21,7 +21,6 @@ import time
 import uuid
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -50,7 +49,10 @@ class TestLongRunningExtendTTLWorkflow:
                 exec1 = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/python/exec",
                     json={
-                        "code": "import time; print('Task started'); time.sleep(2); print('Phase 1 done')",
+                        "code": (
+                            "import time; print('Task started'); time.sleep(2); "
+                            "print('Phase 1 done')"
+                        ),
                         "timeout": 30,
                     },
                     timeout=120.0,

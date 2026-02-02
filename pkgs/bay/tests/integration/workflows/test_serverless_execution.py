@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-import pytest
 
 from ..conftest import (
     AUTH_HEADERS,
@@ -132,7 +131,9 @@ class TestServerlessExecutionWorkflow:
             volume_name = f"bay-cargo-{cargo_id}"
 
             # Verify volume was created
-            assert docker_volume_exists(volume_name), f"Volume {volume_name} should exist after create"
+            assert docker_volume_exists(volume_name), (
+                f"Volume {volume_name} should exist after create"
+            )
 
             # Execute to start container
             await client.post(
@@ -146,7 +147,9 @@ class TestServerlessExecutionWorkflow:
             assert delete_response.status_code == 204
 
             await asyncio.sleep(1.0)
-            assert not docker_volume_exists(volume_name), f"Volume {volume_name} should be deleted after delete"
+            assert not docker_volume_exists(volume_name), (
+                f"Volume {volume_name} should be deleted after delete"
+            )
             get_response = await client.get(f"/v1/sandboxes/{sandbox_id}")
             assert get_response.status_code == 404
 

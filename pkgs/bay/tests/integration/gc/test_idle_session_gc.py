@@ -12,7 +12,6 @@ import time
 from datetime import datetime, timezone
 
 import httpx
-import pytest
 
 from tests.integration.conftest import (
     AUTH_HEADERS,
@@ -102,7 +101,7 @@ class TestIdleSessionGC:
 
                 await _wait_until(predicate=idle_condition, timeout_s=15.0)
 
-                # 3) Trigger ONLY idle_session via Admin API (server-side currently filters response).
+                # 3) Trigger ONLY idle_session via Admin API.
                 await trigger_gc(client, tasks=["idle_session"])
 
                 # 4) Invariant: sandbox is idle and idle_expires_at cleared.
@@ -112,11 +111,15 @@ class TestIdleSessionGC:
                 assert data["status"] == "idle", f"expected idle, got: {data}"
                 assert data["idle_expires_at"] is None
 
-                # 5) Invariant: compute can be recreated and workspace persists.
+                # 5) Invariant: compute can be recreated and /workspace persists.
+                code = (
+                    "import json; "
+                    "print(json.loads(open('data/result.json').read())['ok'])"
+                )
                 exec2 = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/python/exec",
                     json={
-                        "code": "import json; print(json.loads(open('data/result.json').read())['ok'])",
+                        "code": code,
                         "timeout": 60,
                     },
                     timeout=120.0,

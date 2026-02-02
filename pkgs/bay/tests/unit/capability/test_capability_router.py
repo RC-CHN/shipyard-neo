@@ -139,7 +139,7 @@ class TestRequireCapability:
 
     async def test_require_capability_meta_error_propagates(self, mock_sandbox_mgr):
         """_require_capability should propagate get_meta exceptions.
-        
+
         When adapter.get_meta() raises an exception (e.g., network error),
         _require_capability should let it propagate to the caller.
         """

@@ -10,7 +10,6 @@ from __future__ import annotations
 import uuid
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 

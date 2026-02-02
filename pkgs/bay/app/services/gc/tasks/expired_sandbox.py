@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.concurrency.locks import cleanup_sandbox_lock, get_sandbox_lock
-from app.managers.session import SessionManager
 from app.managers.cargo import CargoManager
+from app.managers.session import SessionManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
 from app.services.gc.base import GCResult, GCTask

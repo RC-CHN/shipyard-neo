@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 
 import httpx
-import pytest
 
 from ..conftest import (
     AUTH_HEADERS,

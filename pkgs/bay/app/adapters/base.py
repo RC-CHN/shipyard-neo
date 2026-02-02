@@ -28,7 +28,7 @@ class RuntimeMeta:
 @dataclass
 class ExecutionResult:
     """Result of code/command execution.
-    
+
     For Python execution (IPython), `data` contains:
     {
         "execution_count": int | None,
@@ -48,7 +48,7 @@ class ExecutionResult:
 
 class BaseAdapter(ABC):
     """Abstract runtime adapter interface.
-    
+
     Each runtime image implements one adapter.
     Adapter responsibilities:
     1. HTTP communication

@@ -8,7 +8,6 @@ See: plans/bay-design.md section 2.4
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -25,8 +24,8 @@ from app.errors import (
     SandboxTTLInfiniteError,
     ValidationError,
 )
-from app.managers.session import SessionManager
 from app.managers.cargo import CargoManager
+from app.managers.session import SessionManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
 
@@ -62,13 +61,13 @@ class SandboxManager:
         ttl: int | None = None,
     ) -> Sandbox:
         """Create a new sandbox.
-        
+
         Args:
             owner: Owner identifier
             profile_id: Profile ID
             cargo_id: Optional existing cargo ID
             ttl: Time-to-live in seconds (None/0 = no expiry)
-            
+
         Returns:
             Created sandbox
         """
@@ -122,14 +121,14 @@ class SandboxManager:
 
     async def get(self, sandbox_id: str, owner: str) -> Sandbox:
         """Get sandbox by ID.
-        
+
         Args:
             sandbox_id: Sandbox ID
             owner: Owner identifier
-            
+
         Returns:
             Sandbox if found and not deleted
-            
+
         Raises:
             NotFoundError: If sandbox not found or deleted
         """
@@ -156,13 +155,13 @@ class SandboxManager:
         cursor: str | None = None,
     ) -> tuple[list[Sandbox], str | None]:
         """List sandboxes for owner.
-        
+
         Args:
             owner: Owner identifier
             status: Optional status filter
             limit: Maximum number of results
             cursor: Pagination cursor
-            
+
         Returns:
             Tuple of (sandboxes, next_cursor)
         """
@@ -188,15 +187,15 @@ class SandboxManager:
 
     async def ensure_running(self, sandbox: Sandbox) -> Session:
         """Ensure sandbox has a running session.
-        
+
         Creates a new session if needed, or returns existing one.
         Uses in-memory lock + SELECT FOR UPDATE for concurrency control:
         - In-memory lock: works for single instance (SQLite, dev mode)
         - SELECT FOR UPDATE: works for multi-instance (PostgreSQL, production)
-        
+
         Args:
             sandbox: Sandbox to ensure is running
-            
+
         Returns:
             Running session
         """
@@ -207,7 +206,7 @@ class SandboxManager:
         # Get sandbox_id and cargo_id before acquiring lock (avoid lazy loading issues inside lock)
         sandbox_id = sandbox.id
         cargo_id = sandbox.cargo_id
-        
+
         # In-memory lock for single-instance deployments (SQLite doesn't support FOR UPDATE)
         sandbox_lock = await get_sandbox_lock(sandbox_id)
         async with sandbox_lock:
@@ -215,7 +214,7 @@ class SandboxManager:
             # This is critical for SQLite where different sessions may have stale snapshots
             # After rollback, the next query will start a new transaction with fresh data
             await self._db.rollback()
-            
+
             # Re-fetch sandbox from DB with fresh transaction to see committed changes
             # FOR UPDATE works in PostgreSQL/MySQL for multi-instance deployments
             result = await self._db.execute(
@@ -320,9 +319,9 @@ class SandboxManager:
 
     async def keepalive(self, sandbox: Sandbox) -> None:
         """Keep sandbox alive - extend idle timeout.
-        
+
         Does NOT implicitly start compute.
-        
+
         Args:
             sandbox: Sandbox to keep alive
         """
@@ -339,10 +338,10 @@ class SandboxManager:
 
     async def stop(self, sandbox: Sandbox) -> None:
         """Stop sandbox - reclaim compute, keep cargo.
-        
+
         Idempotent: repeated calls maintain final state consistency.
         Uses same lock as ensure_running to prevent race conditions.
-        
+
         Args:
             sandbox: Sandbox to stop
         """
@@ -354,14 +353,14 @@ class SandboxManager:
         async with sandbox_lock:
             # Rollback and refetch to get fresh state
             await self._db.rollback()
-            
+
             result = await self._db.execute(
                 select(Sandbox)
                 .where(Sandbox.id == sandbox_id)
                 .with_for_update()
             )
             locked_sandbox = result.scalars().first()
-            
+
             if locked_sandbox is None or locked_sandbox.deleted_at is not None:
                 # Already deleted, nothing to stop
                 return
@@ -382,12 +381,12 @@ class SandboxManager:
 
     async def delete(self, sandbox: Sandbox) -> None:
         """Delete sandbox permanently.
-        
+
         - Destroys all sessions
         - Cascade deletes managed cargo
         - Does NOT cascade delete external cargo
         Uses same lock as ensure_running to prevent race conditions.
-        
+
         Args:
             sandbox: Sandbox to delete
         """
@@ -401,14 +400,14 @@ class SandboxManager:
         async with sandbox_lock:
             # Rollback and refetch to get fresh state
             await self._db.rollback()
-            
+
             result = await self._db.execute(
                 select(Sandbox)
                 .where(Sandbox.id == sandbox_id)
                 .with_for_update()
             )
             locked_sandbox = result.scalars().first()
-            
+
             if locked_sandbox is None or locked_sandbox.deleted_at is not None:
                 # Already deleted, nothing to do
                 return

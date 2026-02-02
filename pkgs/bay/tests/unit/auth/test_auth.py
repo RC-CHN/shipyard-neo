@@ -98,7 +98,7 @@ class TestAuthenticateAnonymousMode:
 
     def test_x_owner_and_valid_bearer_priority(self):
         """When X-Owner and valid Bearer are both present, Bearer takes precedence.
-        
+
         The authenticate function processes Bearer first, so a valid Bearer
         returns 'default' regardless of X-Owner.
         """
@@ -264,7 +264,7 @@ class TestAuthenticateEdgeCases:
 
     def test_bearer_with_extra_spaces(self):
         """Bearer with extra spaces between 'Bearer' and token.
-        
+
         The token is extracted after 'Bearer ', so 'Bearer  token' yields ' token'.
         """
         request = create_mock_request(

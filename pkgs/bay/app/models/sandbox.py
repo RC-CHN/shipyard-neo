@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Optional
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
-    from app.models.session import Session
     from app.models.cargo import Cargo
+    from app.models.session import Session
 
 
 class SandboxStatus(str, Enum):
@@ -82,7 +82,7 @@ class Sandbox(SQLModel, table=True):
 
     def compute_status(self, current_session: "Optional[Session]" = None) -> SandboxStatus:
         """Compute aggregated status for external API.
-        
+
         Args:
             current_session: The current session object (if loaded)
         """

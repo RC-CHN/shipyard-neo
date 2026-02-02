@@ -8,13 +8,12 @@ Includes edge cases: _process_sandbox returns False, delete errors, etc.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.config import GCConfig, GCTaskConfig
 from app.drivers.base import RuntimeInstance
-from app.services.gc.base import GCResult
 
 
 class TestIdleSessionGCQueryConditions:
@@ -434,23 +433,24 @@ class TestOrphanCargoGC:
         assert task._cargo_mgr.delete_internal_by_id.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_orphan_workspace_no_orphans(self):
-        """Should handle case when no orphan workspaces are found."""
-        from app.services.gc.tasks.orphan_workspace import OrphanWorkspaceGC
+    async def test_orphan_cargo_no_orphans(self):
+        """Should handle case when no orphan cargos are found."""
         from tests.fakes import FakeDriver
 
         driver = FakeDriver()
         db_session = AsyncMock()
 
-        task = OrphanWorkspaceGC(driver, db_session)
+        from app.services.gc.tasks.orphan_cargo import OrphanCargoGC
+
+        task = OrphanCargoGC(driver, db_session)
         task._find_orphans = AsyncMock(return_value=[])
-        task._workspace_mgr = MagicMock()
-        task._workspace_mgr.delete_internal_by_id = AsyncMock()
+        task._cargo_mgr = MagicMock()
+        task._cargo_mgr.delete_internal_by_id = AsyncMock()
 
         result = await task.run()
 
         assert result.cleaned_count == 0
-        assert task._workspace_mgr.delete_internal_by_id.call_count == 0
+        assert task._cargo_mgr.delete_internal_by_id.call_count == 0
 
 
 class TestGCConfigInstanceId:

@@ -36,13 +36,13 @@ class CapabilityRouter:
 
     async def ensure_session(self, sandbox: Sandbox) -> Session:
         """Ensure sandbox has a running session.
-        
+
         Args:
             sandbox: Sandbox to ensure is running
-            
+
         Returns:
             Running session
-            
+
         Raises:
             SessionNotReadyError: If session is starting
         """
@@ -50,7 +50,7 @@ class CapabilityRouter:
 
     def _get_adapter(self, session: Session) -> BaseAdapter:
         """Get or create adapter for session.
-        
+
         Caches adapters by endpoint to avoid creating new instances.
         """
         if session.endpoint is None:
@@ -91,12 +91,12 @@ class CapabilityRouter:
         timeout: int = 30,
     ) -> ExecutionResult:
         """Execute Python code in sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             code: Python code to execute
             timeout: Execution timeout in seconds
-            
+
         Returns:
             Execution result
         """
@@ -124,13 +124,13 @@ class CapabilityRouter:
         cwd: str | None = None,
     ) -> ExecutionResult:
         """Execute shell command in sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             command: Shell command to execute
             timeout: Execution timeout in seconds
             cwd: Working directory (relative to /workspace)
-            
+
         Returns:
             Execution result
         """
@@ -155,11 +155,11 @@ class CapabilityRouter:
         path: str,
     ) -> str:
         """Read file content from sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: File path (relative to /workspace)
-            
+
         Returns:
             File content
         """
@@ -182,7 +182,7 @@ class CapabilityRouter:
         content: str,
     ) -> None:
         """Write file content to sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: File path (relative to /workspace)
@@ -207,11 +207,11 @@ class CapabilityRouter:
         path: str,
     ) -> list[dict[str, Any]]:
         """List directory contents in sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: Directory path (relative to /workspace)
-            
+
         Returns:
             List of file entries
         """
@@ -233,7 +233,7 @@ class CapabilityRouter:
         path: str,
     ) -> None:
         """Delete file or directory from sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: File/directory path (relative to /workspace)
@@ -259,7 +259,7 @@ class CapabilityRouter:
         content: bytes,
     ) -> None:
         """Upload binary file to sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: Target path (relative to /workspace)
@@ -284,11 +284,11 @@ class CapabilityRouter:
         path: str,
     ) -> bytes:
         """Download file from sandbox.
-        
+
         Args:
             sandbox: Target sandbox
             path: File path (relative to /workspace)
-            
+
         Returns:
             File content as bytes
         """

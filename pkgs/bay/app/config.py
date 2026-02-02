@@ -101,7 +101,8 @@ class ProfileConfig(BaseModel):
     idle_timeout: int = 1800  # 30 minutes
 
     # 容器内运行时 HTTP 端口（用于 Bay->Runtime 访问）
-    # Ship 当前默认监听 8123（见 ship 容器启动日志），因此这里给出默认 8123，但推荐在 config.yaml 里显式配置。
+    # Ship 当前默认监听 8123（见 ship 容器启动日志），因此这里给出默认 8123；
+    # 但推荐在 config.yaml 里显式配置。
     runtime_port: int | None = 8123
 
     env: dict[str, str] = Field(default_factory=dict)
@@ -240,7 +241,7 @@ class Settings(BaseSettings):
 
 def _load_config_file() -> dict:
     """Load configuration from YAML file if exists.
-    
+
     Looks for config file in order:
     1. BAY_CONFIG_FILE environment variable
     2. ./config.yaml
@@ -268,7 +269,7 @@ def _load_config_file() -> dict:
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance.
-    
+
     Configuration is loaded from:
     1. YAML config file (if exists)
     2. Environment variables (override)
@@ -276,7 +277,7 @@ def get_settings() -> Settings:
     """
     # Load from config file first
     file_config = _load_config_file()
-    
+
     # Create settings with file config as initial values
     # Environment variables will override via pydantic-settings
     return Settings(**file_config)

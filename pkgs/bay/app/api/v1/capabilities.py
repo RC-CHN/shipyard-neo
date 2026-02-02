@@ -62,7 +62,7 @@ class PythonExecRequest(BaseModel):
 
 class PythonExecResponse(BaseModel):
     """Python execution response.
-    
+
     `data` contains rich output from IPython kernel:
     {
         "execution_count": int | None,
@@ -155,7 +155,7 @@ async def exec_python(
     sandbox_mgr: SandboxManagerDep,
 ) -> PythonExecResponse:
     """Execute Python code in sandbox.
-    
+
     This will:
     1. Validate profile supports python capability (via dependency)
     2. Ensure sandbox has a running session (auto-start if needed)
@@ -281,14 +281,14 @@ async def upload_file(
     path: str = Form(..., description="Target path relative to /workspace"),
 ) -> FileUploadResponse:
     """Upload binary file to sandbox.
-    
+
     This endpoint accepts multipart/form-data with:
     - file: The file to upload
     - path: Target path in the sandbox workspace
     """
     # Manually validate path for Form parameter
     validated_upload_path = validate_relative_path(path, field_name="path")
-    
+
     capability_router = CapabilityRouter(sandbox_mgr)
 
     content = await file.read()
@@ -306,7 +306,7 @@ async def download_file(
     path: ValidatedPath,  # Validated path dependency
 ) -> Response:
     """Download file from sandbox.
-    
+
     Returns the file content as a binary stream.
     """
     capability_router = CapabilityRouter(sandbox_mgr)

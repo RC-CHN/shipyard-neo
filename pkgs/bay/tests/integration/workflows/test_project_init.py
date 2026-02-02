@@ -14,7 +14,6 @@ Note: workflow 场景测试默认会被 SERIAL_GROUPS["workflows"] 归类为 ser
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -174,7 +173,9 @@ print(f"six still available: {six.__version__}")
                 )
                 assert exec3.status_code == 200
                 result3 = exec3.json()
-                assert result3["success"] is True, f"Package not available after stop/resume: {result3}"
+                assert result3["success"] is True, (
+                    f"Package not available after stop/resume: {result3}"
+                )
                 assert "six still available:" in result3["output"], (
                     f"Expected 'six still available:', got: {result3['output']}"
                 )
@@ -219,7 +220,10 @@ print(f"Install exit code: {result.returncode}")
                 # Verify it works in current session
                 exec2 = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/python/exec",
-                    json={"code": "import toml; print(f'toml version: {toml.__version__}')", "timeout": 30},
+                    json={
+                        "code": "import toml; print(f'toml version: {toml.__version__}')",
+                        "timeout": 30,
+                    },
                     timeout=30.0,
                 )
                 assert exec2.status_code == 200
@@ -415,7 +419,9 @@ print(f"Python exists: {os.path.isfile(python_path)}")
                 assert exec3.status_code == 200
                 result3 = exec3.json()
                 assert result3["success"] is True
-                assert "Venv exists: True" in result3["output"], f"Venv not persisted: {result3['output']}"
+                assert "Venv exists: True" in result3["output"], (
+                    f"Venv not persisted: {result3['output']}"
+                )
 
             finally:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")

@@ -1,9 +1,9 @@
 """SQLModel data models."""
 
-from app.models.idempotency import IdempotencyKey
 from app.models.cargo import Cargo
-from app.models.session import Session, SessionStatus
+from app.models.idempotency import IdempotencyKey
 from app.models.sandbox import Sandbox
+from app.models.session import Session, SessionStatus
 
 # Rebuild models to resolve forward references
 # This is required because models use `from __future__ import annotations`

@@ -14,7 +14,6 @@ Note: workflow 场景测试默认会被 SERIAL_GROUPS["workflows"] 归类为 ser
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, DEFAULT_PROFILE, e2e_skipif_marks
 
@@ -55,7 +54,9 @@ class TestScriptDevelopmentWorkflow:
                 result = exec_response.json()
 
                 # Should fail with ZeroDivisionError
-                assert result["success"] is False, f"Expected execution to fail, but got success: {result}"
+                assert result["success"] is False, (
+                    f"Expected execution to fail, but got success: {result}"
+                )
                 assert "ZeroDivisionError" in (result.get("error") or ""), (
                     f"Expected ZeroDivisionError in error, got: {result}"
                 )
