@@ -245,7 +245,7 @@ strict 模式只考虑同时满足以下条件的实例：
 2) labels 同时包含：
    - `bay.session_id`
    - `bay.sandbox_id`
-   - `bay.workspace_id`
+   - `bay.cargo_id`
    - `bay.instance_id`
    - `bay.managed`
 3) `labels["bay.instance_id"]` 必须等于配置的 `gc.instance_id`

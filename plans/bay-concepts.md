@@ -51,7 +51,7 @@ flowchart TD
 
 - `Sandbox` 与 `Session`
   - session 是可替换的运行实例
-  - idle 回收仅回收 session，不回收 sandbox/workspace（除非 sandbox 被彻底销毁）
+  - idle 回收仅回收 session，不回收 sandbox/cargo（除非 sandbox 被彻底销毁）
 
 - `Profile`
   - profile 绑定 session 的运行时规格
@@ -85,7 +85,7 @@ flowchart TD
 - 调用能力 `POST /v1/sandboxes/{id}/...`
   - Bay 执行 `ensure_running`：必要时创建/重建 session
 - `POST /v1/sandboxes/{id}/stop`
-  - 仅回收算力：销毁 session，保留 sandbox/workspace
+  - 仅回收算力：销毁 session，保留 sandbox/cargo
 - `DELETE /v1/sandboxes/{id}`
   - 彻底销毁：销毁运行实例；managed cargo 级联删除；external 不级联
 

@@ -60,7 +60,7 @@ host_config: dict = {
 
 **Cargo 模型**
 
-文件: `pkgs/bay/app/models/workspace.py:28-29, 46-49`
+文件: `pkgs/bay/app/models/cargo.py:1`
 
 ```python
 backend: str = Field(default="docker_volume")  # docker_volume | k8s_pvc
@@ -72,15 +72,15 @@ def mount_path(self) -> str:
     return "/workspace"
 ```
 
-**WorkspaceManager 创建 Volume**
+**CargoManager 创建 Volume**
 
-文件: `pkgs/bay/app/managers/workspace/workspace.py:51-69`
+文件: `pkgs/bay/app/managers/cargo/cargo.py:1`
 
 ```python
-volume_name = f"bay-cargo-{workspace_id}"
+volume_name = f"bay-cargo-{cargo_id}"
 await self._driver.create_volume(
     name=volume_name,
-    labels={"bay.owner": owner, "bay.workspace_id": workspace_id, ...},
+    labels={"bay.owner": owner, "bay.cargo_id": cargo_id, ...},
 )
 ```
 
@@ -100,7 +100,7 @@ chmod 755 /workspace
 ```
 /
 ├── app/                    # Ship 应用代码 (来自镜像)
-├── cargo/              # Docker Volume 挂载点 (用户数据)
+├── workspace/               # Docker Volume 挂载点 (用户数据)
 │   └── (用户文件...)
 ├── etc/                    # 系统配置 (来自镜像)
 ├── usr/                    # 系统程序 (来自镜像)

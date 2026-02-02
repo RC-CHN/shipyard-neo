@@ -67,7 +67,7 @@
 
 #### 1.5 Cargo 内部删除 API
 **Target**: `pkgs/bay/app/managers/workspace/workspace.py`
-- 增加 `delete_internal_by_id(workspace_id: str) -> None`。
+- 增加 `delete_internal_by_id(cargo_id: str) -> None`。
 - 逻辑：跳过 owner 校验，直接执行 delete volume + delete db record。
 - **Why**: GC 运行在系统上下文，无 owner 信息，且需清理所有人的孤儿资源。
 
@@ -103,7 +103,7 @@
 
 3.  **`OrphanCargoGC`**
     - **Trigger**: `managed=True` AND (`managed_by_sandbox_id is null` OR `sandbox.deleted_at is not null`)
-    - **Action**: Call `WorkspaceManager.delete_internal_by_id()`
+    - **Action**: Call `CargoManager.delete_internal_by_id()`
 
 4.  **`OrphanContainerGC`** (Strict Mode)
     - **Config**: Default Disabled.

@@ -4,8 +4,8 @@ Bay 是 Ship 容器的编排层，负责容器生命周期管理，作为外部�
 
 ## 核心概念
 
-- **Sandbox**: 对外唯一资源，聚合 Workspace + Profile + Session
-- **Workspace**: 数据持久层（Docker Volume / K8s PVC）
+- **Sandbox**: 对外唯一资源，聚合 Cargo + Profile + Session
+- **Cargo**: 数据持久层（Docker Volume / K8s PVC）
 - **Session**: 运行实例（容器/Pod），可回收/重建
 - **Profile**: 运行时规格（镜像/资源/capabilities）
 

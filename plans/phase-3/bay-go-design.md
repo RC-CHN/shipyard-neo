@@ -228,7 +228,7 @@ SELECT * FROM sandboxes WHERE id = ? AND owner = ?;
 SELECT * FROM sandboxes WHERE owner = ? ORDER BY created_at DESC;
 
 -- name: CreateSandbox :one
-INSERT INTO sandboxes (id, owner, profile_id, workspace_id, status, ttl_seconds, expires_at)
+INSERT INTO sandboxes (id, owner, profile_id, cargo_id, status, ttl_seconds, expires_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING *;
 
