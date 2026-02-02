@@ -38,13 +38,13 @@ class CargoManager:
         size_limit_mb: int | None = None,
     ) -> Cargo:
         """Create a new cargo.
-        
+
         Args:
             owner: Owner identifier
             managed: If True, this cargo is managed by a sandbox
             managed_by_sandbox_id: Sandbox ID that manages this cargo
             size_limit_mb: Size limit in MB (defaults to config)
-            
+
         Returns:
             Created cargo
         """
@@ -89,14 +89,14 @@ class CargoManager:
 
     async def get(self, cargo_id: str, owner: str) -> Cargo:
         """Get cargo by ID.
-        
+
         Args:
             cargo_id: Cargo ID
             owner: Owner identifier (for access check)
-            
+
         Returns:
             Cargo if found
-            
+
         Raises:
             NotFoundError: If cargo not found or not visible
         """
@@ -128,12 +128,12 @@ class CargoManager:
         cursor: str | None = None,
     ) -> tuple[list[Cargo], str | None]:
         """List cargos for owner.
-        
+
         Args:
             owner: Owner identifier
             limit: Maximum number of results
             cursor: Pagination cursor
-            
+
         Returns:
             Tuple of (cargos, next_cursor)
         """
@@ -150,8 +150,8 @@ class CargoManager:
 
         next_cursor = None
         if len(cargos) > limit:
-            workspaces = workspaces[:limit]
-            next_cursor = cargos[-1].id
+            next_cursor = cargos[limit - 1].id
+            cargos = cargos[:limit]
 
         return cargos, next_cursor
 
@@ -163,19 +163,19 @@ class CargoManager:
         force: bool = False,
     ) -> None:
         """Delete a cargo.
-        
+
         For managed cargos:
         - Can only be deleted if the managing sandbox is deleted
         - Or if force=True (internal cascade delete)
-        
+
         Args:
             cargo_id: Cargo ID
             owner: Owner identifier
             force: If True, skip managed check (for cascade delete)
-            
+
         Raises:
             NotFoundError: If cargo not found
-            ConflictError: If trying to delete a managed workspace
+            ConflictError: If trying to delete a managed cargo
         """
         cargo = await self.get(cargo_id, owner)
 
@@ -219,7 +219,7 @@ class CargoManager:
             cargo_id: Cargo ID to delete
 
         Note:
-            - Idempotent: returns silently if workspace doesn't exist
+            - Idempotent: returns silently if cargo doesn't exist
             - Deletes volume first, then DB record
             - If volume delete fails, DB record is preserved
         """
