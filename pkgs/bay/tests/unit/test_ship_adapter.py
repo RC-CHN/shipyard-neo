@@ -364,7 +364,17 @@ class TestShipAdapterDeleteFile:
 
 
 class TestShipAdapterExecShell:
-    """Unit-05: ShipAdapter exec_shell tests."""
+    """Unit-05: ShipAdapter exec_shell tests.
+    
+    NOTE: Ship returns ExecuteShellResponse with fields:
+    - success: bool
+    - return_code: Optional[int]
+    - stdout: str
+    - stderr: str
+    - pid: Optional[int]
+    - process_id: Optional[str]
+    - error: Optional[str]
+    """
 
     async def test_exec_shell_request_path(self):
         """exec_shell should POST to /shell/exec."""
@@ -373,9 +383,14 @@ class TestShipAdapterExecShell:
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal captured_request
             captured_request = request
+            # Use Ship's actual response format
             return mock_response({
-                "output": "total 4\ndrwxr-xr-x 2 user user 4096 Jan 1 00:00 .\n",
-                "exit_code": 0,
+                "success": True,
+                "return_code": 0,
+                "stdout": "total 4\ndrwxr-xr-x 2 user user 4096 Jan 1 00:00 .\n",
+                "stderr": "",
+                "pid": 1234,
+                "process_id": None,
                 "error": None,
             })
         
@@ -401,8 +416,10 @@ class TestShipAdapterExecShell:
             nonlocal captured_request
             captured_request = request
             return mock_response({
-                "output": "hello.txt\n",
-                "exit_code": 0,
+                "success": True,
+                "return_code": 0,
+                "stdout": "hello.txt\n",
+                "stderr": "",
             })
         
         transport = httpx.MockTransport(handler)
@@ -417,12 +434,17 @@ class TestShipAdapterExecShell:
         assert body["cwd"] == "/workspace/subdir"
 
     async def test_exec_shell_response_parsing(self):
-        """exec_shell should correctly parse exit_code and output."""
+        """exec_shell should correctly parse Ship's response format."""
         
         def handler(request: httpx.Request) -> httpx.Response:
+            # Ship's actual response format
             return mock_response({
-                "output": "hello\n",
-                "exit_code": 0,
+                "success": True,
+                "return_code": 0,
+                "stdout": "hello\n",
+                "stderr": "",
+                "pid": 1234,
+                "process_id": None,
                 "error": None,
             })
         
@@ -435,9 +457,9 @@ class TestShipAdapterExecShell:
             )
             result_data = response.json()
         
-        # Verify parsing like ShipAdapter does
-        success = result_data.get("exit_code", -1) == 0
-        output = result_data.get("output", "")
+        # Verify parsing like ShipAdapter does (after fix)
+        success = result_data.get("success", False)
+        output = result_data.get("stdout", "")
         
         assert success is True
         assert output == "hello\n"
@@ -447,8 +469,10 @@ class TestShipAdapterExecShell:
         
         def handler(request: httpx.Request) -> httpx.Response:
             return mock_response({
-                "output": "",
-                "exit_code": 1,
+                "success": False,
+                "return_code": 1,
+                "stdout": "",
+                "stderr": "command not found: nonexistent",
                 "error": "command not found: nonexistent",
             })
         
@@ -461,9 +485,8 @@ class TestShipAdapterExecShell:
             )
             result_data = response.json()
         
-        success = result_data.get("exit_code", -1) == 0
-        assert success is False
-        assert result_data["exit_code"] == 1
+        assert result_data["success"] is False
+        assert result_data["return_code"] == 1
 
 
 class TestShipAdapterHealth:

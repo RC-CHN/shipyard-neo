@@ -15,6 +15,11 @@ Test Modules (Core API):
 - test_idempotency_e2e.py: E2E-07 Idempotency-Key support
 - test_extend_ttl.py: E2E-XX Sandbox TTL extension (extend_ttl)
 - test_capability_enforcement.py: E2E-12 Profile-level capability enforcement
+- test_path_security.py: E2E-15 Path security validation
+- test_shell_e2e.py: E2E-16 Shell execution functionality
+- test_container_isolation.py: E2E-17 Container isolation verification (Scenario 7 Part B)
+- test_shell_devops_workflow.py: E2E-18 Shell-driven DevOps automation (Scenario 8)
+- test_mega_workflow.py: E2E-19 Mega workflow integration (Scenario 9)
 
 Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_interactive_workflow.py: E2E-08 Interactive Data Analysis (Scenario 1)
@@ -23,6 +28,8 @@ Workflow Scenario Tests (from e2e-workflow-scenarios.md):
 - test_serverless_execution.py: E2E-11 Simple Quick Execution (Scenario 4)
 - test_long_running_extend_ttl.py: E2E-13 Long Running Task with TTL Extension (Scenario 5)
 - test_agent_coding_workflow.py: E2E-14 AI Agent Code Generation and Iterative Fix (Scenario 6)
+- test_container_isolation.py: E2E-17 Container Isolation Verification (Scenario 7)
+- test_shell_devops_workflow.py: E2E-18 Shell-driven DevOps Automation (Scenario 8)
 
 Prerequisites:
 - Docker daemon running and accessible
@@ -32,6 +39,7 @@ Prerequisites:
 See: plans/phase-1/tests.md section 1
 See: plans/phase-1/e2e-workflow-scenarios.md for workflow scenarios
 See: plans/phase-1/profile-capability-enforcement.md for capability enforcement
+See: plans/phase-1.5/path-security-validation.md for path security
 """
 
 from __future__ import annotations
@@ -56,6 +64,19 @@ from .test_capability_enforcement import (
     TestCapabilityEnforcementE2E,
     TestFullProfileAllowsAll,
 )
+from .test_path_security import TestPathSecurityE2E
+from .test_shell_e2e import TestShellExecE2E, TestShellExecSecurityE2E
+from .test_container_isolation import TestContainerIsolationE2E
+from .test_shell_devops_workflow import (
+    TestShellDevOpsWorkflowE2E,
+    TestNodeJsProjectBuildE2E,
+    TestGitWorkflowE2E,
+    TestShellPipeAndTextProcessingE2E,
+    TestShellErrorHandlingE2E,
+    TestPackageAndDownloadE2E,
+    TestShellWorkingDirectoryE2E,
+)
+from .test_mega_workflow import TestMegaWorkflowE2E
 
 # Re-export shared configuration for convenience
 from .conftest import (
@@ -91,6 +112,23 @@ __all__ = [
     # Test classes - Capability Enforcement
     "TestCapabilityEnforcementE2E",
     "TestFullProfileAllowsAll",
+    # Test classes - Path Security
+    "TestPathSecurityE2E",
+    # Test classes - Shell Execution
+    "TestShellExecE2E",
+    "TestShellExecSecurityE2E",
+    # Test classes - Container Isolation (Scenario 7)
+    "TestContainerIsolationE2E",
+    # Test classes - Shell DevOps Workflow (Scenario 8)
+    "TestShellDevOpsWorkflowE2E",
+    "TestNodeJsProjectBuildE2E",
+    "TestGitWorkflowE2E",
+    "TestShellPipeAndTextProcessingE2E",
+    "TestShellErrorHandlingE2E",
+    "TestPackageAndDownloadE2E",
+    "TestShellWorkingDirectoryE2E",
+    # Test classes - Mega Workflow (Scenario 9)
+    "TestMegaWorkflowE2E",
     # Configuration
     "BAY_BASE_URL",
     "E2E_API_KEY",

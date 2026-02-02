@@ -123,9 +123,9 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 ### 路径安全校验
 
-- [ ] Bay 侧路径校验实现（禁止绝对路径、目录穿越）
-- [ ] 与 Ship `resolve_path` 对齐
-- [ ] 单元测试覆盖
+- [x] Bay 侧路径校验实现（禁止绝对路径、目录穿越）
+- [x] 与 Ship `resolve_path` 对齐
+- [x] 单元测试覆盖
 
 ### 可观测性增强
 
@@ -149,16 +149,16 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 - [ ] 启动时 reconcile
 - [ ] 配置化 GC 间隔与开关
 
-### 🔴 高优先级：Extend TTL
+### ✅ Extend TTL (已完成)
 
 > 详见 [`plans/phase-1/gc-design.md#8.3`](plans/phase-1/gc-design.md)
 
-- [ ] `POST /v1/sandboxes/{id}/extend_ttl` API 实现
-- [ ] expires_at 计算规则（max(old, now) + extend_by）
-- [ ] 拒绝复活已过期 Sandbox
-- [ ] 拒绝延长 TTL=null 的 Sandbox
-- [ ] Idempotency-Key 支持
-- [ ] E2E 测试覆盖
+- [x] `POST /v1/sandboxes/{id}/extend_ttl` API 实现
+- [x] expires_at 计算规则（max(old, now) + extend_by）
+- [x] 拒绝复活已过期 Sandbox (409 `sandbox_expired`)
+- [x] 拒绝延长 TTL=null 的 Sandbox (409 `sandbox_ttl_infinite`)
+- [x] Idempotency-Key 支持
+- [x] E2E 测试覆盖 (`test_extend_ttl.py`, `test_long_running_extend_ttl.py`)
 
 ### 🟠 中优先级：Locker API
 

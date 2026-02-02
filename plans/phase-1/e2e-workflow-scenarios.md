@@ -349,6 +349,711 @@
 
 ---
 
+## 场景 7: 路径安全与容器隔离测试 (安全边界验证)
+
+**用户画像**: 安全测试人员 / 恶意用户尝试突破沙箱边界。
+
+**目标**: 验证 Bay 和容器的多层安全防护：
+- Bay API 层对路径穿越的前置校验
+- 容器隔离对 Python/Shell 代码执行的限制
+- 理解哪些"攻击"是被阻止的，哪些是容器隔离范围内的预期行为
+
+**测试文件**: `pkgs/bay/tests/integration/test_path_security.py`
+
+### 架构行为说明
+
+Shipyard 采用**纵深防御**策略：
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                          攻击尝试                                  │
+└──────────────────────────────────────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 第1层: Bay API 路径校验                                           │
+│ - 拒绝绝对路径 (/etc/passwd)                                       │
+│ - 拒绝路径穿越 (../file.txt)                                       │
+│ - 返回 400 Bad Request，不到达容器                                  │
+└──────────────────────────────────────────────────────────────────┘
+                               │ (合法路径放行)
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 第2层: Ship API 路径解析 (resolve_path)                            │
+│ - 解析符号链接                                                      │
+│ - 验证最终路径在 /workspace 内                                       │
+│ - 返回 403 Forbidden                                               │
+└──────────────────────────────────────────────────────────────────┘
+                               │ (合法路径放行)
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│ 第3层: Docker 容器隔离                                             │
+│ - 进程 namespace 隔离                                               │
+│ - 只挂载 /workspace Volume                                          │
+│ - 非 root 用户执行 (shipyard)                                        │
+│ - Python/Shell 代码只能访问容器内文件，无法访问宿主机                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**关键理解**:
+1. **API 层阻止**: 通过 filesystem/shell API 的路径穿越被 Bay 阻止 → 400
+2. **容器内执行不受限**: Python/Shell 代码在容器内可以访问 `/etc/passwd`，但这是容器自己的文件（镜像层），不是宿主机的
+3. **无法访问宿主机**: 宿主机目录未挂载到容器，Python/Shell 代码无法访问
+
+### 行为序列
+
+#### Part A: API 层安全验证 (Bay 阻止) - filesystem API
+
+测试类: `TestPathSecurityE2E`
+
+1.  **创建沙箱**: `POST /v1/sandboxes` -> 获取 `sandbox_id`
+
+2.  **Filesystem Read - 绝对路径**: `GET /filesystem/files?path=/etc/passwd`
+    - 预期: `400 Bad Request`
+    - 响应: `{"error": {"code": "invalid_path", "details": {"reason": "absolute_path"}}}`
+
+3.  **Filesystem Read - 路径穿越**: `GET /filesystem/files?path=../secret.txt`
+    - 预期: `400 Bad Request`
+    - 响应: `{"error": {"code": "invalid_path", "details": {"reason": "path_traversal"}}}`
+
+4.  **Filesystem Read - 深度穿越**: `GET /filesystem/files?path=a/../../etc/passwd`
+    - 预期: `400 Bad Request`
+    - 响应: `{"error": {"code": "invalid_path", "details": {"reason": "path_traversal"}}}`
+
+5.  **Filesystem Write - 绝对路径**: `PUT /filesystem/files` path: `/tmp/evil.sh`
+    - 预期: `400 Bad Request`
+
+6.  **Filesystem Write - 路径穿越**: `PUT /filesystem/files` path: `../secret.txt`
+    - 预期: `400 Bad Request`
+
+7.  **Filesystem Delete - 绝对路径**: `DELETE /filesystem/files?path=/etc/passwd`
+    - 预期: `400 Bad Request`
+
+8.  **Filesystem List - 绝对路径**: `GET /filesystem/directories?path=/etc`
+    - 预期: `400 Bad Request`
+
+9.  **Filesystem List - 路径穿越**: `GET /filesystem/directories?path=../`
+    - 预期: `400 Bad Request`
+
+10. **Filesystem Download - 绝对路径**: `GET /filesystem/download?path=/etc/passwd`
+    - 预期: `400 Bad Request`
+
+11. **Filesystem Upload - 绝对路径**: `POST /filesystem/upload` path: `/tmp/evil.txt`
+    - 预期: `400 Bad Request`
+
+12. **Filesystem Upload - 路径穿越**: `POST /filesystem/upload` path: `../../evil.txt`
+    - 预期: `400 Bad Request`
+
+#### Part A (续): API 层安全验证 - Shell API
+
+13. **Shell cwd - 绝对路径**: `POST /shell/exec` body: `{"command": "ls", "cwd": "/etc"}`
+    - 预期: `400 Bad Request`
+    - 响应: `{"error": {"code": "invalid_path", "details": {"field": "cwd"}}}`
+
+14. **Shell cwd - 路径穿越**: `POST /shell/exec` body: `{"command": "ls", "cwd": "../"}`
+    - 预期: `400 Bad Request`
+    - 响应: `{"error": {"code": "invalid_path", "details": {"reason": "path_traversal"}}}`
+
+#### Part B: 容器隔离验证 (Python/Shell 代码在容器内执行)
+
+测试类: `TestContainerIsolationE2E`
+
+15. **Python 读取容器内 /etc/passwd**: `POST /python/exec`
+    - code: `print(open('/etc/passwd').read()[:200])`
+    - 预期: `success=true`
+    - output 包含 `root:` (passwd 文件格式)
+    - **注意**: 这是容器自己的 passwd 文件！
+
+16. **验证 shipyard 用户存在于容器**: `POST /python/exec`
+    - code: `print('shipyard' in open('/etc/passwd').read())`
+    - 预期: `success=true`, output: `True`
+    - **证明这是 Ship 容器的文件，而非宿主机**
+
+17. **Shell 验证当前用户**: `POST /shell/exec`
+    - body: `{"command": "whoami"}`
+    - 预期: `success=true`, output: `shipyard`
+    - **验证以非 root 用户执行**
+
+18. **Shell 读取容器 /etc/passwd**: `POST /shell/exec`
+    - body: `{"command": "cat /etc/passwd | grep shipyard"}`
+    - 预期: `success=true`
+    - output 包含 `shipyard:x:1000:1000::/workspace:/bin/bash`
+
+19. **Python 尝试访问宿主机路径**: `POST /python/exec`
+    - code: `import os; print(os.path.exists('/home'))`
+    - 预期: `success=true`, output 可能为 `True`（容器有 /home）或 `False`
+    - 关键是：即使存在，也是容器的 /home，不是宿主机的
+
+20. **Python 验证 /workspace 是工作目录**: `POST /python/exec`
+    - code: `import os; print(os.getcwd())`
+    - 预期: `success=true`, output: `/workspace`
+
+21. **Shell 检查挂载点**: `POST /shell/exec`
+    - body: `{"command": "mount | grep /workspace || echo 'workspace mount'"}`
+    - 预期: `success=true`
+    - output 显示 /workspace 相关的挂载信息
+
+#### Part C: 合法路径操作验证
+
+测试类: `TestPathSecurityE2E` (已有) + 补充
+
+22. **内部穿越规范化**: `GET /filesystem/files?path=subdir/../test.txt`
+    - 先写入 `test.txt`
+    - 预期: `200 OK` (Bay 规范化路径为 `test.txt`)
+    - content: 匹配写入内容
+
+23. **隐藏文件允许**: `PUT /filesystem/files` path: `.gitignore`
+    - 预期: `200 OK`
+
+24. **Shell 默认 cwd (None)**: `POST /shell/exec` body: `{"command": "pwd"}`
+    - 预期: `success=true`, output: `/workspace`
+
+25. **Shell 相对 cwd**: `POST /shell/exec` body: `{"command": "pwd", "cwd": "subdir"}`
+    - 先创建 `subdir/dummy.txt`
+    - 预期: `success=true`, output 包含 `subdir`
+
+26. **删除沙箱**: `DELETE /v1/sandboxes/{id}` -> 204
+
+### 测试要点
+
+| # | 测试类别 | 测试点 | 预期行为 | 防护层 |
+|---|----------|--------|----------|--------|
+| 1 | Part A | filesystem read 绝对路径 | 返回 400 | Bay |
+| 2 | Part A | filesystem read 路径穿越 | 返回 400 | Bay |
+| 3 | Part A | filesystem read 深度穿越 | 返回 400 | Bay |
+| 4 | Part A | filesystem write 绝对路径 | 返回 400 | Bay |
+| 5 | Part A | filesystem write 路径穿越 | 返回 400 | Bay |
+| 6 | Part A | filesystem delete 绝对路径 | 返回 400 | Bay |
+| 7 | Part A | filesystem list 绝对路径 | 返回 400 | Bay |
+| 8 | Part A | filesystem list 路径穿越 | 返回 400 | Bay |
+| 9 | Part A | filesystem download 绝对路径 | 返回 400 | Bay |
+| 10 | Part A | filesystem upload 绝对路径 | 返回 400 | Bay |
+| 11 | Part A | filesystem upload 路径穿越 | 返回 400 | Bay |
+| 12 | Part A | shell cwd 绝对路径 | 返回 400 | Bay |
+| 13 | Part A | shell cwd 路径穿越 | 返回 400 | Bay |
+| 14 | Part B | Python 可读容器 /etc/passwd | success=true | 容器隔离 |
+| 15 | Part B | 容器有 shipyard 用户 | output 包含 shipyard | 容器隔离 |
+| 16 | Part B | Shell 以 shipyard 用户执行 | whoami = shipyard | 容器隔离 |
+| 17 | Part B | 工作目录为 /workspace | getcwd = /workspace | 容器隔离 |
+| 18 | Part C | 内部穿越规范化 | 返回 200 | Bay 规范化 |
+| 19 | Part C | 隐藏文件允许 | 返回 200 | Bay |
+| 20 | Part C | Shell cwd=None 默认工作目录 | pwd = /workspace | Ship |
+| 21 | Part C | Shell cwd=相对路径 | pwd = /workspace/subdir | Ship |
+
+### 安全设计说明
+
+> **为什么 Python/Shell 可以读取 `/etc/passwd`？**
+>
+> Python/Shell 代码在容器内执行，可以访问容器内的所有文件。但这些文件来自容器镜像（只读层），不包含敏感的宿主机信息。这是**设计预期的行为**，因为：
+>
+> 1. **沙箱目的是隔离，而非代码审计** - 用户可以在沙箱内运行任意代码
+> 2. **容器文件不敏感** - `/etc/passwd` 只有容器用户信息（如 shipyard），不含宿主机用户
+> 3. **真正的安全边界是容器** - Python/Shell 代码无法逃逸容器访问宿主机
+>
+> 如果需要进一步限制代码能力，可以：
+> - 使用 seccomp/AppArmor 限制系统调用
+> - 使用 `--read-only` 容器选项
+> - 创建更受限的 Profile
+
+---
+
+## 场景 8: Shell 驱动的 DevOps 自动化 (CI/CD 风格)
+
+**用户画像**: DevOps 工程师 / 自动化脚本，主要通过 shell 命令完成构建、测试、部署任务。
+
+**目标**: 验证以 shell 为主的工作流：
+- 基本 shell 命令执行与输出捕获
+- 使用容器内预装工具（git, node, curl 等）
+- 工作目录切换（cwd 参数）
+- 多步骤构建流程
+- 退出码处理与错误检测
+
+### Ship 容器预装工具
+
+根据 [Dockerfile](../../../pkgs/ship/Dockerfile)，Ship 容器预装了以下工具：
+
+| 类别 | 工具 | 用途 |
+|------|------|------|
+| 语言运行时 | `python3`, `pip` | Python 开发 |
+| 语言运行时 | `node`, `npm`, `pnpm` | Node.js 开发 |
+| 版本控制 | `git` | 代码管理 |
+| 网络工具 | `curl` | HTTP 请求/下载 |
+| 部署工具 | `vercel` | Vercel 部署 |
+| 编辑器 | `vim`, `nano` | 文件编辑 |
+| 监控工具 | `htop`, `ps`, `top` | 进程监控 |
+| 系统工具 | `sudo` | 权限管理 |
+| 文件工具 | `tar`, `gzip`, `find`, `wc` | 文件操作 |
+| 文本处理 | `grep`, `sed`, `awk` | 文本处理 |
+
+### 架构行为说明
+
+1. **shell 执行用户**: 所有 shell 命令以 `shipyard` 用户身份执行（可通过 sudo 提权）
+2. **工作目录默认值**: 未指定 cwd 时默认为 `/workspace`
+3. **相对 cwd**: cwd 可以是相对于 `/workspace` 的路径，Bay 会校验安全性
+4. **输出捕获**: `stdout` 和 `stderr` 分别捕获，`success` 基于退出码判断
+5. **命令 shell**: 命令通过 `bash -lc` 执行，支持管道、重定向、环境变量展开
+
+### 行为序列
+
+#### Part A: 基础 Shell 功能
+
+1.  **创建沙箱**: `POST /v1/sandboxes` -> 获取 `sandbox_id`
+
+2.  **基本命令执行**: `POST /shell/exec`
+    - body: `{"command": "echo 'Hello from shell'"}`
+    - 预期: `success=true`, `output`: `Hello from shell`
+
+3.  **查看工作目录**: `POST /shell/exec`
+    - body: `{"command": "pwd"}`
+    - 预期: `success=true`, `output`: `/workspace`
+
+4.  **查看当前用户**: `POST /shell/exec`
+    - body: `{"command": "whoami"}`
+    - 预期: `success=true`, `output`: `shipyard`
+
+5.  **环境变量展开**: `POST /shell/exec`
+    - body: `{"command": "echo $HOME"}`
+    - 预期: `success=true`, `output`: `/workspace`
+
+#### Part B: 验证预装工具
+
+6.  **Python 版本**: `POST /shell/exec`
+    - body: `{"command": "python3 --version"}`
+    - 预期: `success=true`, output 包含 `Python 3.13`
+
+7.  **Node.js 版本**: `POST /shell/exec`
+    - body: `{"command": "node --version"}`
+    - 预期: `success=true`, output 包含 `v20` 或更高版本
+
+8.  **npm/pnpm 可用**: `POST /shell/exec`
+    - body: `{"command": "npm --version && pnpm --version"}`
+    - 预期: `success=true`
+
+9.  **git 可用**: `POST /shell/exec`
+    - body: `{"command": "git --version"}`
+    - 预期: `success=true`, output 包含 `git version`
+
+10. **curl 可用**: `POST /shell/exec`
+    - body: `{"command": "curl --version | head -1"}`
+    - 预期: `success=true`, output 包含 `curl`
+
+#### Part C: 模拟 Node.js 项目构建
+
+11. **创建 package.json**: `PUT /filesystem/files`
+    - path: `myapp/package.json`
+    - content:
+      ```json
+      {
+        "name": "myapp",
+        "version": "1.0.0",
+        "scripts": {
+          "build": "echo 'Building...' && node -e \"console.log('Build complete!')\"",
+          "test": "echo 'Running tests...' && exit 0"
+        }
+      }
+      ```
+
+12. **创建主文件**: `PUT /filesystem/files`
+    - path: `myapp/index.js`
+    - content:
+      ```javascript
+      console.log('Hello from Node.js!');
+      console.log('Node version:', process.version);
+      ```
+
+13. **在项目目录执行 npm 初始化**: `POST /shell/exec`
+    - body: `{"command": "npm run build", "cwd": "myapp"}`
+    - 预期: `success=true`
+    - output 包含:
+      - `Building...`
+      - `Build complete!`
+
+14. **运行 Node.js 应用**: `POST /shell/exec`
+    - body: `{"command": "node index.js", "cwd": "myapp"}`
+    - 预期: `success=true`
+    - output 包含:
+      - `Hello from Node.js!`
+      - `Node version: v`
+
+15. **运行测试**: `POST /shell/exec`
+    - body: `{"command": "npm test", "cwd": "myapp"}`
+    - 预期: `success=true`
+    - output 包含 `Running tests...`
+
+#### Part D: Git 工作流
+
+16. **初始化 git 仓库**: `POST /shell/exec`
+    - body: `{"command": "git init myrepo"}`
+    - 预期: `success=true`
+    - output 包含 `Initialized empty Git repository`
+
+17. **配置 git 用户**: `POST /shell/exec`
+    - body: `{"command": "git config user.email 'test@example.com' && git config user.name 'Test User'", "cwd": "myrepo"}`
+    - 预期: `success=true`
+
+18. **创建文件并提交**: `POST /shell/exec`
+    - body: `{"command": "echo 'Hello Git' > README.md && git add . && git commit -m 'Initial commit'", "cwd": "myrepo"}`
+    - 预期: `success=true`
+    - output 包含 `Initial commit`
+
+19. **查看 git 日志**: `POST /shell/exec`
+    - body: `{"command": "git log --oneline", "cwd": "myrepo"}`
+    - 预期: `success=true`
+    - output 包含 `Initial commit`
+
+#### Part E: 管道与文本处理
+
+20. **管道操作**: `POST /shell/exec`
+    - body: `{"command": "echo -e 'line1\\nline2\\nline3' | grep line2"}`
+    - 预期: `success=true`, `output`: `line2`
+
+21. **使用 awk**: `POST /shell/exec`
+    - body: `{"command": "echo 'hello world' | awk '{print $2}'"}`
+    - 预期: `success=true`, `output`: `world`
+
+22. **使用 sed**: `POST /shell/exec`
+    - body: `{"command": "echo 'hello' | sed 's/hello/goodbye/'"}`
+    - 预期: `success=true`, `output`: `goodbye`
+
+23. **文件查找**: `POST /shell/exec`
+    - body: `{"command": "find . -name '*.js' | head -3"}`
+    - 预期: `success=true`
+    - output 包含 `./myapp/index.js`
+
+#### Part F: 错误处理与退出码
+
+24. **命令不存在**: `POST /shell/exec`
+    - body: `{"command": "nonexistent_command_12345"}`
+    - 预期: `success=false`
+    - `exit_code`: 非零（通常 127）
+
+25. **显式非零退出码**: `POST /shell/exec`
+    - body: `{"command": "exit 42"}`
+    - 预期: `success=false`
+    - `exit_code`: `42`
+
+26. **grep 无匹配**: `POST /shell/exec`
+    - body: `{"command": "echo 'hello' | grep 'xyz'"}`
+    - 预期: `success=false`
+    - `exit_code`: `1`（grep 无匹配时的退出码）
+
+#### Part G: 打包与下载
+
+27. **打包项目**: `POST /shell/exec`
+    - body: `{"command": "tar -czvf myapp.tar.gz myapp/"}`
+    - 预期: `success=true`
+    - output 显示打包的文件列表
+
+28. **验证压缩包**: `POST /shell/exec`
+    - body: `{"command": "tar -tzvf myapp.tar.gz | head -5"}`
+    - 预期: `success=true`
+    - output 列出压缩包内容
+
+29. **下载压缩包**: `GET /filesystem/download?path=myapp.tar.gz`
+    - 预期: `200 OK`
+    - 返回二进制内容（非空）
+
+30. **删除沙箱**: `DELETE /v1/sandboxes/{id}` -> 204
+
+### 测试要点
+
+| # | 要点 | 预期行为 |
+|---|------|----------|
+| 1 | 基本命令执行 | echo/pwd/whoami 正常工作 |
+| 2 | 环境变量 | $HOME 正确展开为 /workspace |
+| 3 | Python 可用 | python3 --version 成功 |
+| 4 | Node.js 可用 | node/npm/pnpm 可用 |
+| 5 | git 可用 | git init/commit 工作正常 |
+| 6 | curl 可用 | curl --version 成功 |
+| 7 | cwd 切换 | 相对路径 cwd 正确切换目录 |
+| 8 | 管道操作 | grep/awk/sed 管道正常工作 |
+| 9 | 错误检测 | 非零退出码返回 `success=false` |
+| 10 | 打包下载 | tar 创建的文件可下载 |
+
+### Shell 与 Python 选择指南
+
+> **何时使用 shell？**
+> - 系统管理任务（文件操作、包管理、进程控制）
+> - 调用外部工具（git, node, npm, curl）
+> - 多命令流水线（管道、重定向）
+> - 快速脚本执行
+> - CI/CD 构建步骤
+>
+> **何时使用 python/exec？**
+> - 复杂数据处理和分析
+> - 需要保持变量状态的交互式计算
+> - 使用 Python 库的任务
+> - 需要结构化输出（JSON、DataFrame）
+> - 机器学习和科学计算
+
+---
+
+## 场景 9: 超级无敌混合工作流 (Full Capability Integration)
+
+**用户画像**: 高级用户 / 自动化框架，需要在单个任务中组合使用所有可用能力。
+
+**背景痛点**: 真实的复杂任务往往需要组合多种能力：Python 代码执行、Shell 命令、文件系统操作、文件上传下载、TTL 管理、幂等保护、stop/resume 等。需要验证所有能力在同一沙箱生命周期内能够正确协同工作。
+
+**目标**: 验证所有 API 能力的完整组合：
+- 沙箱创建（带 Idempotency-Key）
+- Python 代码执行与变量持久化
+- Shell 命令执行
+- 文件系统操作（读/写/删除/列表）
+- 文件上传与下载（包括二进制文件）
+- TTL 续命（extend_ttl）
+- 停止与恢复（stop/resume）
+- 容器隔离验证
+- 最终清理删除
+
+### 能力覆盖矩阵
+
+| 能力分类 | 具体能力 | 验证步骤 |
+|----------|----------|----------|
+| **沙箱管理** | 创建 (POST /v1/sandboxes) | Step 1 |
+| | 幂等创建 (Idempotency-Key) | Step 1, 2 |
+| | 获取状态 (GET /v1/sandboxes/{id}) | Step 3 |
+| | TTL 续命 (POST /extend_ttl) | Step 18 |
+| | 停止 (POST /stop) | Step 20 |
+| | 恢复执行 | Step 21 |
+| | 删除 (DELETE) | Step 25 |
+| **Python 执行** | 代码执行 (POST /python/exec) | Step 4-6, 14 |
+| | 变量跨轮次共享 | Step 5-6 |
+| | 错误处理与 traceback | Step 4 (可选) |
+| **Shell 执行** | 命令执行 (POST /shell/exec) | Step 7-10 |
+| | 管道操作 | Step 8 |
+| | cwd 切换 | Step 10 |
+| | 退出码检测 | Step 9 |
+| **文件系统** | 写文件 (PUT /filesystem/files) | Step 11-12 |
+| | 读文件 (GET /filesystem/files) | Step 13 |
+| | 列目录 (GET /filesystem/directories) | Step 15 |
+| | 删文件 (DELETE /filesystem/files) | Step 16 |
+| **文件传输** | 上传 (POST /filesystem/upload) | Step 17 |
+| | 下载 (GET /filesystem/download) | Step 19 |
+| **隔离验证** | 容器用户验证 | Step 22 |
+| | 工作目录验证 | Step 23 |
+
+### 行为序列
+
+#### Phase 1: 沙箱创建与幂等验证 (Step 1-3)
+
+1. **创建沙箱（带 Idempotency-Key）**: `POST /v1/sandboxes`
+   - body: `{ "profile": "python-default", "ttl": 600 }`
+   - Header: `Idempotency-Key: mega-workflow-create-001`
+   - 预期: 201, 返回 `sandbox_id`, `expires_at`
+
+2. **幂等重试创建**: 相同 `Idempotency-Key` 再次调用 `POST /v1/sandboxes`
+   - 预期: 201, 返回相同的 `sandbox_id`（回放，非重复创建）
+
+3. **获取沙箱状态**: `GET /v1/sandboxes/{id}`
+   - 预期: 200, `status: idle` (懒加载，容器未启动)
+
+#### Phase 2: Python 代码执行 (Step 4-6)
+
+4. **Python 执行（触发容器启动）**: `POST /python/exec`
+   - code: `import sys; print(f"Python {sys.version_info.major}.{sys.version_info.minor}")`
+   - 预期: `success=true`, output 包含 Python 版本
+   - 容器冷启动
+
+5. **Python 执行（定义函数）**: `POST /python/exec`
+   - code: 
+     ```python
+     def fibonacci(n):
+         if n <= 1: return n
+         return fibonacci(n-1) + fibonacci(n-2)
+     result = fibonacci(10)
+     print(f"fib(10) = {result}")
+     ```
+   - 预期: `success=true`, output: `fib(10) = 55`
+
+6. **Python 执行（复用函数，验证变量共享）**: `POST /python/exec`
+   - code: `print(f"fib(15) = {fibonacci(15)}")`
+   - 预期: `success=true`, output: `fib(15) = 610`
+
+#### Phase 3: Shell 命令执行 (Step 7-10)
+
+7. **Shell 基础命令**: `POST /shell/exec`
+   - body: `{"command": "whoami && pwd"}`
+   - 预期: `success=true`, output 包含 `shipyard` 和 `/workspace`
+
+8. **Shell 管道操作**: `POST /shell/exec`
+   - body: `{"command": "echo -e 'apple\\nbanana\\ncherry' | grep an"}`
+   - 预期: `success=true`, output 包含 `banana`
+
+9. **Shell 退出码检测**: `POST /shell/exec`
+   - body: `{"command": "exit 42"}`
+   - 预期: `success=false`, `exit_code: 42`
+
+10. **Shell cwd 切换**: `POST /shell/exec`
+    - 先创建目录：`PUT /filesystem/files` path: `workdir/marker.txt`
+    - body: `{"command": "pwd && ls", "cwd": "workdir"}`
+    - 预期: `success=true`, output 包含 `workdir` 和 `marker.txt`
+
+#### Phase 4: 文件系统操作 (Step 11-16)
+
+11. **写入代码文件**: `PUT /filesystem/files`
+    - path: `src/app.py`
+    - content:
+      ```python
+      def main():
+          print("Hello from app.py!")
+          return 42
+      
+      if __name__ == "__main__":
+          main()
+      ```
+    - 预期: 200
+
+12. **写入配置文件**: `PUT /filesystem/files`
+    - path: `config/settings.json`
+    - content: `{"debug": true, "version": "1.0.0"}`
+    - 预期: 200
+
+13. **读取文件验证**: `GET /filesystem/files?path=src/app.py`
+    - 预期: 200, `content` 包含 `def main()`
+
+14. **Python 执行文件**: `POST /python/exec`
+    - code: `exec(open('src/app.py').read()); print(main())`
+    - 预期: `success=true`, output 包含 `Hello from app.py!` 和 `42`
+
+15. **列出目录结构**: `GET /filesystem/directories?path=.`
+    - 预期: 200, 返回目录树包含 `src/`, `config/`, `workdir/`
+
+16. **删除文件**: `DELETE /filesystem/files?path=workdir/marker.txt`
+    - 预期: 200
+
+#### Phase 5: 文件上传下载 (Step 17, 19)
+
+17. **上传二进制文件**: `POST /filesystem/upload`
+    - path: `data/sample.bin`
+    - file: 生成的二进制内容 (如 256 字节随机数据)
+    - 预期: 200
+
+18. **TTL 续命**: `POST /v1/sandboxes/{id}/extend_ttl`
+    - body: `{ "extend_by": 300 }`
+    - Header: `Idempotency-Key: mega-workflow-extend-001`
+    - 预期: 200, `expires_at` 更新
+
+18.1 **TTL 续命幂等回放（模拟网络重试）**: 再次调用 `POST /v1/sandboxes/{id}/extend_ttl`
+    - 相同 body + 相同 `Idempotency-Key: mega-workflow-extend-001`
+    - 预期: 200，**响应体完全一致**（`expires_at` 不再变化）
+
+19. **下载二进制文件验证**: `GET /filesystem/download?path=data/sample.bin`
+    - 预期: 200, 二进制内容与上传一致
+
+19.1 **Shell 打包（横跳到 DevOps 能力）**: `POST /shell/exec`
+    - body: `{"command": "tar -czvf data.tar.gz data/"}`
+    - 预期: `success=true`，output 列出打包文件
+
+19.2 **下载压缩包（二进制）**: `GET /filesystem/download?path=data.tar.gz`
+    - 预期: 200, 返回非空二进制内容（gzip magic bytes: `1f 8b`）
+
+#### Phase 6: 启停横跳与自动唤醒 (Stop/Resume Chaos) (Step 20-21)
+
+20. **停止沙箱**: `POST /v1/sandboxes/{id}/stop`
+    - 预期: 200
+    - 容器停止，Kernel 终止，Volume 保留
+
+21. **自动唤醒验证 (Auto-Resume)**: 直接调用 `POST /python/exec` (不显式 Start/Resume)
+    - 行为: `stop` 状态下的执行请求应自动触发 `ensure_running`，无需手动 resume
+    - code:
+      ```python
+      # 变量应该丢失 (新 Session)
+      try:
+          print(fibonacci)
+      except NameError:
+          print("variable_lost_as_expected")
+      
+      # 文件应该保留 (同一 Volume)
+      import os
+      print(f"file_exists={os.path.exists('src/app.py')}")
+      ```
+    - 预期: `success=true`, output 包含 `variable_lost_as_expected` 和 `file_exists=True`
+
+21.1 **混合双打：唤醒后立刻用 Shell 验证**: `POST /shell/exec`
+    - body: `{"command": "ls -la && test -f src/app.py && echo 'app_py_ok'"}`
+    - 预期: `success=true`，output 包含 `app_py_ok`
+
+21.2 **再次停止 (为后续测试做准备)**: `POST /v1/sandboxes/{id}/stop`
+    - 预期: 200
+
+21.3 **安全拦截有效性 (Stop 状态)**: `GET /filesystem/files?path=/etc/passwd`
+    - 行为: 在容器未运行时尝试非法路径
+    - 预期: `400 Bad Request` (Bay 层静态校验应在启动容器前拦截，**不应唤醒容器**)
+
+21.4 **文件系统自动唤醒**: `GET /filesystem/directories?path=.`
+    - 行为: 文件系统读操作也应自动唤醒容器
+    - 预期: 200, 返回目录结构 (容器被再次拉起)
+
+21.5 **重复停止 (幂等性)**: 连续调用两次 `POST /v1/sandboxes/{id}/stop`
+    - 预期: 两次都返回 200 (第二次无副作用)
+
+21.6 **重建 Python 运行态并继续工作**: `POST /python/exec`
+    - code:
+      ```python
+      def fibonacci(n):
+          if n <= 1: return n
+          return fibonacci(n-1) + fibonacci(n-2)
+      print(f"fib(12) = {fibonacci(12)}")
+      ```
+    - 预期: `success=true`, output: `fib(12) = 144`
+
+#### Phase 7: 容器隔离验证 (Step 22-24)
+
+22. **验证用户隔离**: `POST /shell/exec`
+    - body: `{"command": "id"}`
+    - 预期: output 包含 `uid=1000(shipyard)`，不包含 `uid=0(root)`
+
+23. **验证工作目录**: `POST /python/exec`
+    - code: `import os; print(os.getcwd())`
+    - 预期: output: `/workspace`
+
+24. **验证容器文件系统**: `POST /python/exec`
+    - code: `print('shipyard' in open('/etc/passwd').read())`
+    - 预期: `success=true`, output: `True`
+    - (证明读取的是容器的 passwd，不是宿主机的)
+
+#### Phase 8: 最终清理 (Step 25)
+
+25. **删除沙箱**: `DELETE /v1/sandboxes/{id}`
+    - 预期: 204
+    - 容器和 Volume 完全删除
+    - 后续 `GET /v1/sandboxes/{id}` 返回 404
+
+### 测试要点总结
+
+| # | 能力 | 验证点 | 预期行为 |
+|---|------|--------|----------|
+| 1 | 幂等创建 | 相同 Key 重试 | 返回相同 sandbox_id |
+| 2 | 懒加载 | 创建后状态 | idle，容器未启动 |
+| 3 | 冷启动 | 首次执行 | 触发容器启动 |
+| 4 | Python 变量共享 | 跨轮次 | 函数在后续轮次可用 |
+| 5 | Shell 执行 | 基础命令 | 正确输出 |
+| 6 | Shell 管道 | grep 管道 | 正确过滤 |
+| 7 | Shell 退出码 | 非零退出 | success=false |
+| 8 | Shell cwd | 相对路径切换 | pwd 显示正确目录 |
+| 9 | 文件写入 | 嵌套目录 | 自动创建父目录 |
+| 10 | 文件读取 | 读取内容 | 返回正确内容 |
+| 11 | 目录列表 | 递归列表 | 返回完整结构 |
+| 12 | 文件删除 | 删除文件 | 文件被删除 |
+| 13 | 文件上传 | 二进制上传 | 正确存储 |
+| 14 | 文件下载 | 二进制下载 | 内容一致 |
+| 15 | TTL 续命 | extend_ttl | expires_at 更新 |
+| 16 | 停止/恢复 | stop 后执行 | 变量丢失，文件保留 |
+| 17 | 容器隔离 | 用户身份 | shipyard 用户 |
+| 18 | 容器隔离 | 文件系统 | 容器自己的 /etc/passwd |
+| 19 | 删除 | 完全清理 | 容器和 Volume 删除 |
+
+### 测试文件
+
+`pkgs/bay/tests/integration/test_mega_workflow.py`
+
+### 预估执行时间
+
+- 冷启动: 2-5 秒
+- 全流程: 30-60 秒（取决于网络和 Docker 性能）
+
+---
+
 ## 下一步
 
 - [ ] 确认场景优先级

@@ -7,11 +7,11 @@ See: plans/phase-1/capability-adapter-design.md
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.api.dependencies import (
     FilesystemCapabilityDep,
@@ -20,8 +20,34 @@ from app.api.dependencies import (
     ShellCapabilityDep,
 )
 from app.router.capability import CapabilityRouter
+from app.validators.path import (
+    validate_optional_relative_path,
+    validate_relative_path,
+)
 
 router = APIRouter()
+
+
+# -- Path validation dependencies --
+
+
+def validated_path(
+    path: str = Query(..., description="File path relative to /workspace"),
+) -> str:
+    """Dependency to validate required path query parameter."""
+    return validate_relative_path(path, field_name="path")
+
+
+def validated_path_with_default(
+    path: str = Query(".", description="Directory path relative to /workspace"),
+) -> str:
+    """Dependency to validate optional path query parameter with default."""
+    return validate_relative_path(path, field_name="path")
+
+
+# Type aliases for validated path dependencies
+ValidatedPath = Annotated[str, Depends(validated_path)]
+ValidatedPathWithDefault = Annotated[str, Depends(validated_path_with_default)]
 
 
 # Request/Response Models
@@ -58,7 +84,13 @@ class ShellExecRequest(BaseModel):
 
     command: str
     timeout: int = Field(default=30, ge=1, le=300)
-    cwd: str | None = None  # Relative to /workspace
+    cwd: str | None = None  # Relative to /workspace, validated
+
+    @field_validator("cwd")
+    @classmethod
+    def validate_cwd(cls, v: str | None) -> str | None:
+        """Validate cwd path if provided."""
+        return validate_optional_relative_path(v, field_name="cwd")
 
 
 class ShellExecResponse(BaseModel):
@@ -85,8 +117,14 @@ class FileReadResponse(BaseModel):
 class FileWriteRequest(BaseModel):
     """Request to write a file."""
 
-    path: str  # Relative to /workspace
+    path: str  # Relative to /workspace, validated
     content: str
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, v: str) -> str:
+        """Validate file path."""
+        return validate_relative_path(v, field_name="path")
 
 
 class FileListRequest(BaseModel):
@@ -168,7 +206,7 @@ async def exec_shell(
 async def read_file(
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
-    path: str = Query(..., description="File path relative to /workspace"),
+    path: ValidatedPath,  # Validated path dependency
 ) -> FileReadResponse:
     """Read file from sandbox."""
     capability_router = CapabilityRouter(sandbox_mgr)
@@ -180,7 +218,7 @@ async def read_file(
 
 @router.put("/{sandbox_id}/filesystem/files", status_code=200)
 async def write_file(
-    request: FileWriteRequest,
+    request: FileWriteRequest,  # path validated by Pydantic field_validator
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
 ) -> dict[str, str]:
@@ -200,7 +238,7 @@ async def write_file(
 async def list_files(
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
-    path: str = Query(".", description="Directory path relative to /workspace"),
+    path: ValidatedPathWithDefault,  # Validated path with default "."
 ) -> FileListResponse:
     """List directory contents in sandbox."""
     capability_router = CapabilityRouter(sandbox_mgr)
@@ -214,7 +252,7 @@ async def list_files(
 async def delete_file(
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
-    path: str = Query(..., description="File/directory path relative to /workspace"),
+    path: ValidatedPath,  # Validated path dependency
 ) -> dict[str, str]:
     """Delete file or directory from sandbox."""
     capability_router = CapabilityRouter(sandbox_mgr)
@@ -248,19 +286,24 @@ async def upload_file(
     - file: The file to upload
     - path: Target path in the sandbox workspace
     """
+    # Manually validate path for Form parameter
+    validated_upload_path = validate_relative_path(path, field_name="path")
+    
     capability_router = CapabilityRouter(sandbox_mgr)
 
     content = await file.read()
-    await capability_router.upload_file(sandbox=sandbox, path=path, content=content)
+    await capability_router.upload_file(
+        sandbox=sandbox, path=validated_upload_path, content=content
+    )
 
-    return FileUploadResponse(status="ok", path=path, size=len(content))
+    return FileUploadResponse(status="ok", path=validated_upload_path, size=len(content))
 
 
 @router.get("/{sandbox_id}/filesystem/download")
 async def download_file(
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
-    path: str = Query(..., description="File path relative to /workspace"),
+    path: ValidatedPath,  # Validated path dependency
 ) -> Response:
     """Download file from sandbox.
     

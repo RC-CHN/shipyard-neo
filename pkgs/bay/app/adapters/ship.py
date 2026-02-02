@@ -190,11 +190,13 @@ class ShipAdapter(BaseAdapter):
 
         result = await self._post("/shell/exec", payload, timeout=timeout + 5)
 
+        # Ship returns: success, return_code, stdout, stderr, pid, process_id, error
+        # Map to ExecutionResult fields
         return ExecutionResult(
-            success=result.get("exit_code", -1) == 0,
-            output=result.get("output", ""),
-            error=result.get("error"),
-            exit_code=result.get("exit_code"),
+            success=result.get("success", False),
+            output=result.get("stdout", ""),
+            error=result.get("error") or result.get("stderr") or None,
+            exit_code=result.get("return_code"),
             data={"raw": result},
         )
 

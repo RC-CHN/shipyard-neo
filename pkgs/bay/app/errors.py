@@ -166,3 +166,18 @@ class CapabilityNotSupportedError(BayError):
         if available is not None:
             details["available"] = available
         super().__init__(message, details)
+
+
+class InvalidPathError(BayError):
+    """Invalid file path (absolute, traversal, etc.).
+    
+    Raised when a path fails validation:
+    - Empty path
+    - Absolute path (starts with /)
+    - Path traversal (escapes workspace boundary)
+    - Contains null bytes
+    """
+
+    code = "invalid_path"
+    message = "Invalid path"
+    status_code = 400
