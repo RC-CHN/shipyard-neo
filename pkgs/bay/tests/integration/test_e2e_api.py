@@ -79,7 +79,7 @@ from .test_shell_devops_workflow import (
     TestShellWorkingDirectoryE2E,
 )
 from .test_mega_workflow import TestMegaWorkflowE2E
-from .test_gc_e2e import TestE2EGC
+from .test_gc_e2e import TestE2EGC, TestAdminGCAPI
 from .test_gc_workflow_scenario import TestE2EGCWorkflowScenario
 
 # Re-export shared configuration for convenience
@@ -93,6 +93,8 @@ from .conftest import (
     is_ship_image_available,
     docker_volume_exists,
     docker_container_exists,
+    trigger_gc,
+    trigger_gc_task,
 )
 
 __all__ = [
@@ -135,6 +137,7 @@ __all__ = [
     "TestMegaWorkflowE2E",
     # Test classes - GC
     "TestE2EGC",
+    "TestAdminGCAPI",
     "TestE2EGCWorkflowScenario",
     # Configuration
     "BAY_BASE_URL",
@@ -147,4 +150,6 @@ __all__ = [
     "is_ship_image_available",
     "docker_volume_exists",
     "docker_container_exists",
+    "trigger_gc",
+    "trigger_gc_task",
 ]

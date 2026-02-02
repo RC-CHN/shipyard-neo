@@ -84,12 +84,13 @@ profiles:
     env: {}
 
 gc:
-  # Enable GC during E2E tests
-  # Note: interval_seconds is set to 5s to allow tests to verify expired states
-  # before GC deletes them. Tests that rely on GC should wait accordingly.
-  enabled: true
+  # Disable automatic GC during E2E tests.
+  # Tests use POST /v1/admin/gc/run to trigger GC manually when needed.
+  # This provides deterministic test behavior without time-based dependencies.
+  # See: plans/phase-1.5/admin-gc-api-design.md
+  enabled: false
   run_on_startup: false
-  interval_seconds: 5
+  interval_seconds: 300  # Not used when enabled=false
 
   # Make instance_id deterministic for strict orphan container cleanup
   instance_id: "bay-e2e"

@@ -13,8 +13,10 @@
 - ship:latest 可用
 - Bay 已运行（使用 tests/scripts/docker-host/config.yaml）
 
-注意：对于 OrphanWorkspaceGC 测试，仍需直接修改数据库使 workspace 成为 orphan。
-其他测试使用 API 或短 idle_timeout profile 来触发 GC。
+策略：
+- 使用 POST /v1/admin/gc/run 手动触发 GC 而非等待自动 GC
+- 这提供了确定性的测试行为，不依赖时序
+- 对于 OrphanWorkspaceGC 测试，仍需直接修改数据库使 workspace 成为 orphan
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import subprocess
-import time
 import uuid
 from pathlib import Path
 
@@ -37,6 +38,7 @@ from .conftest import (
     docker_volume_exists,
     e2e_skipif_marks,
     gc_serial_mark,
+    trigger_gc,
 )
 
 # GC tests must run serially to avoid interfering with other tests' sandboxes
@@ -91,24 +93,6 @@ def _sqlite_orphan_workspace(workspace_id: str) -> None:
         raise AssertionError(f"expected to update 1 workspace row, got {rc}")
 
 
-def _wait_until(predicate, *, timeout_s: float, interval_s: float = 0.2, desc: str) -> None:
-    """Wait until predicate() returns truthy or timeout."""
-    start = time.time()
-    last_exc: Exception | None = None
-
-    while time.time() - start < timeout_s:
-        try:
-            if predicate():
-                return
-        except Exception as e:
-            last_exc = e
-        time.sleep(interval_s)
-
-    if last_exc:
-        raise AssertionError(f"timeout waiting for: {desc}; last error: {last_exc}")
-    raise AssertionError(f"timeout waiting for: {desc}")
-
-
 def _docker_run_sleep_container(*, name: str, labels: dict[str, str], seconds: int = 600) -> None:
     """Run a detached container that sleeps for N seconds."""
     label_args: list[str] = []
@@ -147,7 +131,10 @@ def _docker_rm_force(name: str) -> None:
 
 
 class TestE2EGCWorkflowScenario:
-    """Long & complex workflow scenario to validate GC behavior."""
+    """Long & complex workflow scenario to validate GC behavior.
+    
+    Uses Admin API to trigger GC manually for deterministic testing.
+    """
 
     async def test_gc_long_complex_workflow(self):
         # Must match tests/scripts/docker-host/config.yaml
@@ -200,29 +187,27 @@ class TestE2EGCWorkflowScenario:
                 # -----------------------------
                 # Phase B: IdleSessionGC 回收 compute（可恢复性）
                 # SHORT_IDLE_PROFILE has idle_timeout=2s, wait for it to expire
+                # Then trigger GC manually
                 # -----------------------------
-                # Wait for idle timeout to expire (2s) + GC cycle (5s) + buffer
-                await asyncio.sleep(3)  # Wait past idle_timeout
+                await asyncio.sleep(3)  # Wait past idle_timeout (2s) + buffer
 
-                async def becomes_idle() -> bool:
-                    r = await client.get(f"/v1/sandboxes/{sandbox_id}")
-                    if r.status_code != 200:
-                        return False
-                    payload = r.json()
-                    return payload["status"] == "idle" and payload["idle_expires_at"] is None
+                # Trigger GC manually
+                gc_result = await trigger_gc(client)
+                
+                # Verify idle_session task ran and cleaned
+                idle_result = next(
+                    (r for r in gc_result["results"] if r["task_name"] == "idle_session"),
+                    None,
+                )
+                assert idle_result is not None, "idle_session task should have run"
+                assert idle_result["cleaned_count"] >= 1, f"Expected at least 1 session cleaned, got {idle_result}"
 
-                start = time.time()
-                while time.time() - start < 15:
-                    if await becomes_idle():
-                        break
-                    await asyncio.sleep(0.5)
-                else:
-                    # Get current status for debugging
-                    final_status = await client.get(f"/v1/sandboxes/{sandbox_id}")
-                    raise AssertionError(
-                        f"timeout waiting for IdleSessionGC to reclaim sandbox. "
-                        f"Final status: {final_status.json() if final_status.status_code == 200 else final_status.text}"
-                    )
+                # Verify sandbox is now idle
+                status_resp = await client.get(f"/v1/sandboxes/{sandbox_id}")
+                assert status_resp.status_code == 200
+                status_data = status_resp.json()
+                assert status_data["status"] == "idle", f"Expected idle, got {status_data}"
+                assert status_data["idle_expires_at"] is None
 
                 # 透明重建验证：再次 exec 能读取之前文件
                 exec2 = await client.post(
@@ -255,7 +240,7 @@ class TestE2EGCWorkflowScenario:
                     "bay.instance_id": gc_instance_id,
                     "bay.managed": "true",
                 }
-                # 不可信：instance_id 不匹配（不会被 discovery 过滤选中）
+                # 不可信：instance_id 不匹配（不会被 GC 删除）
                 untrusted_labels = {
                     "bay.session_id": untrusted_session_id,
                     "bay.sandbox_id": f"sandbox-orphan-{suffix}",
@@ -271,37 +256,26 @@ class TestE2EGCWorkflowScenario:
                 _docker_run_sleep_container(name=untrusted_name, labels=untrusted_labels)
 
                 try:
-                    # Verify containers were created successfully
-                    # Note: In rare cases, GC might delete trusted container immediately
-                    # after creation if a GC cycle is in progress. We use wait_until
-                    # with a short timeout to handle this gracefully.
-                    _wait_until(
-                        lambda: docker_container_exists(trusted_name) or not docker_container_exists(trusted_name),
-                        timeout_s=2,
-                        interval_s=0.1,
-                        desc=f"container creation verification for {trusted_name}",
-                    )
+                    # Verify containers were created
+                    assert docker_container_exists(trusted_name), f"trusted container {trusted_name} should exist"
+                    assert docker_container_exists(untrusted_name), f"untrusted container {untrusted_name} should exist"
+
+                    # Trigger GC manually
+                    gc_result = await trigger_gc(client)
                     
-                    # Untrusted container must exist (GC won't delete it due to wrong instance_id)
-                    _wait_until(
-                        lambda: docker_container_exists(untrusted_name),
-                        timeout_s=5,
-                        interval_s=0.5,
-                        desc=f"untrusted container {untrusted_name} created",
+                    # Verify orphan_container task ran
+                    orphan_result = next(
+                        (r for r in gc_result["results"] if r["task_name"] == "orphan_container"),
+                        None,
                     )
+                    assert orphan_result is not None, "orphan_container task should have run"
+                    assert orphan_result["cleaned_count"] >= 1, f"Expected at least 1 container cleaned, got {orphan_result}"
 
-                    # 可信 orphan 应被删 - wait for GC to delete it
-                    # If GC already deleted it during creation, this will pass immediately
-                    _wait_until(
-                        lambda: not docker_container_exists(trusted_name),
-                        timeout_s=30,
-                        interval_s=0.5,
-                        desc=f"trusted orphan container {trusted_name} deleted by GC",
-                    )
+                    # 可信 orphan 应被删
+                    assert not docker_container_exists(trusted_name), \
+                        f"trusted orphan container {trusted_name} should be deleted by GC"
 
-                    # 不可信容器应保留（给 GC 若干轮时间）
-                    # Run multiple GC cycles to ensure untrusted container is not deleted
-                    await asyncio.sleep(10)  # Wait for ~2 GC cycles
+                    # 不可信容器应保留
                     assert docker_container_exists(untrusted_name), \
                         f"untrusted container {untrusted_name} should NOT be deleted by GC"
                 finally:
@@ -323,24 +297,31 @@ class TestE2EGCWorkflowScenario:
 
                 assert docker_volume_exists(exp_volume)
 
-                # 等待 TTL 过期 + GC 周期
+                # 等待 TTL 过期
                 await asyncio.sleep(1.2)
 
-                start = time.time()
-                while time.time() - start < 15:
-                    r = await client.get(f"/v1/sandboxes/{exp_id}")
-                    if r.status_code == 404:
-                        break
-                    await asyncio.sleep(0.2)
-                else:
-                    raise AssertionError("timeout waiting for ExpiredSandboxGC to delete sandbox")
+                # Verify sandbox status is EXPIRED before GC
+                status_resp = await client.get(f"/v1/sandboxes/{exp_id}")
+                assert status_resp.status_code == 200
+                assert status_resp.json()["status"] == "expired", "Sandbox should be expired before GC"
 
-                _wait_until(
-                    lambda: not docker_volume_exists(exp_volume),
-                    timeout_s=20,
-                    interval_s=0.5,
-                    desc=f"expired sandbox volume {exp_volume} deleted",
+                # Trigger GC manually
+                gc_result = await trigger_gc(client)
+                
+                # Verify expired_sandbox task ran
+                expired_result = next(
+                    (r for r in gc_result["results"] if r["task_name"] == "expired_sandbox"),
+                    None,
                 )
+                assert expired_result is not None, "expired_sandbox task should have run"
+                assert expired_result["cleaned_count"] >= 1, f"Expected at least 1 sandbox cleaned, got {expired_result}"
+
+                # Sandbox should be deleted
+                final_resp = await client.get(f"/v1/sandboxes/{exp_id}")
+                assert final_resp.status_code == 404, "Expired sandbox should be deleted"
+
+                # Volume should be deleted
+                assert not docker_volume_exists(exp_volume), f"Volume {exp_volume} should be deleted"
 
                 # -----------------------------
                 # Phase E: OrphanWorkspaceGC 兜底清理
@@ -361,13 +342,19 @@ class TestE2EGCWorkflowScenario:
                 # 让 workspace 满足 OrphanWorkspaceGC 的触发条件
                 _sqlite_orphan_workspace(orphan_ws_id)
 
-                # 等待 GC 清理 volume
-                _wait_until(
-                    lambda: not docker_volume_exists(orphan_volume),
-                    timeout_s=20,
-                    interval_s=0.5,
-                    desc=f"orphan workspace volume {orphan_volume} deleted",
+                # Trigger GC manually
+                gc_result = await trigger_gc(client)
+                
+                # Verify orphan_workspace task ran
+                orphan_ws_result = next(
+                    (r for r in gc_result["results"] if r["task_name"] == "orphan_workspace"),
+                    None,
                 )
+                assert orphan_ws_result is not None, "orphan_workspace task should have run"
+                assert orphan_ws_result["cleaned_count"] >= 1, f"Expected at least 1 workspace cleaned, got {orphan_ws_result}"
+
+                # Volume should be deleted
+                assert not docker_volume_exists(orphan_volume), f"Orphan volume {orphan_volume} should be deleted"
 
                 # sandbox 删除兜底清理
                 await client.delete(f"/v1/sandboxes/{orphan_sb_id}")

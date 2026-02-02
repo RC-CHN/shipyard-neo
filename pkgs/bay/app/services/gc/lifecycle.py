@@ -116,24 +116,24 @@ class SessionPerCycleGCScheduler(GCScheduler):
 
 
 async def init_gc_scheduler() -> GCScheduler | None:
-    """Initialize and optionally start the GC scheduler.
+    """Initialize the GC scheduler.
 
     Called during FastAPI lifespan startup, after database initialization.
 
+    The scheduler is ALWAYS created (for Admin API manual trigger support),
+    but the background loop is only started if gc.enabled=true.
+
     Returns:
-        GCScheduler instance if GC is enabled, None otherwise
+        GCScheduler instance (always created for Admin API support)
     """
     global _gc_scheduler
 
     settings = get_settings()
     gc_config = settings.gc
 
-    if not gc_config.enabled:
-        logger.info("gc.disabled", reason="gc.enabled=false")
-        return None
-
     logger.info(
         "gc.init",
+        enabled=gc_config.enabled,
         instance_id=gc_config.get_instance_id(),
         interval_seconds=gc_config.interval_seconds,
         run_on_startup=gc_config.run_on_startup,
@@ -145,8 +145,13 @@ async def init_gc_scheduler() -> GCScheduler | None:
         },
     )
 
-    # Create scheduler with per-cycle session management
+    # Always create scheduler (for Admin API manual trigger support)
     _gc_scheduler = SessionPerCycleGCScheduler(config=gc_config)
+
+    # If GC is disabled, don't run on startup or start background loop
+    if not gc_config.enabled:
+        logger.info("gc.background_disabled", reason="gc.enabled=false")
+        return _gc_scheduler
 
     # Run once on startup if configured
     if gc_config.run_on_startup:
