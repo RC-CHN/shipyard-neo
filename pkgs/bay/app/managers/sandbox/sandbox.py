@@ -282,6 +282,11 @@ class SandboxManager:
         if extend_by <= 0:
             raise ValidationError("extend_by must be a positive integer")
 
+        # Start a fresh transaction to see latest committed data.
+        # This is safe because no writes have occurred yet in this method.
+        # Without this, SQLite may serve stale expires_at from a long-lived transaction.
+        await self._db.rollback()
+
         sandbox = await self.get(sandbox_id, owner)
 
         old = sandbox.expires_at

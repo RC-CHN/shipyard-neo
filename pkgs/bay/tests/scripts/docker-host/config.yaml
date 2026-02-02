@@ -64,11 +64,29 @@ profiles:
     idle_timeout: 300
     env: {}
 
+  # Profile with very short idle_timeout for GC testing
+  # Used by test_idle_session_gc_reclaims_compute_and_allows_recreate
+  - id: short-idle-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 2  # Very short - 2 seconds for quick GC testing
+    env: {}
+
 gc:
-  # Enable GC during E2E tests (interval set small for deterministic tests)
+  # Enable GC during E2E tests
+  # Note: interval_seconds is set to 2s to allow tests to verify expired states
+  # before GC deletes them. Tests that rely on GC should wait accordingly.
   enabled: true
   run_on_startup: false
-  interval_seconds: 1
+  interval_seconds: 5
 
   # Make instance_id deterministic for strict orphan container cleanup
   instance_id: "bay-e2e"

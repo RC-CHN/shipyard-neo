@@ -110,24 +110,27 @@ class TestE2EExtendTTL:
 
     async def test_extend_ttl_rejects_expired(self):
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
-            # Create with very short TTL
+            # Create with short TTL (3s gives enough margin)
             create_resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "ttl": 1},
+                json={"profile": DEFAULT_PROFILE, "ttl": 3},
             )
             assert create_resp.status_code == 201
             sandbox_id = create_resp.json()["id"]
 
             try:
-                # wait for expiry
-                time.sleep(1.2)
+                # wait for expiry (3s TTL + small buffer)
+                # Note: GC interval is 5s, so sandbox won't be deleted yet
+                time.sleep(3.5)
 
                 extend_resp = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/extend_ttl",
                     json={"extend_by": 10},
                 )
-                assert extend_resp.status_code == 409
+                assert extend_resp.status_code == 409, \
+                    f"Expected 409 sandbox_expired, got {extend_resp.status_code}: {extend_resp.text}"
                 payload = extend_resp.json()
                 assert payload["error"]["code"] == "sandbox_expired"
             finally:
+                # May already be deleted by GC, ignore errors
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")

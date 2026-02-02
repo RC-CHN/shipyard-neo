@@ -56,6 +56,14 @@ class ExpiredSandboxGC(GCTask):
         result = GCResult(task_name=self.name)
         now = datetime.utcnow()
 
+        # Start a fresh transaction to see latest committed data.
+        # This is safe because:
+        # 1. GC tasks run sequentially (not concurrently)
+        # 2. Previous task always commits before next task runs
+        # 3. This task hasn't made any changes yet at this point
+        # Without this, SQLite may serve stale data from a long-lived transaction.
+        await self._db.rollback()
+
         # Find sandboxes with expired TTL
         query = select(Sandbox).where(
             Sandbox.deleted_at.is_(None),

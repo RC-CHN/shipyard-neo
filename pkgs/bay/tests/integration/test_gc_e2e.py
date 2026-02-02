@@ -10,19 +10,15 @@ Prerequisites (same as other E2E tests):
 
 Notes on strategy:
 - We test GC effects via public API + Docker inspection.
-- For IdleSessionGC we need to force idle_expires_at into the past; we do this
-  by directly updating the SQLite db file used by the E2E Bay server.
+- For IdleSessionGC we use a profile with very short idle_timeout (2s) to let
+  the session expire naturally, avoiding direct database manipulation.
 """
 
 from __future__ import annotations
 
-import os
-import sqlite3
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta
-from pathlib import Path
 
 import httpx
 import pytest
@@ -38,17 +34,9 @@ from .conftest import (
 
 pytestmark = e2e_skipif_marks
 
-
-def _repo_bay_dir() -> Path:
-    """Return pkgs/bay directory path."""
-    # tests/integration/test_gc_e2e.py -> parents[2] == pkgs/bay
-    return Path(__file__).resolve().parents[2]
-
-
-def _e2e_db_path() -> Path:
-    """Return the sqlite db path used by docker-host E2E config."""
-    # Must match pkgs/bay/tests/scripts/docker-host/config.yaml
-    return _repo_bay_dir() / "bay-e2e-test.db"
+# Profile with very short idle_timeout for IdleSessionGC testing
+# Defined in tests/scripts/docker-host/config.yaml
+SHORT_IDLE_PROFILE = "short-idle-test"
 
 
 def _wait_until(predicate, *, timeout_s: float, interval_s: float = 0.2, desc: str) -> None:
@@ -68,32 +56,6 @@ def _wait_until(predicate, *, timeout_s: float, interval_s: float = 0.2, desc: s
         raise AssertionError(f"timeout waiting for: {desc}; last error: {last_exc}")
     raise AssertionError(f"timeout waiting for: {desc}")
 
-
-def _sqlite_update_idle_expires_at(sandbox_id: str, *, idle_expires_at: datetime | None) -> None:
-    """Force-update sandboxes.idle_expires_at in the E2E sqlite db."""
-    db_path = _e2e_db_path()
-    if not db_path.exists():
-        raise AssertionError(
-            f"E2E DB file not found at {db_path}. "
-            "Ensure Bay is started from pkgs/bay with docker-host config."
-        )
-
-    # SQLModel stores datetime as ISO string in SQLite by default.
-    value = idle_expires_at.isoformat() if idle_expires_at is not None else None
-
-    conn = sqlite3.connect(str(db_path))
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "UPDATE sandboxes SET idle_expires_at = ? WHERE id = ?",
-            (value, sandbox_id),
-        )
-        conn.commit()
-
-        if cur.rowcount != 1:
-            raise AssertionError(f"expected to update 1 row, got {cur.rowcount}")
-    finally:
-        conn.close()
 
 
 class TestE2EGC:
@@ -119,36 +81,36 @@ class TestE2EGC:
             # Wait for TTL to expire
             time.sleep(1.2)
 
-            # GC interval is 1s in E2E config; allow a few seconds
-            async def sandbox_is_gone() -> bool:
-                r = await client.get(f"/v1/sandboxes/{sandbox_id}")
-                return r.status_code == 404
-
+            # GC interval is 5s in E2E config; allow enough time for GC to run
             # Poll until sandbox is soft-deleted (API returns 404)
             start = time.time()
-            while time.time() - start < 10:
+            while time.time() - start < 15:  # TTL(1s) + GC interval(5s) + buffer
                 r = await client.get(f"/v1/sandboxes/{sandbox_id}")
                 if r.status_code == 404:
                     break
-                await asyncio_sleep(0.2)
+                await asyncio_sleep(0.5)
             else:
                 raise AssertionError("timeout waiting for expired sandbox to be deleted by GC")
 
             # Volume should be deleted by cascade delete
             _wait_until(
                 lambda: not docker_volume_exists(volume_name),
-                timeout_s=10,
+                timeout_s=15,
                 interval_s=0.5,
                 desc=f"volume {volume_name} deleted by GC",
             )
 
     async def test_idle_session_gc_reclaims_compute_and_allows_recreate(self):
-        """IdleSessionGC should destroy sessions and clear idle_expires_at/current_session_id."""
+        """IdleSessionGC should destroy sessions and clear idle_expires_at/current_session_id.
+
+        Uses the 'short-idle-test' profile with idle_timeout=2s to let the session
+        expire naturally, then waits for GC to clean it up.
+        """
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
-            # Create sandbox
+            # Create sandbox with SHORT_IDLE_PROFILE (idle_timeout=2s)
             create_resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE},
+                json={"profile": SHORT_IDLE_PROFILE},
             )
             assert create_resp.status_code == 201, create_resp.text
             sandbox = create_resp.json()
@@ -163,11 +125,18 @@ class TestE2EGC:
                 )
                 assert exec_resp.status_code == 200, exec_resp.text
 
-                # Force idle_expires_at into the past
-                _sqlite_update_idle_expires_at(
-                    sandbox_id,
-                    idle_expires_at=datetime.utcnow() - timedelta(minutes=1),
-                )
+                # Verify sandbox is now ready (running session) with idle_expires_at set
+                # Note: SandboxStatus.READY maps to "ready" when session is RUNNING
+                status_resp = await client.get(f"/v1/sandboxes/{sandbox_id}")
+                assert status_resp.status_code == 200
+                status_data = status_resp.json()
+                assert status_data["status"] == "ready", f"Expected ready, got {status_data}"
+                assert status_data["idle_expires_at"] is not None, "idle_expires_at should be set"
+
+                # Wait for idle timeout to expire (idle_timeout=2s + buffer)
+                # Then wait for GC to pick it up (interval=5s)
+                # Total wait: ~2s (idle) + ~5s (gc) + buffer = ~10s max
+                await asyncio_sleep(3)  # Wait past idle_timeout
 
                 # Wait for GC to clear the session (status becomes idle)
                 async def becomes_idle() -> bool:
@@ -178,12 +147,17 @@ class TestE2EGC:
                     return payload["status"] == "idle" and payload["idle_expires_at"] is None
 
                 start = time.time()
-                while time.time() - start < 10:
+                while time.time() - start < 15:  # Allow more time for GC cycle
                     if await becomes_idle():
                         break
-                    await asyncio_sleep(0.2)
+                    await asyncio_sleep(0.5)
                 else:
-                    raise AssertionError("timeout waiting for IdleSessionGC to reclaim sandbox")
+                    # Get current status for debugging
+                    final_status = await client.get(f"/v1/sandboxes/{sandbox_id}")
+                    raise AssertionError(
+                        f"timeout waiting for IdleSessionGC to reclaim sandbox. "
+                        f"Final status: {final_status.json() if final_status.status_code == 200 else final_status.text}"
+                    )
 
                 # After GC, another exec should recreate compute successfully
                 exec2 = await client.post(

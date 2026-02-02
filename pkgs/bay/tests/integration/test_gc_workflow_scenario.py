@@ -2,7 +2,7 @@
 
 来源：[`plans/phase-1/e2e-workflow-scenarios.md`](../../plans/phase-1/e2e-workflow-scenarios.md:1) 场景 10。
 
-该测试以“长流程”的方式串联验证：
+该测试以"长流程"的方式串联验证：
 - IdleSessionGC：回收 compute 后可透明恢复
 - OrphanContainerGC（strict）：只删可信 orphan，不误删不可信容器
 - ExpiredSandboxGC：TTL 到期后回收 sandbox + 清理 managed workspace volume
@@ -13,7 +13,8 @@
 - ship:latest 可用
 - Bay 已运行（使用 tests/scripts/docker-host/config.yaml）
 
-注意：测试会直接修改 E2E sqlite DB（bay-e2e-test.db），用于制造边界条件。
+注意：对于 OrphanWorkspaceGC 测试，仍需直接修改数据库使 workspace 成为 orphan。
+其他测试使用 API 或短 idle_timeout profile 来触发 GC。
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ import sqlite3
 import subprocess
 import time
 import uuid
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -39,6 +39,10 @@ from .conftest import (
 )
 
 pytestmark = e2e_skipif_marks
+
+# Profile with very short idle_timeout for IdleSessionGC testing
+# Defined in tests/scripts/docker-host/config.yaml
+SHORT_IDLE_PROFILE = "short-idle-test"
 
 
 def _repo_bay_dir() -> Path:
@@ -73,17 +77,6 @@ def _sqlite_exec(sql: str, params: tuple = ()) -> int:
         return cur.rowcount
     finally:
         conn.close()
-
-
-def _sqlite_update_idle_expires_at(sandbox_id: str, *, idle_expires_at: datetime | None) -> None:
-    """Force-update sandboxes.idle_expires_at in sqlite."""
-    value = idle_expires_at.isoformat() if idle_expires_at is not None else None
-    rc = _sqlite_exec(
-        "UPDATE sandboxes SET idle_expires_at = ? WHERE id = ?",
-        (value, sandbox_id),
-    )
-    if rc != 1:
-        raise AssertionError(f"expected to update 1 sandbox row, got {rc}")
 
 
 def _sqlite_orphan_workspace(workspace_id: str) -> None:
@@ -155,11 +148,12 @@ class TestE2EGCWorkflowScenario:
 
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # -----------------------------
-            # Phase A: 建立真实工作负载
+            # Phase A+B: 建立工作负载 + IdleSessionGC 回收 compute（可恢复性）
+            # 使用 SHORT_IDLE_PROFILE (idle_timeout=2s) 让 session 自然过期
             # -----------------------------
             create_resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "ttl": 120},
+                json={"profile": SHORT_IDLE_PROFILE, "ttl": 120},
             )
             assert create_resp.status_code == 201, create_resp.text
             sandbox = create_resp.json()
@@ -198,12 +192,10 @@ class TestE2EGCWorkflowScenario:
 
                 # -----------------------------
                 # Phase B: IdleSessionGC 回收 compute（可恢复性）
+                # SHORT_IDLE_PROFILE has idle_timeout=2s, wait for it to expire
                 # -----------------------------
-                # 人为把 idle_expires_at 设到过去
-                _sqlite_update_idle_expires_at(
-                    sandbox_id,
-                    idle_expires_at=datetime.utcnow() - timedelta(minutes=1),
-                )
+                # Wait for idle timeout to expire (2s) + GC cycle (5s) + buffer
+                await asyncio.sleep(3)  # Wait past idle_timeout
 
                 async def becomes_idle() -> bool:
                     r = await client.get(f"/v1/sandboxes/{sandbox_id}")
@@ -216,9 +208,14 @@ class TestE2EGCWorkflowScenario:
                 while time.time() - start < 15:
                     if await becomes_idle():
                         break
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.5)
                 else:
-                    raise AssertionError("timeout waiting for IdleSessionGC to reclaim sandbox")
+                    # Get current status for debugging
+                    final_status = await client.get(f"/v1/sandboxes/{sandbox_id}")
+                    raise AssertionError(
+                        f"timeout waiting for IdleSessionGC to reclaim sandbox. "
+                        f"Final status: {final_status.json() if final_status.status_code == 200 else final_status.text}"
+                    )
 
                 # 透明重建验证：再次 exec 能读取之前文件
                 exec2 = await client.post(

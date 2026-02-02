@@ -112,34 +112,41 @@ class TestE2E13LongRunningExtendTTL:
         """After TTL expiration, extend_ttl should be rejected (no resurrection).
         
         This verifies the "sandbox_expired" error behavior:
-        - Create sandbox with very short TTL (1s)
-        - Wait for expiration
+        - Create sandbox with short TTL (3s)
+        - Wait for expiration (3.5s)
         - Attempt to extend -> should get 409 sandbox_expired
+        
+        Note: TTL and wait times are chosen to ensure expiration occurs before
+        GC runs (GC interval is 5s in E2E config). This tests the API-level
+        expiration check, not GC deletion behavior.
         """
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
-            # Create sandbox with minimal TTL
+            # Create sandbox with short TTL - must expire before GC runs (5s interval)
             create_resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "ttl": 1},
+                json={"profile": DEFAULT_PROFILE, "ttl": 3},
             )
             assert create_resp.status_code == 201
             sandbox_id = create_resp.json()["id"]
 
             try:
-                # Wait for expiration
-                await asyncio.sleep(1.5)
+                # Wait for expiration (TTL=3s + buffer)
+                # This should happen before GC runs (interval=5s)
+                await asyncio.sleep(3.5)
 
-                # Attempt to extend - should fail
+                # Attempt to extend - should fail with 409 sandbox_expired
                 extend_resp = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/extend_ttl",
                     json={"extend_by": 60},
                 )
-                assert extend_resp.status_code == 409
+                assert extend_resp.status_code == 409, \
+                    f"Expected 409 sandbox_expired, got {extend_resp.status_code}: {extend_resp.text}"
                 error = extend_resp.json()
                 assert error["error"]["code"] == "sandbox_expired", \
                     f"Expected sandbox_expired error, got: {error}"
 
             finally:
+                # Note: sandbox may have been deleted by GC at this point, ignore 404
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
 
     async def test_extend_ttl_rejected_for_infinite_ttl(self):
