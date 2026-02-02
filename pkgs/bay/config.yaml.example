@@ -39,7 +39,7 @@ driver:
     network: null
 
 cargo:
-  root_path: "/var/lib/bay/workspaces"
+  root_path: "/var/lib/bay/cargos"
   default_size_limit_mb: 1024
   mount_path: "/workspace"  # Fixed, do not change
 
