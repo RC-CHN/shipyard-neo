@@ -1,1 +1,4 @@
 pkgs/bay/config.yaml
+.serena/
+openspec/
+AGENTS.md

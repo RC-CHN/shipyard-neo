@@ -78,32 +78,32 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 ---
 
-## 🚨 P0 - 最高优先级：命名重构（Workspace → Locker）
+## 🚨 P0 - 最高优先级：命名重构（Workspace → Cargo）
 
-> **决策**：将 Workspace 重命名为 Locker，延续航海拟物化命名风格
+> **决策**：将 Workspace 重命名为 Cargo，延续航海拟物化命名风格
 >
-> **理由**：在继续开发新功能之前完成重命名，避免后续更大范围的改动
+> **理由**：Cargo（货物）是船运输的核心对象，语义上比 Locker 更准确——存储的是"要处理的数据"而非"存放东西的地方"
 
 **命名体系**：
 ```
 🏖️ Bay    - 港湾 (管理层，调度中心)
 🚢 Ship   - 船 (运行时，计算载体)
-🔐 Locker - 储物柜 (数据持久化，安全存储)
+📦 Cargo  - 货物 (数据持久化，要处理的内容)
 ```
 
 **重命名范围**：
 
 - [ ] **设计文档更新**
-  - [ ] `plans/bay-design.md` - 概念模型中 Workspace → Locker
+  - [ ] `plans/bay-design.md` - 概念模型中 Workspace → Cargo
   - [ ] `plans/bay-concepts.md` - 数据概念更新
-  - [ ] `plans/bay-api.md` - API 路径更新 `/workspaces` → `/lockers`
+  - [ ] `plans/bay-api.md` - API 路径更新 `/workspaces` → `/cargos`
   - [ ] `plans/phase-1/*.md` - 相关引用更新
 - [ ] **Bay 代码重构**
-  - [ ] `pkgs/bay/app/models/workspace.py` → `locker.py`
-  - [ ] `pkgs/bay/app/managers/workspace/` → `locker/`
-  - [ ] API 路由 `/v1/workspaces` → `/v1/lockers`
-  - [ ] 数据库表名 `workspaces` → `lockers`
-  - [ ] 字段名 `workspace_id` → `locker_id`
+  - [ ] `pkgs/bay/app/models/workspace.py` → `cargo.py`
+  - [ ] `pkgs/bay/app/managers/workspace/` → `cargo/`
+  - [ ] API 路由 `/v1/workspaces` → `/v1/cargos`
+  - [ ] 数据库表名 `workspaces` → `cargos`
+  - [ ] 字段名 `workspace_id` → `cargo_id`
   - [ ] `managed_by_sandbox_id` 保持不变
 - [ ] **Ship 代码更新**
   - [ ] `pkgs/ship/app/workspace.py` 更新引用
@@ -160,16 +160,16 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 - [x] Idempotency-Key 支持
 - [x] E2E 测试覆盖 (`test_extend_ttl.py`, `test_long_running_extend_ttl.py`)
 
-### 🟠 中优先级：Locker API
+### 🟠 中优先级：Cargo API
 
 > 详见 [`plans/bay-api.md#6.3`](plans/bay-api.md)（重命名后）
 
-- [ ] `POST /v1/lockers` - 创建独立 Locker
-- [ ] `GET /v1/lockers` - 列出 Lockers
-- [ ] `GET /v1/lockers/{id}` - 查询 Locker
-- [ ] `DELETE /v1/lockers/{id}` - 删除 Locker
-- [ ] `POST /v1/lockers/{id}/files/read` - 直读文件
-- [ ] `POST /v1/lockers/{id}/files/write` - 直写文件
+- [ ] `POST /v1/cargos` - 创建独立 Cargo
+- [ ] `GET /v1/cargos` - 列出 Cargos
+- [ ] `GET /v1/cargos/{id}` - 查询 Cargo
+- [ ] `DELETE /v1/cargos/{id}` - 删除 Cargo
+- [ ] `POST /v1/cargos/{id}/files/read` - 直读文件
+- [ ] `POST /v1/cargos/{id}/files/write` - 直写文件
 - [ ] 权限控制（更高 scope）
 - [ ] managed vs external 删除规则
 
@@ -214,6 +214,91 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 ---
 
+## 🔧 Phase 3 - 轻量化重构（可选）
+
+> **背景**：有 AI 辅助开发，技术复杂性不再是障碍。以下重构可显著降低资源占用。
+>
+> **详见**：[`REVIEW.md#语言选型讨论`](REVIEW.md#-语言选型讨论python-vs-rustgo)
+
+### 🟢 Bay 编排层 Go 重写
+
+**目标**：用 Go 重写 Bay，追求最小内存占用与最快启动速度
+
+**收益**：
+- 内存：Python ~150MB → Go ~10-30MB（视依赖与驱动实现而定）
+- 启动：Python ~2s → Go ~20-80ms
+- 部署：单一二进制，无解释器依赖
+
+**技术方案（极简优先）**：
+
+- [ ] **Bay-Go HTTP 服务（零框架）**
+  - [ ] 选型：Go 标准库 HTTP（不引入 Web 框架）
+  - [ ] 项目骨架：`pkgs/bay-go/`
+  - [ ] 路由：最小化自研 mux（按 method+path）
+  - [ ] 配置：flag + 环境变量（必要时再引入配置库）
+  - [ ] 日志：Go 标准库 slog（或最小化结构化输出）
+
+- [ ] **数据层迁移（sqlc 优先）**
+  - [ ] 代码生成：sqlc（类型安全 + 零运行时开销，Go 生态最佳实践）
+  - [ ] 支持 SQLite + PostgreSQL
+  - [ ] 迁移：golang-migrate
+  - [ ] Repository 层设计：所有 SQL 集中到 `internal/repo/` 目录
+  - [ ] **测试矩阵**
+    - [ ] 单元测试（SQLite in-memory）：覆盖 CRUD 与边界条件
+    - [ ] 事务一致性测试：create sandbox + locker + session 原子性
+    - [ ] 并发测试：ensure_running 只产生 1 个 session
+    - [ ] 集成测试（PostgreSQL 容器）：验证迁移 + 查询语义一致
+    - [ ] SQL 注入回归用例：恶意输入测试
+    - [ ] 静态检查（CI 必跑）：`go test -race` + `gosec` + `staticcheck`
+
+- [ ] **Driver 层（Docker Go SDK）**
+  - [ ] 选型：`github.com/docker/docker/client`（不使用 CLI 子进程）
+  - [ ] 客户端单例复用：一次初始化，全局复用，线程安全
+  - [ ] 端口映射/容器网络逻辑复用
+  - [ ] **优化项**
+    - [ ] 减少 inspect 调用：status 查询使用 ContainerList 替代 ContainerInspect
+    - [ ] 并行 GC 操作：批量 stop/remove 使用 goroutine 并发执行
+    - [ ] 连接复用：避免每次操作创建新连接
+
+- [ ] **Manager 层**
+  - [ ] SandboxManager：sync.Mutex（按 sandbox_id 粒度）
+  - [ ] SessionManager：context 超时控制
+  - [ ] 幂等性：数据库 UNIQUE 约束（避免引入额外组件）
+
+- [ ] **API 层**
+  - [ ] REST API 完全兼容 Python 版本
+  - [ ] OpenAPI spec 复用
+
+- [ ] **测试与验证**
+  - [ ] 使用现有 E2E 测试验证兼容性
+  - [ ] 性能基准对比（启动时间、内存、QPS）
+
+### 🟡 路径安全模块 Rust FFI（可选）
+
+**目标**：用 Rust 实现安全关键的路径校验逻辑，编译为 Python 扩展
+
+**适用场景**：如果保持 Python Bay，但需要增强安全性
+
+- [ ] **Rust 核心模块**
+  - [ ] `path_validator` crate
+  - [ ] 路径规范化、穿越检测
+  - [ ] 使用 PyO3 绑定
+
+- [ ] **Python 集成**
+  - [ ] `bay-security` Python 包
+  - [ ] 替换现有 `resolve_path` 调用
+
+### 📊 重写优先级评估
+
+| 组件 | 语言 | 优先级 | 预估工作量 | ROI |
+|:---|:---|:---|:---|:---|
+| Bay 编排层 | Go | ⭐⭐⭐ | 2-3 周 | 高：内存/启动/部署 |
+| 路径安全 FFI | Rust | ⭐⭐ | 3-5 天 | 中：安全性增强 |
+| Ship 运行时 | Python | 不重写 | - | N/A：核心依赖 IPython |
+| SDK | Python | 不重写 | - | N/A：目标用户是 Python |
+
+---
+
 ## 📁 相关文档索引
 
 | 文档 | 说明 |
@@ -225,6 +310,8 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 | [`plans/phase-1/progress.md`](plans/phase-1/progress.md) | Phase 1 详细进度追踪 |
 | [`plans/phase-1/gc-design.md`](plans/phase-1/gc-design.md) | GC 机制设计 |
 | [`plans/phase-2/phase-2.md`](plans/phase-2/phase-2.md) | Phase 2 规划 |
+| [`plans/phase-3/phase-3.md`](plans/phase-3/phase-3.md) | Phase 3 轻量化重构概览 |
+| [`plans/phase-3/bay-go-design.md`](plans/phase-3/bay-go-design.md) | Bay Go 重写详细设计 |
 | [`plans/ship-refactor-and-mcp.md`](plans/ship-refactor-and-mcp.md) | Ship MCP 集成设计 |
 
 ---
