@@ -109,6 +109,15 @@ class TestE2EExtendTTL:
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")
 
     async def test_extend_ttl_rejects_expired(self):
+        """Tests TTL expiration detection - extend_ttl on expired sandbox should fail.
+        
+        After TTL expires, extend_ttl should either:
+        - Return 409 sandbox_expired (if sandbox still exists but TTL has passed)
+        - Return 404 not_found (if GC has already deleted the sandbox)
+        
+        Both are valid behaviors - the key point is that extend_ttl cannot
+        resurrect an expired sandbox.
+        """
         async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
             # Create with short TTL (3s gives enough margin)
             create_resp = await client.post(
@@ -120,17 +129,22 @@ class TestE2EExtendTTL:
 
             try:
                 # wait for expiry (3s TTL + small buffer)
-                # Note: GC interval is 5s, so sandbox won't be deleted yet
                 time.sleep(3.5)
 
                 extend_resp = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/extend_ttl",
                     json={"extend_by": 10},
                 )
-                assert extend_resp.status_code == 409, \
-                    f"Expected 409 sandbox_expired, got {extend_resp.status_code}: {extend_resp.text}"
-                payload = extend_resp.json()
-                assert payload["error"]["code"] == "sandbox_expired"
+                # After expiry, extend_ttl should fail with either:
+                # - 409 sandbox_expired (sandbox exists but expired)
+                # - 404 not_found (GC already deleted the sandbox)
+                assert extend_resp.status_code in (404, 409), \
+                    f"Expected 404 or 409, got {extend_resp.status_code}: {extend_resp.text}"
+                
+                if extend_resp.status_code == 409:
+                    payload = extend_resp.json()
+                    assert payload["error"]["code"] == "sandbox_expired"
+                # If 404, sandbox was already deleted by GC - also acceptable
             finally:
                 # May already be deleted by GC, ignore errors
                 await client.delete(f"/v1/sandboxes/{sandbox_id}")

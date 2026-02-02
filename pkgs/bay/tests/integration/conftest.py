@@ -106,3 +106,15 @@ e2e_skipif_marks = [
 
 # Combined pytest mark for E2E tests
 pytestmark = e2e_skipif_marks
+
+# pytest-xdist parallel execution configuration
+# Most E2E tests can run in parallel because each creates/deletes its own sandbox.
+# GC tests need serial execution to avoid interference with other sandboxes.
+#
+# Usage:
+#   Parallel: pytest tests/integration -n auto --dist loadgroup
+#   Serial:   pytest tests/integration (default)
+#
+# Tests marked with @pytest.mark.xdist_group("gc") will run in the same worker,
+# effectively serializing them. Use this for GC tests.
+gc_serial_mark = pytest.mark.xdist_group("gc")

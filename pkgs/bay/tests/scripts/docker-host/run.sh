@@ -6,9 +6,11 @@
 # - ship:latest image built (cd pkgs/ship && make build)
 #
 # Usage:
-#   ./run.sh              # Run all E2E tests
+#   ./run.sh              # Run all E2E tests (serial)
+#   ./run.sh --parallel   # Run tests in parallel (faster)
 #   ./run.sh -v           # Verbose mode
 #   ./run.sh -k "test_create"  # Run specific test
+#   ./run.sh --parallel -n 4   # Run in parallel with 4 workers
 
 set -e
 
@@ -147,12 +149,21 @@ start_bay_server() {
 }
 
 run_tests() {
+    local parallel_mode="$1"
+    shift
+    
     log_info "Running E2E tests (docker-host mode)..."
     
     cd "$BAY_DIR"
     
-    # Run pytest with the provided arguments
-    uv run pytest tests/integration/test_e2e_api.py "$@"
+    if [ "$parallel_mode" = "true" ]; then
+        log_info "Running tests in parallel mode with pytest-xdist"
+        # Use -n auto for automatic worker detection, --dist loadgroup for xdist_group support
+        uv run pytest tests/integration/test_e2e_api.py -n auto --dist loadgroup "$@"
+    else
+        log_info "Running tests in serial mode"
+        uv run pytest tests/integration/test_e2e_api.py "$@"
+    fi
 }
 
 # Trap for cleanup on exit
@@ -160,9 +171,18 @@ trap cleanup EXIT
 
 # Parse arguments
 PYTEST_ARGS=""
+PARALLEL_MODE="false"
 while [[ $# -gt 0 ]]; do
-    PYTEST_ARGS="$PYTEST_ARGS $1"
-    shift
+    case $1 in
+        --parallel)
+            PARALLEL_MODE="true"
+            shift
+            ;;
+        *)
+            PYTEST_ARGS="$PYTEST_ARGS $1"
+            shift
+            ;;
+    esac
 done
 
 # Main execution
@@ -173,6 +193,6 @@ start_bay_server
 # Set environment variable for tests to know which port to use
 export E2E_BAY_PORT=$BAY_PORT
 
-run_tests $PYTEST_ARGS
+run_tests "$PARALLEL_MODE" $PYTEST_ARGS
 
 log_info "E2E tests completed successfully!"

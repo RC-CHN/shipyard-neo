@@ -30,9 +30,11 @@ from .conftest import (
     docker_container_exists,
     docker_volume_exists,
     e2e_skipif_marks,
+    gc_serial_mark,
 )
 
-pytestmark = e2e_skipif_marks
+# GC tests must run serially to avoid interfering with other tests' sandboxes
+pytestmark = e2e_skipif_marks + [gc_serial_mark]
 
 # Profile with very short idle_timeout for IdleSessionGC testing
 # Defined in tests/scripts/docker-host/config.yaml
