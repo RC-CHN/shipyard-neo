@@ -73,7 +73,7 @@ POST /v1/sandboxes/sandbox-0af541514707/python/exec 200 OK
 **验证点**：
 - stop 后 sandbox 仍然存在，GET 返回 200
 - 状态变为 `idle`（无运行 session）
-- workspace 数据卷保留，下次使用可恢复
+- cargo 数据卷保留，下次使用可恢复
 - stop 是幂等的，重复调用不报错
 
 **实际日志片段**：
@@ -81,7 +81,7 @@ POST /v1/sandboxes/sandbox-0af541514707/python/exec 200 OK
 sandbox.stop sandbox_id=sandbox-c9eb112695c3
 session.stop session_id=sess-1f62fd733cf0
 docker.stop container_id=4c5c4c4bdbad...
-# 注意：没有 workspace.delete，数据保留
+# 注意：没有 cargo.delete，数据保留
 ```
 
 ### 2.3 E2E-03: Delete（彻底销毁）
@@ -90,7 +90,7 @@ docker.stop container_id=4c5c4c4bdbad...
 
 **用户操作流程**：
 ```
-1. 创建沙箱（自动创建 managed workspace）
+1. 创建沙箱（自动创建 managed cargo）
 2. 执行代码，产生一些数据
 3. 调用 DELETE /v1/sandboxes/{id}
 4. 尝试 GET 查看（应返回 404）
@@ -101,15 +101,15 @@ docker.stop container_id=4c5c4c4bdbad...
 - delete 返回 204
 - 后续 GET 返回 404（软删除）
 - Docker 容器被销毁
-- managed workspace 对应的 Docker volume 被删除
+- managed cargo 对应的 Docker volume 被删除
 
 **实际日志片段**：
 ```
 sandbox.delete sandbox_id=sandbox-0eae1659a4b2
 session.destroy session_id=sess-1831b311500b
 docker.destroy container_id=5dc4f2cbdd80...
-workspace.delete workspace_id=ws-ff0be9ea2284
-docker.delete_volume name=bay-workspace-ws-ff0be9ea2284
+cargo.delete cargo_id=ws-ff0be9ea2284
+docker.delete_volume name=bay-cargo-ws-ff0be9ea2284
 # volume 真实删除，数据清理
 ```
 
@@ -131,32 +131,32 @@ docker.delete_volume name=bay-workspace-ws-ff0be9ea2284
 
 ## 3. 发现的问题及修复
 
-### 3.1 已修复：Sandbox.workspace_id 外键约束冲突
+### 3.1 已修复：Sandbox.cargo_id 外键约束冲突
 
 **问题描述**：
-删除 sandbox 时，managed workspace 需要级联删除。但由于 `Sandbox.workspace_id` 字段定义为 NOT NULL，当 workspace 被删除时，SQLAlchemy 尝试将 sandbox 的 workspace_id 设为 NULL，触发约束违反。
+删除 sandbox 时，managed cargo 需要级联删除。但由于 `Sandbox.cargo_id` 字段定义为 NOT NULL，当 cargo 被删除时，SQLAlchemy 尝试将 sandbox 的 cargo_id 设为 NULL，触发约束违反。
 
 **错误信息**：
 ```
-sqlite3.IntegrityError: NOT NULL constraint failed: sandboxes.workspace_id
+sqlite3.IntegrityError: NOT NULL constraint failed: sandboxes.cargo_id
 ```
 
 **修复方案**：
-将 `Sandbox.workspace_id` 改为 `Optional[str]`，允许软删除后的 sandbox 的 workspace_id 为 NULL。
+将 `Sandbox.cargo_id` 改为 `Optional[str]`，允许软删除后的 sandbox 的 cargo_id 为 NULL。
 
 **代码变更**：[`pkgs/bay/app/models/sandbox.py`](../pkgs/bay/app/models/sandbox.py:44)
 ```python
 # 修改前
-workspace_id: str = Field(foreign_key="workspaces.id", index=True)
+cargo_id: str = Field(foreign_key="cargos.id", index=True)
 
 # 修改后
-workspace_id: Optional[str] = Field(
-    default=None, foreign_key="workspaces.id", index=True
+cargo_id: Optional[str] = Field(
+    default=None, foreign_key="cargos.id", index=True
 )
 ```
 
 **影响分析**：
-- 活跃 sandbox（deleted_at IS NULL）在创建时保证 workspace_id 非空
+- 活跃 sandbox（deleted_at IS NULL）在创建时保证 cargo_id 非空
 - 已删除 sandbox 的 API 路由会先被 404 拦截，不会访问 ensure_running 等代码
 - 仅影响软删除记录（用于审计），不影响正常业务逻辑
 
@@ -186,7 +186,7 @@ _sandbox_locks: dict[str, asyncio.Lock] = {}
 
 async def ensure_running(self, sandbox: Sandbox) -> Session:
     sandbox_id = sandbox.id
-    workspace_id = sandbox.workspace_id
+    cargo_id = sandbox.cargo_id
     
     sandbox_lock = await _get_sandbox_lock(sandbox_id)
     async with sandbox_lock:
@@ -199,8 +199,8 @@ async def ensure_running(self, sandbox: Sandbox) -> Session:
         )
         locked_sandbox = result.scalars().first()
         
-        # 重新获取 workspace
-        workspace = await self._workspace_mgr.get_by_id(workspace_id)
+        # 重新获取 cargo
+        cargo = await self._cargo_mgr.get_by_id(cargo_id)
         
         # 双重检查：是否已有 session
         if locked_sandbox.current_session_id:

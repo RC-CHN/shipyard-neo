@@ -602,7 +602,7 @@ profiles:
     idle_timeout: 1800  # 30 分钟
 
 cargo:
-  root_path: /var/lib/bay/workspaces
+  root_path: /var/lib/bay/cargos
   default_size_limit_mb: 1024
 
 security:
