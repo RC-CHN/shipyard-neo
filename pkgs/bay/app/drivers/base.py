@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
-    from app.models.session import Session
     from app.models.cargo import Cargo
+    from app.models.session import Session
 
 
 class ContainerStatus(str, Enum):
@@ -82,18 +82,18 @@ class Driver(ABC):
         self,
         session: "Session",
         profile: "ProfileConfig",
-        workspace: "Cargo",
+        cargo: "Cargo",
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
         """Create a container without starting it.
-        
+
         Args:
             session: Session model
             profile: Profile configuration
-            workspace: Cargo to mount
+            cargo: Cargo to mount
             labels: Additional labels for the container
-            
+
         Returns:
             Container ID
         """
@@ -115,7 +115,7 @@ class Driver(ABC):
     @abstractmethod
     async def stop(self, container_id: str) -> None:
         """Stop a running container.
-        
+
         Args:
             container_id: Container ID
         """
@@ -124,7 +124,7 @@ class Driver(ABC):
     @abstractmethod
     async def destroy(self, container_id: str) -> None:
         """Destroy (remove) a container.
-        
+
         Args:
             container_id: Container ID
         """
@@ -147,11 +147,11 @@ class Driver(ABC):
     @abstractmethod
     async def logs(self, container_id: str, tail: int = 100) -> str:
         """Get container logs.
-        
+
         Args:
             container_id: Container ID
             tail: Number of lines to return
-            
+
         Returns:
             Log content
         """
@@ -161,12 +161,12 @@ class Driver(ABC):
 
     @abstractmethod
     async def create_volume(self, name: str, labels: dict[str, str] | None = None) -> str:
-        """Create a volume for workspace.
-        
+        """Create a volume for cargo.
+
         Args:
             name: Volume name
             labels: Volume labels
-            
+
         Returns:
             Volume name (for reference)
         """
@@ -175,7 +175,7 @@ class Driver(ABC):
     @abstractmethod
     async def delete_volume(self, name: str) -> None:
         """Delete a volume.
-        
+
         Args:
             name: Volume name
         """
@@ -184,10 +184,10 @@ class Driver(ABC):
     @abstractmethod
     async def volume_exists(self, name: str) -> bool:
         """Check if volume exists.
-        
+
         Args:
             name: Volume name
-            
+
         Returns:
             True if volume exists
         """

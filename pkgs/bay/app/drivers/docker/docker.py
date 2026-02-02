@@ -25,8 +25,8 @@ from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInst
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
-    from app.models.session import Session
     from app.models.cargo import Cargo
+    from app.models.session import Session
 
 logger = structlog.get_logger()
 
@@ -103,7 +103,12 @@ class DockerDriver(Driver):
         # fallback: first attached network
         return next(iter(networks.values())).get("IPAddress")
 
-    def _resolve_host_port(self, info: dict[str, Any], *, runtime_port: int) -> tuple[str, int] | None:
+    def _resolve_host_port(
+        self,
+        info: dict[str, Any],
+        *,
+        runtime_port: int,
+    ) -> tuple[str, int] | None:
         ports = info.get("NetworkSettings", {}).get("Ports", {})
         key = f"{runtime_port}/tcp"
         bindings = ports.get(key)
@@ -135,7 +140,7 @@ class DockerDriver(Driver):
         self,
         session: "Session",
         profile: "ProfileConfig",
-        workspace: "Cargo",
+        cargo: "Cargo",
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
@@ -153,7 +158,7 @@ class DockerDriver(Driver):
             "bay.owner": "default",  # TODO: get from session/sandbox
             "bay.sandbox_id": session.sandbox_id,
             "bay.session_id": session.id,
-            "bay.cargo_id": workspace.id,
+            "bay.cargo_id": cargo.id,
             "bay.profile_id": profile.id,
             "bay.runtime_port": str(runtime_port),
             # Labels for GC OrphanContainerGC Strict mode
@@ -181,7 +186,7 @@ class DockerDriver(Driver):
             "docker.create",
             session_id=session.id,
             image=profile.image,
-            workspace=workspace.driver_ref,
+            cargo=cargo.driver_ref,
             runtime_port=runtime_port,
             connect_mode=self._connect_mode,
             network=self._network,
@@ -199,7 +204,7 @@ class DockerDriver(Driver):
                 )
 
         host_config: dict[str, Any] = {
-            "Binds": [f"{workspace.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
+            "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
             "Memory": mem_limit,
             "NanoCpus": nano_cpus,
             "PidsLimit": 256,

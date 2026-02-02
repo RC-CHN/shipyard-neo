@@ -12,8 +12,8 @@ from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInst
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
-    from app.models.session import Session
     from app.models.cargo import Cargo
+    from app.models.session import Session
 
 
 @dataclass
@@ -38,7 +38,7 @@ class FakeVolumeState:
 
 class FakeDriver(Driver):
     """Fake driver for unit testing.
-    
+
     Records all method calls for assertion and provides controlled responses.
     """
 
@@ -46,7 +46,7 @@ class FakeDriver(Driver):
         self._containers: dict[str, FakeContainerState] = {}
         self._volumes: dict[str, FakeVolumeState] = {}
         self._next_container_id = 1
-        
+
         # Call counters for assertions
         self.create_calls: list[dict[str, Any]] = []
         self.start_calls: list[dict[str, Any]] = []
@@ -66,44 +66,44 @@ class FakeDriver(Driver):
         """Create a fake container."""
         container_id = f"fake-container-{self._next_container_id}"
         self._next_container_id += 1
-        
+
         self._containers[container_id] = FakeContainerState(
             container_id=container_id,
             session_id=session.id,
             profile_id=profile.id,
-            cargo_id=workspace.id,
+            cargo_id=cargo.id,
             status=ContainerStatus.CREATED,
         )
-        
+
         self.create_calls.append({
             "session_id": session.id,
             "profile_id": profile.id,
-            "cargo_id": workspace.id,
+            "cargo_id": cargo.id,
             "labels": labels,
         })
-        
+
         return container_id
 
     async def start(self, container_id: str, *, runtime_port: int) -> str:
         """Start a fake container and return endpoint."""
         if container_id not in self._containers:
             raise ValueError(f"Container not found: {container_id}")
-        
+
         container = self._containers[container_id]
         container.status = ContainerStatus.RUNNING
         container.endpoint = f"http://fake-host:{runtime_port}"
-        
+
         self.start_calls.append({
             "container_id": container_id,
             "runtime_port": runtime_port,
         })
-        
+
         return container.endpoint
 
     async def stop(self, container_id: str) -> None:
         """Stop a fake container."""
         self.stop_calls.append(container_id)
-        
+
         if container_id in self._containers:
             self._containers[container_id].status = ContainerStatus.EXITED
             self._containers[container_id].endpoint = None
@@ -111,7 +111,7 @@ class FakeDriver(Driver):
     async def destroy(self, container_id: str) -> None:
         """Destroy a fake container."""
         self.destroy_calls.append(container_id)
-        
+
         if container_id in self._containers:
             del self._containers[container_id]
 
@@ -122,7 +122,7 @@ class FakeDriver(Driver):
                 container_id=container_id,
                 status=ContainerStatus.NOT_FOUND,
             )
-        
+
         container = self._containers[container_id]
         return ContainerInfo(
             container_id=container_id,
@@ -137,18 +137,18 @@ class FakeDriver(Driver):
     async def create_volume(self, name: str, labels: dict[str, str] | None = None) -> str:
         """Create a fake volume."""
         self._volumes[name] = FakeVolumeState(name=name, labels=labels or {})
-        
+
         self.create_volume_calls.append({
             "name": name,
             "labels": labels,
         })
-        
+
         return name
 
     async def delete_volume(self, name: str) -> None:
         """Delete a fake volume."""
         self.delete_volume_calls.append(name)
-        
+
         if name in self._volumes:
             del self._volumes[name]
 

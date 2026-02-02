@@ -39,13 +39,13 @@ class CargoManager:
         size_limit_mb: int | None = None,
     ) -> Cargo:
         """Create a new cargo.
-        
+
         Args:
             owner: Owner identifier
             managed: If True, this cargo is managed by a sandbox
             managed_by_sandbox_id: Sandbox ID that manages this cargo
             size_limit_mb: Size limit in MB (defaults to config)
-            
+
         Returns:
             Created cargo
         """
@@ -90,14 +90,14 @@ class CargoManager:
 
     async def get(self, cargo_id: str, owner: str) -> Cargo:
         """Get cargo by ID.
-        
+
         Args:
             cargo_id: Cargo ID
             owner: Owner identifier (for access check)
-            
+
         Returns:
             Cargo if found
-            
+
         Raises:
             NotFoundError: If cargo not found or not visible
         """
@@ -130,13 +130,13 @@ class CargoManager:
         cursor: str | None = None,
     ) -> tuple[list[Cargo], str | None]:
         """List cargos for owner.
-        
+
         Args:
             owner: Owner identifier
             managed: Filter by managed status (None = all, True = managed only, False = external only)
             limit: Maximum number of results
             cursor: Pagination cursor
-            
+
         Returns:
             Tuple of (cargos, next_cursor)
         """
