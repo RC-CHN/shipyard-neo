@@ -2,7 +2,7 @@
 
 > 目标：把 [`TODO.md`](TODO.md:1)、[`plans/phase-1/gc-design.md`](plans/phase-1/gc-design.md:1)、[`plans/phase-1/phase-1.md`](plans/phase-1/phase-1.md:1) 的 GC 设想，结合当前 Bay 的真实实现，落成一份 Phase 1.5 可执行的实现计划。
 >
-> Phase 1.5 范围（已确认）：**IdleSessionGC + ExpiredSandboxGC + OrphanWorkspaceGC + OrphanContainerGC**，并且 **启动时 run_once** + **后台定时调度** 都要支持。
+> Phase 1.5 范围（已确认）：**IdleSessionGC + ExpiredSandboxGC + OrphanCargoGC + OrphanContainerGC**，并且 **启动时 run_once** + **后台定时调度** 都要支持。
 >
 > 重要约束（你已强调）：Bay 常部署在“很多容器混跑”的自托管宿主机上；GC 必须 **宁可漏删也不可误删**。
 >
@@ -27,8 +27,8 @@
 3) **过期 sandbox 的残留资源**：sandbox TTL 到期后，如果没有显式 delete，会一直占用 volume/DB 记录。
 - 代码事实：[`python.Sandbox.is_expired`](pkgs/bay/app/models/sandbox.py:76) 只提供状态计算；没有后台清理。
 
-4) **孤儿 managed workspace**：managed workspace 绑定 sandbox 生命周期，但级联删除失败/部分失败会残留 volume 或 DB 记录。
-- 代码事实：[`python.WorkspaceManager.delete()`](pkgs/bay/app/managers/workspace/workspace.py:158) 先删 volume 再删 DB；若 volume 删除失败会抛异常并保留 DB；若 DB 删除失败可能导致 volume 已删但 DB 残留（或反过来）。
+4) **孤儿 managed cargo**：managed cargo 绑定 sandbox 生命周期，但级联删除失败/部分失败会残留 volume 或 DB 记录。
+- 代码事实：[`python.CargoManager.delete()`](pkgs/bay/app/managers/cargo/cargo.py:158) 先删 volume 再删 DB；若 volume 删除失败会抛异常并保留 DB；若 DB 删除失败可能导致 volume 已删但 DB 残留（或反过来）。
 
 ---
 
@@ -36,7 +36,7 @@
 
 ### 2.1 现有 Manager 语义应复用
 
-- Sandbox 删除语义（destroy sessions + soft delete sandbox + 级联删 managed workspace）已经封装在 [`python.SandboxManager.delete()`](pkgs/bay/app/managers/sandbox/sandbox.py:381)。
+- Sandbox 删除语义（destroy sessions + soft delete sandbox + 级联删 managed cargo）已经封装在 [`python.SandboxManager.delete()`](pkgs/bay/app/managers/sandbox/sandbox.py:381)。
 - Session stop/destroy 已分离：
   - [`python.SessionManager.stop()`](pkgs/bay/app/managers/session/session.py:241) 释放算力但保留 session 记录
   - [`python.SessionManager.destroy()`](pkgs/bay/app/managers/session/session.py:261) 删除运行时实例并硬删 session 记录
@@ -189,36 +189,36 @@ OrphanContainerGC 本质是“列出所有 Bay 管理的运行时实例 → 与 
 - 为避免与 [`python.SandboxManager.ensure_running()`](pkgs/bay/app/managers/sandbox/sandbox.py:211) 并发，建议在 GC 侧或 manager 内部确保 `delete()` 也使用同一把 sandbox lock（见上文 IdleSessionGC 竞态策略补充）。
 
 理由：
-- delete 已封装“destroy sessions + 软删除 sandbox + managed workspace 级联删除”。
-- Phase 1.5 的目标是尽快回收资源（算力 + workspace/volume），并保持改动面最小。
+- delete 已封装“destroy sessions + 软删除 sandbox + managed cargo 级联删除”。
+- Phase 1.5 的目标是尽快回收资源（算力 + cargo/volume），并保持改动面最小。
 
 **对外语义（已确认）：`EXPIRED → DELETED` 是允许且预期的状态跃迁**
 - 在 `expires_at` 过期到 ExpiredSandboxGC 下一次扫描运行之间，sandbox 可能短暂呈现 `EXPIRED`（由 [`python.Sandbox.compute_status()`](pkgs/bay/app/models/sandbox.py:83) 的 `expires_at < now` 判定产生）。
 - 一旦 ExpiredSandboxGC 运行并调用 delete 写入 `deleted_at`，由于 `compute_status` 优先判断 `deleted_at`，对外将呈现 `DELETED`。
 - 该行为不引入额外 grace 机制；客户端应将 `DELETED` 视为终态（或至少是“已回收/不可再用”终态）。
 
-### 4.3 OrphanWorkspaceGC（清理孤儿 managed workspace）
+### 4.3 OrphanCargoGC（清理孤儿 managed cargo）
 
 **触发条件（DB 维度）**
-- `workspace.managed == true`
+- `cargo.managed == true`
 - 且满足任一：
-  - `workspace.managed_by_sandbox_id is null`
+  - `cargo.managed_by_sandbox_id is null`
   - 或 join sandbox 后 `sandbox.deleted_at is not null`
 
-字段来源：[`python.Workspace.managed`](pkgs/bay/app/models/workspace.py:32)、[`python.Workspace.managed_by_sandbox_id`](pkgs/bay/app/models/workspace.py:33)
+字段来源：[`python.Cargo.managed`](pkgs/bay/app/models/cargo.py:32)、[`python.Cargo.managed_by_sandbox_id`](pkgs/bay/app/models/cargo.py:33)
 
-**核心行为（建议：复用 WorkspaceManager 的 internal delete；已确认）**
+**核心行为（建议：复用 CargoManager 的 internal delete；已确认）**
 
-- 对命中的 workspace：通过 WorkspaceManager 的 internal API 执行删除：
-  1) `driver.delete_volume(workspace.driver_ref)`
-  2) `db.delete(workspace)`
+- 对命中的 cargo：通过 CargoManager 的 internal API 执行删除：
+  1) `driver.delete_volume(cargo.driver_ref)`
+  2) `db.delete(cargo)`
 
-**已确认实现方式：在 WorkspaceManager 增加 internal delete**
+**已确认实现方式：在 CargoManager 增加 internal delete**
 
-- 在 [`python.WorkspaceManager`](pkgs/bay/app/managers/workspace/workspace.py:23) 增加 internal 方法（示例命名）：
-  - `delete_internal_by_model(workspace: Workspace) -> None`
+- 在 [`python.CargoManager`](pkgs/bay/app/managers/cargo/cargo.py:23) 增加 internal 方法（示例命名）：
+  - `delete_internal_by_model(cargo: Cargo) -> None`
   - 语义：不做 owner 校验、不做 managed 冲突校验；仅执行“volume 删除 + DB 删除”。
-- OrphanWorkspaceGC 只负责“找出 orphan 集合”，然后对每个 workspace 调 internal delete。
+- OrphanCargoGC 只负责“找出 orphan 集合”，然后对每个 cargo 调 internal delete。
 
 **选择原因（已记录）**
 - 删除语义集中：volume/DB 删除顺序、not_found 容忍、日志字段统一在 manager。
@@ -274,7 +274,7 @@ Phase 1.5 推荐：scheduler 用单个后台循环，按固定顺序依次执行
 
 1. IdleSessionGC（先释放算力）
 2. ExpiredSandboxGC（再按 TTL 清理整套资源）
-3. OrphanWorkspaceGC（兜底清理 managed workspace 残留）
+3. OrphanCargoGC（兜底清理 managed cargo 残留）
 4. OrphanContainerGC（最后兜底清理运行时残留；严格防误删）
 
 ### 5.3 错误处理

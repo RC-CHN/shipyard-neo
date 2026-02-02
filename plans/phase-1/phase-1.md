@@ -35,7 +35,7 @@
 - DB（SQLite async）：[`pkgs/bay/app/db/session.py`](pkgs/bay/app/db/session.py:1)
 - Models：
   - Sandbox：[`pkgs/bay/app/models/sandbox.py`](pkgs/bay/app/models/sandbox.py:1)
-  - Workspace：[`pkgs/bay/app/models/workspace.py`](pkgs/bay/app/models/workspace.py:1)
+  - Cargo：[`pkgs/bay/app/models/workspace.py`](pkgs/bay/app/models/workspace.py:1)
   - Session：[`pkgs/bay/app/models/session.py`](pkgs/bay/app/models/session.py:1)
   - IdempotencyKey：[`pkgs/bay/app/models/idempotency.py`](pkgs/bay/app/models/idempotency.py:1)
 - Driver 抽象 + DockerDriver：
@@ -59,7 +59,7 @@
 1. `POST /v1/sandboxes` 创建 sandbox（lazy session，初始 `status=idle`）
 2. `POST /v1/sandboxes/{id}/python/exec`
    - Bay 触发 `ensure_running`
-   - DockerDriver 创建并启动 ship 容器 + workspace volume 挂载
+   - DockerDriver 创建并启动 ship 容器 + cargo volume 挂载
    - 通过 **host_port 端口映射** 获取 endpoint（`http://127.0.0.1:<HostPort>`）
    - 调用 ship `/ipython/exec` 成功返回
 
@@ -150,7 +150,7 @@
 
 - K8sDriver（Phase 2）
 - 对外暴露 Session
-- 多 sandbox 共享 workspace
+- 多 sandbox 共享 cargo
 
 ## 7. 下一步执行顺序
 

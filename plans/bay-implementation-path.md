@@ -12,7 +12,7 @@
 ### 0.1 MVP 目标（必须）
 
 - 以 `Sandbox` 为唯一对外句柄（稳定 `sandbox_id`），对外不暴露 session_id。
-- Bay 能通过 DockerDriver 启动 Ship 容器并挂载 workspace 到固定路径 `/workspace`。
+- Bay 能通过 DockerDriver 启动 Ship 容器并挂载 cargo 到固定路径 `/workspace`。
 - Bay 支持 `/v1/sandboxes` 创建、查询、列表，支持 `keepalive`、`stop`（只回收算力）、`delete`（彻底销毁）。
 - Bay 能路由至少 1 条能力链路（建议 `python/exec`）并在启动后通过 Ship `GET /meta` 做运行时契约握手校验。
 
@@ -20,8 +20,8 @@
 
 1. `POST /v1/sandboxes`（lazy session）
 2. `POST /v1/sandboxes/{id}/python/exec`（触发 ensure_running → 创建容器 → 调 Ship `GET /meta` → 执行）
-3. `POST /v1/sandboxes/{id}/stop`（停掉该 sandbox 下全部运行实例，保留 workspace）
-4. `DELETE /v1/sandboxes/{id}`（彻底销毁；managed workspace 级联删除）
+3. `POST /v1/sandboxes/{id}/stop`（停掉该 sandbox 下全部运行实例，保留 cargo）
+4. `DELETE /v1/sandboxes/{id}`（彻底销毁；managed cargo 级联删除）
 
 ## 1. Phase 1 前置决策（已拍板）
 
@@ -37,7 +37,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 
 ### 1.2 存储后端与挂载路径
 
-- Workspace 后端：Docker Volume
+- Cargo 后端：Docker Volume
 - 容器内挂载路径：固定为 `/workspace`
 - API 文件路径：必须是相对路径（相对 `/workspace`），拒绝绝对路径与 `../`
 
@@ -47,7 +47,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 
 - Phase 1 采用“软配额”：
   - 在写入/上传时基于 `size_limit_mb` 做拦截
-  - 定期统计 workspace 目录/volume 用量
+  - 定期统计 cargo 目录/volume 用量
 - Phase 1 不做底层硬盘配额（Docker Volume 不依赖底层 FS quota）
 
 ### 1.4 元数据与无状态化
@@ -132,7 +132,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 - stop/destroy/status/logs
 
 必须保证：
-- workspace volume 挂载到 `/workspace`
+- cargo volume 挂载到 `/workspace`
 - 所有资源带 label：owner/sandbox_id/session_id/workspace_id/profile_id
 
 ### 4.2 SessionManager
@@ -143,7 +143,7 @@ Phase 1 默认实现 DockerDriver（A/B）；K8sDriver 仅保留接口占位。
 - 若已有可用 session → 返回
 - 否则创建 session 记录 → 调 DockerDriver 创建/启动 → 更新 endpoint
 - 启动后调用 Ship `GET /meta` 做握手校验：
-  - 校验 `workspace.mount_path == /workspace`
+  - 校验 `cargo.mount_path == /workspace`
   - 校验 capabilities ⊇ profile.capabilities
   - 校验 `api_version`
 
@@ -173,7 +173,7 @@ Ship 已支持 `GET /meta`：[`pkgs/ship/app/main.py`](pkgs/ship/app/main.py:62)
 5. `/v1/sandboxes/{id}/stop`
 6. `/v1/sandboxes/{id}` delete
 7. Files/Shell 相关端点逐步补全
-8. Workspace API（高级/管理面）用 feature flag 控制对外暴露
+8. Cargo API（高级/管理面）用 feature flag 控制对外暴露
 
 ## 6. 测试策略
 
@@ -191,7 +191,7 @@ Ship 已支持 `GET /meta`：[`pkgs/ship/app/main.py`](pkgs/ship/app/main.py:62)
 - Milestone 2：DockerDriver + WorkspaceManager（volume）+ SessionManager.ensure_running
 - Milestone 3：Sandbox API（create/get/list/stop/delete）+ /python/exec 最小链路
 - Milestone 4：Ship `GET /meta` 握手校验接入（已在 Ship 侧落地），完善错误模型/幂等键
-- Milestone 5：扩展到 filesystem/shell 能力 + workspace 管理面（可选）
+- Milestone 5：扩展到 filesystem/shell 能力 + cargo 管理面（可选）
 
 ---
 

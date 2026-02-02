@@ -16,15 +16,15 @@
 1.  **容器被停止** (`docker stop`)
 2.  IPython Kernel 终止 → **变量丢失**
 3.  Sandbox 状态变为 `idle`, `current_session_id` 设为 `None`
-4.  **Workspace Volume 保留** → 文件仍在
+4.  **Cargo Volume 保留** → 文件仍在
 
 当 stop 后再次执行代码时：
 1.  `ensure_running()` 发现 `current_session_id is None`
 2.  **创建新的 Session 记录**
-3.  **创建新的 Docker 容器** (挂载同一 Workspace Volume)
+3.  **创建新的 Docker 容器** (挂载同一 Cargo Volume)
 4.  新的 IPython Kernel 启动
 
-> **设计意图**: `stop` 意味着"释放计算资源"，每次 resume 都是全新的容器。这提供了干净的运行环境，避免旧容器的潜在状态问题。文件通过 Workspace Volume 持久化，变量/内存状态不持久化。
+> **设计意图**: `stop` 意味着"释放计算资源"，每次 resume 都是全新的容器。这提供了干净的运行环境，避免旧容器的潜在状态问题。文件通过 Cargo Volume 持久化，变量/内存状态不持久化。
 
 ### 行为序列
 
@@ -34,7 +34,7 @@
 4.  **执行代码 (第2轮)**: `POST /python/exec` - `df['revenue'].sum()` -> 返回总和 (变量 `df` 在同一 Session 内保持)
 5.  **执行代码 (第3轮)**: `POST /python/exec` - `import matplotlib.pyplot as plt; df['revenue'].plot(); plt.savefig('chart.png')` -> 生成图片文件
 6.  **下载结果文件**: `GET /filesystem/download?path=chart.png` -> 获取 PNG 图片二进制内容
-7.  **停止沙箱**: `POST /sandboxes/{id}/stop` -> 状态变为 `idle`，容器停止，Kernel 终止，但 Workspace Volume 保留
+7.  **停止沙箱**: `POST /sandboxes/{id}/stop` -> 状态变为 `idle`，容器停止，Kernel 终止，但 Cargo Volume 保留
 8.  **(用户离开几小时...)**
 9.  **恢复执行 (尝试访问旧变量)**: `POST /python/exec` - `df.head()` -> **失败**: `NameError: name 'df' is not defined` (新容器，新 Kernel，变量丢失)
 10. **恢复执行 (重新加载数据)**: `POST /python/exec` - `import pandas as pd; df = pd.read_csv('sales.csv'); df.head()` -> **成功**: 文件 `sales.csv` 仍然存在
@@ -104,7 +104,7 @@
 2.  **依赖持久化边界**:
     - **持久化**: 安装到 `/workspace/` 内 (如 `pip install --target /workspace/.libs`)
     - **不持久化**: 标准 `pip install` 安装到容器系统目录，stop 后丢失
-3.  **新容器挂载同一 Volume**: stop/resume 后，新容器挂载相同的 Workspace Volume，文件和 `--target` 安装的库都保留
+3.  **新容器挂载同一 Volume**: stop/resume 后，新容器挂载相同的 Cargo Volume，文件和 `--target` 安装的库都保留
 
 ### 行为序列
 
@@ -112,15 +112,15 @@
 2.  **写入依赖文件**: `PUT /filesystem/files` - path: `requirements.txt`, content: `requests==2.31.0`
 3.  **写入代码到嵌套目录**: `PUT /filesystem/files` - path: `src/main.py`, content: `import requests; print(requests.__version__)`
     - Ship 自动创建 `src/` 目录
-4.  **安装依赖到 Workspace 内**: `POST /python/exec` - `import subprocess; subprocess.run(['pip', 'install', '-r', 'requirements.txt', '--target', '/workspace/.libs'], check=True)`
+4.  **安装依赖到 Cargo 内**: `POST /python/exec` - `import subprocess; subprocess.run(['pip', 'install', '-r', 'requirements.txt', '--target', '/workspace/.libs'], check=True)`
     - 库安装到 `/workspace/.libs/` (Volume 内，会持久化)
 5.  **执行代码 (使用安装的库)**: `POST /python/exec` - `import sys; sys.path.insert(0, '/workspace/.libs'); exec(open('src/main.py').read())`
     - 输出 `2.31.0`
 6.  **停止沙箱**: `POST /sandboxes/{id}/stop`
     - 容器停止，Kernel 终止
-    - Workspace Volume 保留 (包含 `requirements.txt`, `src/main.py`, `.libs/`)
+    - Cargo Volume 保留 (包含 `requirements.txt`, `src/main.py`, `.libs/`)
 7.  **恢复执行 (验证依赖持久化)**: `POST /python/exec` - `import sys; sys.path.insert(0, '/workspace/.libs'); import requests; print(requests.__version__)`
-    - **新容器**挂载同一 Workspace Volume
+    - **新容器**挂载同一 Cargo Volume
     - `.libs/` 仍存在
     - 输出 `2.31.0`
 8.  **删除沙箱**: `DELETE /v1/sandboxes/{id}` -> 204
@@ -144,7 +144,7 @@
 
 ### 架构行为说明
 
-1.  **懒加载**: `POST /v1/sandboxes` 只创建 Sandbox 记录和 Workspace Volume，**不启动容器**
+1.  **懒加载**: `POST /v1/sandboxes` 只创建 Sandbox 记录和 Cargo Volume，**不启动容器**
 2.  **冷启动**: 首次 `python/exec` 触发完整启动流程:
     - 创建 Session → 创建容器 → 启动容器 → 等待 Ship 就绪 → 执行代码
 3.  **冷启动延迟**: 
@@ -164,7 +164,7 @@
     - 返回 `success=true`, output: `42\n`
 3.  **删除沙箱**: `DELETE /v1/sandboxes/{id}` -> 204
     - 容器被删除
-    - Workspace Volume 被删除
+    - Cargo Volume 被删除
     - 后续 GET 返回 404
 
 ### 测试要点
@@ -489,7 +489,7 @@ Shipyard 采用**纵深防御**策略：
     - 预期: `success=true`, output: `/workspace`
 
 21. **Shell 检查挂载点**: `POST /shell/exec`
-    - body: `{"command": "mount | grep /workspace || echo 'workspace mount'"}`
+    - body: `{"command": "mount | grep /workspace || echo 'cargo mount'"}`
     - 预期: `success=true`
     - output 显示 /workspace 相关的挂载信息
 
@@ -1069,8 +1069,8 @@ Shipyard 采用**纵深防御**策略：
 **目标**: 在一个“长且复杂”的真实工作流中，同时覆盖 4 个 GC 任务的关键语义与边界：
 
 - `IdleSessionGC`：空闲回收 compute（destroy sessions），且后续 `ensure_running` 可透明重建
-- `ExpiredSandboxGC`：TTL 到期后 sandbox 应被回收（不可复活），并级联清理 managed workspace
-- `OrphanWorkspaceGC`：异常情况下的 managed workspace 残留兜底清理（volume + DB）
+- `ExpiredSandboxGC`：TTL 到期后 sandbox 应被回收（不可复活），并级联清理 managed cargo
+- `OrphanCargoGC`：异常情况下的 managed cargo 残留兜底清理（volume + DB）
 - `OrphanContainerGC`（strict）：只删除“可信且 DB 无 session”的孤儿容器（防误删）
 
 > 备注：此场景属于 Phase 1.5 GC，但建议补充到 Phase 1 的 workflow scenarios 里作为“长期回归/混沌测试”场景（对外行为仍是 API 组合）。
@@ -1087,15 +1087,15 @@ Shipyard 采用**纵深防御**策略：
    - 用户后续任何 `python/exec`/`shell/exec` 会触发 `ensure_running()` 创建新 session → 透明恢复
 
 3. **ExpiredSandboxGC 的不可逆性**
-   - 一旦 `expires_at < now`，GC 会走 delete 语义：session destroy + sandbox 软删除 + managed workspace 级联删除
+   - 一旦 `expires_at < now`，GC 会走 delete 语义：session destroy + sandbox 软删除 + managed cargo 级联删除
    - 此时用户再调用 `extend_ttl` 应返回 `409 sandbox_expired`（不可复活）
 
 4. **OrphanContainerGC 的 strict 防误删门槛**
    - 只有满足 name 前缀 + 必要 labels + `bay.managed=true` + `bay.instance_id == gc.instance_id` 的容器才会进入 orphan 判定
    - orphan 判定以 DB 为准：`labels["bay.session_id"]` 在 DB 中不存在才会删
 
-5. **OrphanWorkspaceGC 的兜底语义**
-   - managed workspace 发生“部分失败/级联未完成”时，依赖该任务兜底清理
+5. **OrphanCargoGC 的兜底语义**
+   - managed cargo 发生“部分失败/级联未完成”时，依赖该任务兜底清理
 
 ### 行为序列（建议实现为 1 条“长测试”，分 Phase 断言）
 
@@ -1104,11 +1104,11 @@ Shipyard 采用**纵深防御**策略：
 #### Phase A：建立真实工作负载（触发 session/container）
 
 1. 创建 sandbox（带 TTL，例如 120s）：`POST /v1/sandboxes`
-2. 执行 `python/exec` 写入一些文件（例如生成 `data/result.json`），确保容器与 workspace 都已创建
+2. 执行 `python/exec` 写入一些文件（例如生成 `data/result.json`），确保容器与 cargo 都已创建
 3. 记录 `sandbox_id`、`workspace_id`，并通过 `GET /v1/sandboxes/{id}` 确认 `status` 从 `idle` 进入 `ready/starting`
 
 **断言**：
-- sandbox 可执行、workspace 中文件存在
+- sandbox 可执行、cargo 中文件存在
 
 #### Phase B：IdleSessionGC 回收（可恢复性）
 
@@ -1120,7 +1120,7 @@ Shipyard 采用**纵深防御**策略：
 **断言**：
 - `status == idle` 且 `idle_expires_at == null`（说明 compute 已被回收）
 - 再次调用 `python/exec` 仍成功（说明可透明重建 session）
-- workspace 中之前写入的文件仍存在（volume 持久化）
+- cargo 中之前写入的文件仍存在（volume 持久化）
 
 #### Phase C：OrphanContainerGC（strict）清理“可信 orphan”
 
@@ -1132,7 +1132,7 @@ Shipyard 采用**纵深防御**策略：
 - 该容器会被删除
 - 同时再制造 1 个“不可信容器”（缺少 label 或 instance_id 不匹配），断言不会被删除（防误删）
 
-#### Phase D：ExpiredSandboxGC 回收（不可复活 + workspace 清理）
+#### Phase D：ExpiredSandboxGC 回收（不可复活 + cargo 清理）
 
 9. 创建另一个 sandbox（TTL 很短，例如 1s）
 10. 等待 TTL 过期
@@ -1140,35 +1140,35 @@ Shipyard 采用**纵深防御**策略：
 
 **断言**：
 - `GET /v1/sandboxes/{id}` 返回 404（软删除后不可见）
-- 对应 managed workspace volume 被删除（`docker volume inspect` 不存在）
+- 对应 managed cargo volume 被删除（`docker volume inspect` 不存在）
 - `POST /extend_ttl` 返回 `409 sandbox_expired`（不可复活）
 
-#### Phase E：OrphanWorkspaceGC 兜底清理
+#### Phase E：OrphanCargoGC 兜底清理
 
-12. 制造“孤儿 managed workspace”（建议方式）：
-   - 创建 sandbox → 得到 workspace
-   - 再通过 DB 操作把 `workspaces.managed_by_sandbox_id` 置空，或将对应 sandbox 标记 deleted，使 workspace 满足 OrphanWorkspaceGC 的触发条件
+12. 制造“孤儿 managed cargo”（建议方式）：
+   - 创建 sandbox → 得到 cargo
+   - 再通过 DB 操作把 `workspaces.managed_by_sandbox_id` 置空，或将对应 sandbox 标记 deleted，使 cargo 满足 OrphanCargoGC 的触发条件
 13. 等待 GC 周期
 
 **断言**：
-- 对应 workspace volume 被删除
-- workspace DB 记录被删除
+- 对应 cargo volume 被删除
+- cargo DB 记录被删除
 
 ### 测试要点（为何它是“长复杂工作流”）
 
 | 覆盖面 | 关键点 | 预期 |
 |---|---|---|
-| Idle 回收 | 回收 compute 不丢数据 | session/container 被回收，但 workspace 文件保留，后续 exec 可恢复 |
-| TTL 回收 | TTL 到期不可复活 | sandbox 被回收，extend_ttl 409，workspace 被清理 |
+| Idle 回收 | 回收 compute 不丢数据 | session/container 被回收，但 cargo 文件保留，后续 exec 可恢复 |
+| TTL 回收 | TTL 到期不可复活 | sandbox 被回收，extend_ttl 409，cargo 被清理 |
 | Orphan 容器兜底 | strict 防误删 | 可信 orphan 会删，不可信不会删 |
-| Orphan workspace 兜底 | volume/DB 一致性 | orphan workspace 最终被清理 |
+| Orphan cargo 兜底 | volume/DB 一致性 | orphan cargo 最终被清理 |
 
 ### 建议落地到测试代码的位置
 
 - 作为单独的 E2E 测试模块：`pkgs/bay/tests/integration/test_gc_workflow_scenario.py`
 - 或者把它拆成 2~3 条 E2E 测试（更稳）：
   - “IdleSessionGC 可恢复”
-  - “ExpiredSandboxGC 不可复活 + workspace 清理”
+  - “ExpiredSandboxGC 不可复活 + cargo 清理”
   - “OrphanContainerGC strict 防误删”
 
 ---

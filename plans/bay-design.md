@@ -7,7 +7,7 @@
 ### 1.1 核心原则
 
 - **1 Session : 1 Container**：容器是一次性计算载体，销毁即清理
-- **计算易变，数据稳定**：持久化依赖独立的 Workspace，不依赖容器
+- **计算易变，数据稳定**：持久化依赖独立的 Cargo，不依赖容器
 - **不直连底层容器**：外部世界只连 Bay，不直接访问 Ship 容器
 - **多协议统一**：REST API 为主，后续可扩展 MCP/WebSocket
 
@@ -15,7 +15,7 @@
 
 | 层级 | 职责 | 位置 |
 |:--|:--|:--|
-| **Bay (编排层)** | 生命周期管理、鉴权、路由、Workspace 管理 | 独立服务 |
+| **Bay (编排层)** | 生命周期管理、鉴权、路由、Cargo 管理 | 独立服务 |
 | **Ship (运行时)** | 文件/Shell/IPython 执行能力 | 容器内 Agent |
 
 ```mermaid
@@ -26,14 +26,14 @@ flowchart LR
     Driver --> K8s[Kubernetes]
     Bay --> Ship1[Ship Container 1]
     Bay --> Ship2[Ship Container 2]
-    Bay --> Workspace[(Workspace Volume)]
-    Ship1 --> Workspace
-    Ship2 --> Workspace
+    Bay --> Cargo[(Cargo Volume)]
+    Ship1 --> Cargo
+    Ship2 --> Cargo
 ```
 
 ## 2. 核心概念模型
 
-### 2.1 Workspace（数据层 - 持久化）
+### 2.1 Cargo（数据层 - 持久化）
 
 - **本质**：Docker Volume / K8s PVC
 - **生命周期**：长于容器、长于 Session
@@ -42,7 +42,7 @@ flowchart LR
 
 #### 2.1.1 统一挂载路径（强约束）
 
-为降低路径映射复杂度、减少安全风险，约定所有运行时容器把 workspace 统一挂载到固定路径：
+为降低路径映射复杂度、减少安全风险，约定所有运行时容器把 cargo 统一挂载到固定路径：
 
 - `WORKSPACE_MOUNT_PATH = /workspace`
 - API 与运行时能力（filesystem/shell/python）中的所有文件路径参数必须是**相对路径**（相对 `/workspace`）
@@ -52,13 +52,13 @@ flowchart LR
 > - “运行时访问路径”始终是容器内 `/workspace/...`
 > - “宿主/存储后端路径”仅用于 Bay 管理与直读写实现，不暴露给运行时与客户端
 
-> Workspace 分两类，解决“隐式创建 + 删除语义”问题：
+> Cargo 分两类，解决“隐式创建 + 删除语义”问题：
 > - `managed`：由 `POST /sandboxes` 隐式创建，默认用于该 Sandbox；当 Sandbox 被彻底销毁时可级联删除。
 > - `external`：由 `POST /workspaces` 显式创建/导入；**永不**被 Sandbox 的销毁动作级联删除。
 
 ```python
 # 数据模型
-class Workspace:
+class Cargo:
     id: str                    # 唯一标识
     owner: str                 # 所属租户
     path: str                  # 存储路径（宿主/后端位置，不对外暴露）
@@ -103,7 +103,7 @@ class Profile:
 ```python
 class Session:
     id: str                    # 唯一标识
-    workspace_id: str          # 关联的 Workspace
+    workspace_id: str          # 关联的 Cargo
     profile_id: str            # 使用的 Profile
     status: SessionStatus      # pending/starting/running/stopped/failed
     container_id: str | None   # Docker Container ID / K8s Pod Name
@@ -129,7 +129,7 @@ class SessionStatus(Enum):
   - 到期后 Sandbox 进入 `expired`，不可再通过 `ensure_running` 自动恢复执行能力。
   - 允许“不过期”的 Sandbox：`ttl = null` 或 `ttl = 0` 表示无限期（仅建议给内部/高级用户），但需要配额/上限与管理员清理策略兜底。
 - `idle_timeout`：**Session idle 回收（软回收）**
-  - 仅回收 `Sandbox.current_session`（释放算力），Sandbox 与 Workspace 仍存在。
+  - 仅回收 `Sandbox.current_session`（释放算力），Sandbox 与 Cargo 仍存在。
   - 下次调用 `POST /sandboxes/{sandbox_id}/...` 时由 Bay `ensure_running` 自动重建 Session。
 - `keepalive`：**仅延长 idle，不改变 ttl**
   - `POST /sandboxes/{sandbox_id}/keepalive` 只重置/延长 `idle_expires_at`（如果当前没有 session，建议不隐式启动算力）。
@@ -141,12 +141,12 @@ class SessionStatus(Enum):
 ### 2.4 Sandbox（对外聚合概念）
 
 - **对外**：用户只关心"一个 Sandbox 能干啥"，并希望有一个**稳定可引用**的 ID
-- **对内**：Sandbox = Workspace + Profile + (可替换) Session + Capabilities
+- **对内**：Sandbox = Cargo + Profile + (可替换) Session + Capabilities
 
 ```python
 class Sandbox:
     sandbox_id: str             # 稳定对外句柄（不等于 Session.id）
-    workspace: Workspace
+    cargo: Cargo
     profile: Profile
 
     # 运行实例（可被回收/重建）
@@ -168,9 +168,9 @@ class Sandbox:
 - **对外唯一必需资源：Sandbox**
   - 客户端/SDK/LLM Agent 只需要保存 `sandbox_id` 并通过它调用能力。
   - `Session` **不对外暴露**，仅作为后端运行实例；回收/重建不应破坏对外引用。
-- **Workspace：可选可见资源（高级/管理面）**
-  - 普通使用路径不要求调用方理解或直接操作 Workspace。
-  - 若开放 Workspace API，建议作为更高权限 scope 的“数据面能力”（导入导出/离线编辑/资产管理），避免与 Sandbox 主流程耦合。
+- **Cargo：可选可见资源（高级/管理面）**
+  - 普通使用路径不要求调用方理解或直接操作 Cargo。
+  - 若开放 Cargo API，建议作为更高权限 scope 的“数据面能力”（导入导出/离线编辑/资产管理），避免与 Sandbox 主流程耦合。
 
 #### 2.4.2 Session 替换语义（透明恢复）
 
@@ -186,14 +186,14 @@ class Sandbox:
 
 - Driver **不承载业务策略**：不负责鉴权、回收策略、重试/熔断、审计、限流、配额等。
 - Driver 仅负责把 Manager 产出的“声明式规格”落到具体后端（Docker/K8s），例如：
-  - 挂载（workspace volume）、网络、labels/annotations、资源限制、环境变量等。
+  - 挂载（cargo volume）、网络、labels/annotations、资源限制、环境变量等。
 
 > 这样能保证后端可替换：更换 DockerDriver/K8sDriver 不需要把业务策略复制一遍。
 
 ```python
 class Driver(ABC):
     @abstractmethod
-    async def create(self, session: Session, profile: Profile, workspace: Workspace) -> str:
+    async def create(self, session: Session, profile: Profile, cargo: Cargo) -> str:
         """创建容器，返回 container_id"""
     
     @abstractmethod
@@ -230,14 +230,14 @@ class K8sDriver(Driver):
 
 - 鉴权、Owner/租户隔离
 - Session 生命周期（懒启动、Keepalive、空闲回收）
-- Workspace 管理（创建、配额、直接文件操作）
+- Cargo 管理（创建、配额、直接文件操作）
 - Capability Router（把请求路由到对应 Ship）
 - 安全策略
 - **元数据存储与一致性（关键）**：保证 Bay 重启/并发/失败下的幂等与可恢复
 
 #### 3.2.1 元数据存储（DB）与 ORM 适配
 
-- Bay 需要一个数据库作为 **source of truth** 来持久化 `Sandbox/Session/Workspace` 元数据（状态、关联关系、版本号等）。
+- Bay 需要一个数据库作为 **source of truth** 来持久化 `Sandbox/Session/Cargo` 元数据（状态、关联关系、版本号等）。
 - 目标：Phase 1/2 统一使用 ORM 抽象，支持 **SQLite / MySQL / PostgreSQL** 三种后端；暂不引入 etcd/redis 这类分布式组件。
 
 #### 3.2.2 一致性与并发控制原则
@@ -269,11 +269,11 @@ class SessionManager:
     async def keepalive(self, session_id: str) -> None: ...
 
 
-class WorkspaceManager:
-    async def create_workspace(self, owner: str) -> Workspace: ...
-    async def get_workspace(self, workspace_id: str, owner: str) -> Workspace: ...
+class CargoManager:
+    async def create_workspace(self, owner: str) -> Cargo: ...
+    async def get_workspace(self, workspace_id: str, owner: str) -> Cargo: ...
     async def delete_workspace(self, workspace_id: str) -> None: ...
-    async def list_workspaces(self, owner: str) -> list[Workspace]: ...
+    async def list_workspaces(self, owner: str) -> list[Cargo]: ...
     # 直接文件操作（不经过 Ship）
     async def read_file(self, workspace_id: str, path: str) -> bytes: ...
     async def write_file(self, workspace_id: str, path: str, content: bytes) -> None: ...
@@ -310,12 +310,12 @@ class CapabilityRouter:
 
 | 方法 | 路径 | 描述 |
 |:--|:--|:--|
-| `POST` | `/sandboxes` | 创建 Sandbox（隐式创建 Workspace；可懒启动 Session） |
+| `POST` | `/sandboxes` | 创建 Sandbox（隐式创建 Cargo；可懒启动 Session） |
 | `GET` | `/sandboxes` | 列出当前用户的 Sandboxes |
 | `GET` | `/sandboxes/{id}` | 获取 Sandbox 详情（`id` = `sandbox_id`） |
 | `POST` | `/sandboxes/{id}/keepalive` | 保持活跃，重置空闲计时（建议不隐式启动算力） |
-| `POST` | `/sandboxes/{id}/stop` | 仅回收算力：停止并销毁当前运行实例（Session），保留 Sandbox/Workspace |
-| `DELETE` | `/sandboxes/{id}` | 彻底销毁 Sandbox：销毁所有运行实例；若 Workspace 为 `managed` 则**级联删除**，`external` 永不级联删除 |
+| `POST` | `/sandboxes/{id}/stop` | 仅回收算力：停止并销毁当前运行实例（Session），保留 Sandbox/Cargo |
+| `DELETE` | `/sandboxes/{id}` | 彻底销毁 Sandbox：销毁所有运行实例；若 Cargo 为 `managed` 则**级联删除**，`external` 永不级联删除 |
 
 > 约定：对外只暴露 `sandbox_id`，不暴露 `session_id`。能力调用 `POST /sandboxes/{id}/...` 时由 Bay 负责 `ensure_running`，必要时自动重建后端 Session。
 
@@ -356,20 +356,20 @@ class CapabilityRouter:
 | `POST` | `/sandboxes/{id}/python/exec` | 执行 Python 代码 |
 | `GET` | `/sandboxes/{id}/shell/processes` | 列出后台进程 |
 
-### 4.3 Workspace API（可选暴露）
+### 4.3 Cargo API（可选暴露）
 
 > 建议定位为高级/管理面能力：普通 SDK/LLM Agent 不必使用；如对外开放，应通过更高权限 scope 控制，并明确与 Sandbox 文件读写的冲突与审计策略。
 >
 > 生命周期规则：
-> - `managed` workspace：由 `POST /sandboxes` 隐式创建；当 `DELETE /sandboxes/{id}` 触发彻底销毁时级联删除。
-> - `external` workspace：显式创建/导入；永不被 sandbox 销毁动作级联删除。
+> - `managed` cargo：由 `POST /sandboxes` 隐式创建；当 `DELETE /sandboxes/{id}` 触发彻底销毁时级联删除。
+> - `external` cargo：显式创建/导入；永不被 sandbox 销毁动作级联删除。
 
 | 方法 | 路径 | 描述 |
 |:--|:--|:--|
-| `POST` | `/workspaces` | 创建独立 Workspace |
-| `GET` | `/workspaces` | 列出 Workspaces |
-| `GET` | `/workspaces/{id}` | 获取 Workspace 详情 |
-| `DELETE` | `/workspaces/{id}` | 删除 Workspace |
+| `POST` | `/workspaces` | 创建独立 Cargo |
+| `GET` | `/workspaces` | 列出 Cargos |
+| `GET` | `/workspaces/{id}` | 获取 Cargo 详情 |
+| `DELETE` | `/workspaces/{id}` | 删除 Cargo |
 | `POST` | `/workspaces/{id}/files/read` | 直接读文件（不启动容器） |
 | `POST` | `/workspaces/{id}/files/write` | 直接写文件（不启动容器） |
 
@@ -392,7 +392,7 @@ class CapabilityRouter:
 ### 5.2 隔离
 
 - **计算隔离**：1 Session = 1 Container
-- **存储隔离**：每个 Workspace 独立 Volume
+- **存储隔离**：每个 Cargo 独立 Volume
 - **网络隔离**：Docker Network / K8s NetworkPolicy
 - **资源限制**：cgroups limits + pids-limit
 
@@ -425,7 +425,7 @@ pkgs/bay/
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── sandbox.py             # SQLModel: sandboxes（含 tombstone）
-│   │   ├── workspace.py           # SQLModel: workspaces（managed/external）
+│   │   ├── cargo.py           # SQLModel: workspaces（managed/external）
 │   │   ├── session.py             # SQLModel: sessions（desired/observed）
 │   │   └── idempotency.py         # SQLModel: idempotency_keys
 │   ├── drivers/
@@ -437,7 +437,7 @@ pkgs/bay/
 │   │   ├── __init__.py
 │   │   ├── sandbox.py             # Sandbox 生命周期（stop/delete/ttl）
 │   │   ├── session.py             # ensure_running + idle 回收 + meta 握手
-│   │   └── workspace.py           # Docker Volume backend + 软配额
+│   │   └── cargo.py           # Docker Volume backend + 软配额
 │   ├── router/
 │   │   ├── __init__.py
 │   │   └── capability.py          # CapabilityRouter（策略 + 路由）
@@ -469,10 +469,10 @@ pkgs/bay/
 ### Phase 1: 核心功能 (MVP)
 
 - [ ] 项目骨架搭建（FastAPI + 依赖）
-- [ ] 模型定义（Workspace, Profile, Session, Sandbox）
+- [ ] 模型定义（Cargo, Profile, Session, Sandbox）
 - [ ] Docker Driver 实现
 - [ ] Session Manager 实现
-- [ ] Workspace Manager 实现（基于 Docker Volume）
+- [ ] Cargo Manager 实现（基于 Docker Volume）
 - [ ] Ship HTTP Client（调用 Ship REST API）
 - [ ] Sandbox API 实现
 - [ ] 基础鉴权（JWT）
@@ -496,7 +496,7 @@ pkgs/bay/
 ### Phase 4: 能力扩展
 
 - [ ] Browser Profile（Playwright）
-- [ ] 多 Workspace 共享
+- [ ] 多 Cargo 共享
 
 ## 8. 与 Ship 的交互
 
@@ -524,7 +524,7 @@ pkgs/bay/
       "git_sha": "..."
     }
   },
-  "workspace": {
+  "cargo": {
     "mount_path": "/workspace"
   },
   "capabilities": {
@@ -601,7 +601,7 @@ profiles:
       - ipython
     idle_timeout: 1800  # 30 分钟
 
-workspace:
+cargo:
   root_path: /var/lib/bay/workspaces
   default_size_limit_mb: 1024
 

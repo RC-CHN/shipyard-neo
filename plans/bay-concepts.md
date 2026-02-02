@@ -5,7 +5,7 @@
 > - 架构方案参见：[plans/bay-design.md](plans/bay-design.md:1)
 > - API 契约参见：[plans/bay-api.md](plans/bay-api.md:1)
 >
-> 关键决策：Bay 在 DB 对 Sandbox 做软删除 tombstone（保留 `deleted_at`/retention），对外 `GET /v1/sandboxes/{id}` 返回 404；用于幂等、审计，以及管理 `managed` workspace 的删除判定。
+> 关键决策：Bay 在 DB 对 Sandbox 做软删除 tombstone（保留 `deleted_at`/retention），对外 `GET /v1/sandboxes/{id}` 返回 404；用于幂等、审计，以及管理 `managed` cargo 的删除判定。
 
 ## 1. 数据概念清单（对外 vs 对内）
 
@@ -17,7 +17,7 @@
 
 ### 1.2 对外可选概念（高级/管理面）
 
-- `Workspace`
+- `Cargo`
   - 数据面资源：用于持久化与跨运行实例共享
   - 默认普通调用方不必直接使用；可能需要更高权限 scope
 
@@ -38,16 +38,16 @@ flowchart TD
   Client[Client] --> BayAPI[Bay REST API]
 
   BayAPI --> Sandbox[Sandbox 逻辑资源]
-  Sandbox --> Workspace[Workspace 数据资源]
+  Sandbox --> Cargo[Cargo 数据资源]
   Sandbox --> Session[Session 运行实例]
   Session --> Runtime[Runtime 类型]
   Session --> Ship[Ship 运行时实现]
-  Ship --> Workspace
+  Ship --> Cargo
 ```
 
-- `Sandbox` 与 `Workspace`
-  - 当前基调：1 sandbox : 1 workspace（降低复杂度）
-  - workspace 负责数据持久化，sandbox 负责对外能力与生命周期编排
+- `Sandbox` 与 `Cargo`
+  - 当前基调：1 sandbox : 1 cargo（降低复杂度）
+  - cargo 负责数据持久化，sandbox 负责对外能力与生命周期编排
 
 - `Sandbox` 与 `Session`
   - session 是可替换的运行实例
@@ -57,17 +57,17 @@ flowchart TD
   - profile 绑定 session 的运行时规格
   - profile 的变更对已存在 sandbox/session 的影响需要版本化或冻结策略（v1 可冻结）
 
-## 3. Workspace 两类（managed vs external）
+## 3. Cargo 两类（managed vs external）
 
 定义参见：[plans/bay-design.md](plans/bay-design.md:36)。
 
-- `managed` workspace
+- `managed` cargo
   - 来源：由 `POST /v1/sandboxes` 隐式创建
   - 绑定：`managed_by_sandbox_id = sandbox_id`
   - 删除策略：当 `DELETE /v1/sandboxes/{id}` 触发“彻底销毁”时 **强制级联删除**（避免孤儿数据与成本泄露）
 
-- `external` workspace
-  - 来源：由 `POST /v1/workspaces` 显式创建/导入
+- `external` cargo
+  - 来源：由 `POST /v1/cargos` 显式创建/导入
   - 删除策略：**永不**被 sandbox 的销毁动作级联删除（避免误删用户资产）
 
 配套 API 语义参见：[plans/bay-api.md](plans/bay-api.md:1)。
@@ -87,13 +87,13 @@ flowchart TD
 - `POST /v1/sandboxes/{id}/stop`
   - 仅回收算力：销毁 session，保留 sandbox/workspace
 - `DELETE /v1/sandboxes/{id}`
-  - 彻底销毁：销毁运行实例；managed workspace 级联删除；external 不级联
+  - 彻底销毁：销毁运行实例；managed cargo 级联删除；external 不级联
 
 ## 5. 职责边界（数据归属与一致性归属）
 
 ### 5.1 Bay（source of truth）
 
-- Bay 必须持久化 `Sandbox/Session/Workspace` 元数据（DB + ORM，支持 SQLite/MySQL/PostgreSQL）
+- Bay 必须持久化 `Sandbox/Session/Cargo` 元数据（DB + ORM，支持 SQLite/MySQL/PostgreSQL）
 - Bay 负责一致性与并发控制（按 sandbox 粒度串行化），以及重启恢复 reconcile
 
 参见：[plans/bay-design.md](plans/bay-design.md:213)。
@@ -114,6 +114,6 @@ flowchart TD
 
 ## 6. v1 暂不做的事（刻意约束）
 
-- 多 sandbox 共享同一 workspace（避免引入引用计数、并发写冲突与复杂权限）
+- 多 sandbox 共享同一 cargo（避免引入引用计数、并发写冲突与复杂权限）
 - 对外暴露 session_id
 - 引入 etcd/redis 等额外分布式依赖（先用 DB 解决一致性与幂等）

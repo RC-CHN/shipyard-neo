@@ -70,7 +70,7 @@
 ### 3.5 GC Tasks
 - **缺口**：`IdleSessionGC._process_sandbox` 结果为 False 的 skip 计数逻辑（当前只覆盖异常）。
 - **缺口**：`ExpiredSandboxGC` 删除级联失败时的错误计数与继续行为。
-- **缺口**：`OrphanWorkspaceGC` `_find_orphans` 返回空列表时计数。
+- **缺口**：`OrphanCargoGC` `_find_orphans` 返回空列表时计数。
 
 建议新增：
 - `test_idle_session_process_returns_false_counts_skipped`
@@ -101,7 +101,7 @@
 ### 3.8 SandboxManager
 - **缺口**：`ensure_running`（如果有）应覆盖：已有 session 复用 / session 状态不一致 / driver 启动失败。
 - **缺口**：`stop()` 对没有 session 的 sandbox 是否稳态（当前覆盖有限）。
-- **缺口**：`delete()` 对 unmanaged workspace 的处理（如果支持）。
+- **缺口**：`delete()` 对 unmanaged cargo 的处理（如果支持）。
 
 建议新增：
 - `test_stop_without_session`

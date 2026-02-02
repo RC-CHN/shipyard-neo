@@ -26,7 +26,7 @@ container_labels = {
     "bay.owner": "default",  # TODO: get from session/sandbox
     "bay.sandbox_id": session.sandbox_id,
     "bay.session_id": session.id,
-    "bay.workspace_id": workspace.id,
+    "bay.workspace_id": cargo.id,
     "bay.profile_id": profile.id,
     "bay.runtime_port": str(runtime_port),
 }
@@ -40,29 +40,29 @@ container_labels = {
 
 ---
 
-### 2. OrphanWorkspaceGC 的 `delete_internal_by_model` 需要考虑 owner 缺失
+### 2. OrphanCargoGC 的 `delete_internal_by_model` 需要考虑 owner 缺失
 
-**问题**：计划 4.3 建议在 [`WorkspaceManager`](../../../pkgs/bay/app/managers/workspace/workspace.py:23) 增加 `delete_internal_by_model(workspace: Workspace)` 方法。
+**问题**：计划 4.3 建议在 [`WorkspaceManager`](../../../pkgs/bay/app/managers/workspace/workspace.py:23) 增加 `delete_internal_by_model(cargo: Cargo)` 方法。
 
-**实际情况**：现有的 [`delete()`](../../../pkgs/bay/app/managers/workspace/workspace.py:158) 方法调用了 `self.get(workspace_id, owner)` 进行 owner 校验。但孤儿 workspace 的 owner 理论上还存在于 `workspace.owner` 字段，只是对应的 sandbox 已被删除。
+**实际情况**：现有的 [`delete()`](../../../pkgs/bay/app/managers/workspace/workspace.py:158) 方法调用了 `self.get(workspace_id, owner)` 进行 owner 校验。但孤儿 cargo 的 owner 理论上还存在于 `cargo.owner` 字段，只是对应的 sandbox 已被删除。
 
 **潜在问题**：
-- 如果 GC 直接传入 `Workspace` 对象，需要确保该对象是从数据库新鲜加载的，而不是 stale 的 detached 对象。
+- 如果 GC 直接传入 `Cargo` 对象，需要确保该对象是从数据库新鲜加载的，而不是 stale 的 detached 对象。
 - 建议方法签名改为 `delete_internal_by_id(workspace_id: str) -> None`，内部重新 fetch 后执行删除。
 
 **建议**：
 ```python
 async def delete_internal(self, workspace_id: str) -> None:
     """Internal delete without owner check. For GC / cascade use only."""
-    workspace = await self.get_by_id(workspace_id)
-    if workspace is None:
+    cargo = await self.get_by_id(workspace_id)
+    if cargo is None:
         return  # Already deleted, idempotent
     
     # Delete volume first (may fail)
-    await self._driver.delete_volume(workspace.driver_ref)
+    await self._driver.delete_volume(cargo.driver_ref)
     
     # Delete DB record
-    await self._db.delete(workspace)
+    await self._db.delete(cargo)
     await self._db.commit()
 ```
 
@@ -252,7 +252,7 @@ class RuntimeInstance:
 6. **四个 GC 任务实现**（按顺序）
    - IdleSessionGC
    - ExpiredSandboxGC
-   - OrphanWorkspaceGC
+   - OrphanCargoGC
    - OrphanContainerGC
 
 7. **FastAPI lifespan 集成**
@@ -312,7 +312,7 @@ T3: GC 执行 destroy sessions（用户刚激活的 sandbox 被回收！）
 |---------|---------|------|
 | **IdleSessionGC** | ❌ 可以放弃 | 即使误回收，用户下次请求自动恢复；竞态窗口极短 |
 | **ExpiredSandboxGC** | ✅ 建议保留 | 用户调用 `extend_ttl` 是明确的续期意图，删除它会造成不可逆数据丢失 |
-| **OrphanWorkspaceGC** | ❌ 不需要 | sandbox 一旦 deleted_at 设置后不会复活 |
+| **OrphanCargoGC** | ❌ 不需要 | sandbox 一旦 deleted_at 设置后不会复活 |
 | **OrphanContainerGC** | ❌ 不需要 | Session 被硬删后不会复活 |
 
 **简化实现建议**：

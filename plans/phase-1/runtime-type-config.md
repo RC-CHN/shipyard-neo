@@ -55,7 +55,7 @@ class ProfileConfig(BaseModel):
 async def create(
     self,
     sandbox_id: str,
-    workspace: Workspace,
+    cargo: Cargo,
     profile: ProfileConfig,
 ) -> Session:
     session_id = f"sess-{uuid.uuid4().hex[:12]}"

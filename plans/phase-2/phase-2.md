@@ -13,7 +13,7 @@ Phase 2 的核心目标是引入**多容器支持 (Multi-Container Support)**，
 
 1.  **透明的多容器管理**：
     - 用户创建一个 Sandbox，底层可能启动多个容器（Sidecar 模式）。
-    - 所有容器共享同一个 Workspace Volume。
+    - 所有容器共享同一个 Cargo Volume。
     - 对外表现为单一实体，API 无感知。
 
 2.  **基于 Profile 的能力路由**：
@@ -64,7 +64,7 @@ Phase 2 的核心目标是引入**多容器支持 (Multi-Container Support)**，
 ### 4.1 典型场景：Browser + Ship 协作
 
 **场景描述**：
-- 一个 Sandbox 下有一个 Workspace
+- 一个 Sandbox 下有一个 Cargo
 - 本次使用对应的 Session 在 Sidecar 模式下包含两个容器：Browser 和 Ship
 - Browser 下载文件后，Ship 用 Python 处理该文件
 
@@ -85,7 +85,7 @@ Bay API Layer
                                       │
                                       ▼
                             ┌─────────────────────┐
-                            │  Workspace Volume   │
+                            │  Cargo Volume   │
                             │    (/workspace)     │
                             └─────────────────────┘
                                       ▲
@@ -98,7 +98,7 @@ Bay API Layer
 - CapabilityRouter 根据请求的 capability 类型决定路由目标
 - Browser 请求 → 路由到 Browser Container
 - Python/Shell/Filesystem 请求 → 路由到 Ship Container
-- **关键**：Browser 和 Ship 都挂载同一个 Workspace Volume，文件可直接共享
+- **关键**：Browser 和 Ship 都挂载同一个 Cargo Volume，文件可直接共享
 
 #### 4.1.2 文件共享流程
 
@@ -141,7 +141,7 @@ Ship Container → 读取 /workspace/data.pdf → 执行 Python 代码
 ```
 
 **关键点**：
-- **无需文件传输**：Browser 和 Ship 共享同一个 Workspace Volume
+- **无需文件传输**：Browser 和 Ship 共享同一个 Cargo Volume
 - **路径统一**：所有文件路径都相对于 `/workspace`
 - **自动路由**：CapabilityRouter 根据 capability 类型自动选择目标容器
 
@@ -300,7 +300,7 @@ class BrowserAdapter(BaseAdapter):
         ...
 
     async def screenshot(self, path: str) -> None:
-        """截图并保存到 workspace。"""
+        """截图并保存到 cargo。"""
         ...
 
     async def click(self, selector: str) -> BrowserResult:
@@ -308,7 +308,7 @@ class BrowserAdapter(BaseAdapter):
         ...
 
     async def download(self, url: str, save_path: str) -> DownloadResult:
-        """下载文件到 workspace。
+        """下载文件到 cargo。
         
         Args:
             url: 下载链接

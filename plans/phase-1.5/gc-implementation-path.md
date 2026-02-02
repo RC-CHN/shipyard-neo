@@ -65,7 +65,7 @@
 - 在 `DockerDriver` 中实现上述方法。
 - **Why**: 解耦 GC 与具体运行时实现（为 K8s 铺路）。
 
-#### 1.5 Workspace 内部删除 API
+#### 1.5 Cargo 内部删除 API
 **Target**: `pkgs/bay/app/managers/workspace/workspace.py`
 - 增加 `delete_internal_by_id(workspace_id: str) -> None`。
 - 逻辑：跳过 owner 校验，直接执行 delete volume + delete db record。
@@ -101,7 +101,7 @@
       - **Check**: `expires_at < now` (Double Check)
       - Call `SandboxManager.delete(sandbox)`
 
-3.  **`OrphanWorkspaceGC`**
+3.  **`OrphanCargoGC`**
     - **Trigger**: `managed=True` AND (`managed_by_sandbox_id is null` OR `sandbox.deleted_at is not null`)
     - **Action**: Call `WorkspaceManager.delete_internal_by_id()`
 

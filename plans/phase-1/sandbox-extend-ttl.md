@@ -15,7 +15,7 @@
 ## 1. 概念对齐：TTL vs idle_timeout vs keepalive
 
 - **Sandbox TTL（`expires_at`）**：逻辑资源硬上限，到期后 Sandbox 进入 `expired`，**不可复活**。
-- **Session idle_timeout（`idle_expires_at`）**：算力软回收，到期仅回收 Session（容器），Sandbox 与 Workspace 仍存在。
+- **Session idle_timeout（`idle_expires_at`）**：算力软回收，到期仅回收 Session（容器），Sandbox 与 Cargo 仍存在。
 - **keepalive**：只延长 `idle_expires_at`，不改变 `expires_at`。
 - **extend_ttl**：只延长 `expires_at`，不涉及 Session 是否启动；其效果是允许后续 `ensure_running` 继续工作。
 
