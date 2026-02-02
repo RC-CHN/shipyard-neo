@@ -9,7 +9,7 @@ Shipyard Neo 是一个专为 AI Agents 设计的安全代码执行基础设施�
 在 LLM 应用中，直接在宿主机执行生成代码极度危险且难以管理状态。Shipyard Neo 通过**计算与存储分离**的架构解决了这个问题：
 
 *   **🛡️ 安全沙箱**：所有代码在隔离容器中运行，对宿主机零威胁。
-*   **💾 持久化状态**：Workspace（工作区）独立于计算实例，容器销毁后文件依然保留。
+*   **💾 持久化状态**：Cargo（数据卷）独立于计算实例，容器销毁后文件依然保留（容器内固定挂载到 `/workspace`）。
 *   **⚡ 弹性计算**：按需启动计算会话（Session），空闲自动回收，高效利用资源。
 
 ## 🏗️ 架构设计
@@ -23,14 +23,14 @@ flowchart LR
     subgraph Infrastructure
         Bay --> Driver[Driver Layer]
         Driver --> Ship[Ship Container - Runtime]
-        Driver --> Workspace[(Workspace Volume)]
+        Driver --> Cargo[(Cargo Volume)]
     end
     
-    Ship --> Workspace
+    Ship --> Cargo
     
     style Bay fill:#2563eb,stroke:#fff,color:#fff
     style Ship fill:#16a34a,stroke:#fff,color:#fff
-    style Workspace fill:#d97706,stroke:#fff,color:#fff
+    style Cargo fill:#d97706,stroke:#fff,color:#fff
 ```
 
 ### 核心组件
@@ -39,7 +39,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | **Bay** | 🧠 大脑 (编排层) | 负责 Sandbox 生命周期管理、鉴权、路由、资源调度。它是外部世界的唯一入口。 |
 | **Ship** | 🦾 手臂 (运行时) | 运行在隔离容器内的 Agent，提供文件系统操作、IPython 内核交互和 Shell 执行能力。 |
-| **Workspace** | 🗄️ 记忆 (数据层) | 持久化的 Docker Volume 或 K8s PVC，确保即使计算容器重启，项目文件和数据依然存在。 |
+| **Cargo** | 🗄️ 记忆 (数据层) | 持久化的 Docker Volume 或 K8s PVC，确保即使计算容器重启，项目文件和数据依然存在。 |
 
 ## ✨ 关键特性
 
@@ -65,21 +65,19 @@ flowchart LR
 | 鉴权 | ✅ 100% | API Key 认证 + Owner 隔离 |
 | 幂等 | ✅ 100% | Idempotency-Key 支持 |
 | Profile 能力检查 | ✅ 100% | 前置能力拦截 |
+| GC 机制 | ✅ 100% | Idle Session / Expired Sandbox / Orphan Cargo（Orphan Container 默认禁用） |
 
 ### 🚧 进行中 (Phase 1 P1)
 
 | 模块 | 状态 | 说明 |
 | :--- | :--- | :--- |
-| 路径安全校验 | ⏳ Pending | Bay 侧待实现 |
 | 可观测性增强 | ⏳ Pending | request_id 有，metrics 未做 |
 
 ### 📋 待办 (Phase 2+)
 
 | 模块 | 优先级 | 说明 |
 | :--- | :--- | :--- |
-| **GC 机制** | 🔴 高 | Idle Session 回收、过期 Sandbox 清理、孤儿容器检测 |
-| **Workspace API** | 🟠 中 | 对外暴露独立 Workspace 管理（目前仅 managed） |
-| **Extend TTL** | 🟠 中 | 支持延长 Sandbox TTL |
+| **Cargo API** | 🟠 中 | 对外暴露独立 Cargo 管理（目前仅 managed） |
 | **SDK 完善** | 🟠 中 | Python SDK 对接新 Bay API |
 | **MCP 协议层** | 🟡 中 | Ship 支持 MCP over SSE，LLM 原生工具发现 |
 | **多容器支持** | 🟡 低 | Browser + Ship Sidecar 模式 |
@@ -102,7 +100,7 @@ flowchart LR
 
 *   [架构设计 (Bay Design)](plans/bay-design.md) - 深入了解系统内部原理
 *   [API 契约 (Bay API)](plans/bay-api.md) - HTTP 接口定义
-*   [概念模型 (Concepts)](plans/bay-concepts.md) - Sandbox, Session, Workspace 的关系
+*   [概念模型 (Concepts)](plans/bay-concepts.md) - Sandbox, Session, Cargo 的关系
 
 ### 演进规划
 

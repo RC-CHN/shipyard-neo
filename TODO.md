@@ -1,6 +1,6 @@
 # Shipyard Neo 项目待办清单
 
-> 更新日期：2026-01-31
+> 更新日期：2026-02-02
 > 
 > 本文档追踪项目级别的待办事项和演进路线。详细设计请参考 [`plans/`](plans/) 目录。
 
@@ -8,8 +8,8 @@
 
 ```
 Phase 1 (MVP)      [████████████████████░░░░] 85%
-Phase 1.5 (P1)     [████░░░░░░░░░░░░░░░░░░░░] 15%
-Phase 2            [░░░░░░░░░░░░░░░░░░░░░░░░]  0%
+Phase 1.5 (P1)     [██████░░░░░░░░░░░░░░░░░░] 25%
+Phase 2            [██░░░░░░░░░░░░░░░░░░░░░░] 10%
 ```
 
 ---
@@ -20,11 +20,11 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 - [x] FastAPI 项目骨架搭建
 - [x] SQLite 数据库 + SQLModel ORM
-- [x] Sandbox/Session/Workspace 模型定义
+- [x] Sandbox/Session/Cargo 模型定义
 - [x] DockerDriver 实现（支持 host_port/container_network 模式）
 - [x] SandboxManager 生命周期管理
 - [x] SessionManager + ensure_running（含 runtime readiness 等待）
-- [x] WorkspaceManager（Docker Volume 后端）
+- [x] CargoManager（Docker Volume 后端）
 - [x] CapabilityRouter（能力路由）
 - [x] ShipAdapter（HTTP 客户端）
 
@@ -93,29 +93,29 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 **重命名范围**：
 
-- [ ] **设计文档更新**
-  - [ ] `plans/bay-design.md` - 概念模型中 Workspace → Cargo
-  - [ ] `plans/bay-concepts.md` - 数据概念更新
-  - [ ] `plans/bay-api.md` - API 路径更新 `/workspaces` → `/cargos`
-  - [ ] `plans/phase-1/*.md` - 相关引用更新
-- [ ] **Bay 代码重构**
-  - [ ] `pkgs/bay/app/models/workspace.py` → `cargo.py`
-  - [ ] `pkgs/bay/app/managers/workspace/` → `cargo/`
-  - [ ] API 路由 `/v1/workspaces` → `/v1/cargos`
-  - [ ] 数据库表名 `workspaces` → `cargos`
-  - [ ] 字段名 `workspace_id` → `cargo_id`
-  - [ ] `managed_by_sandbox_id` 保持不变
-- [ ] **Ship 代码更新**
-  - [ ] `pkgs/ship/app/workspace.py` 更新引用
-  - [ ] 挂载路径保持 `/workspace`（内部实现细节，不对外暴露）
-- [ ] **测试更新**
-  - [ ] 单元测试文件和用例更新
-  - [ ] E2E 测试更新
+- [x] **设计文档更新**
+  - [x] `plans/bay-design.md` - 概念模型中 Workspace → Cargo
+  - [x] `plans/bay-concepts.md` - 数据概念更新
+  - [x] `plans/bay-api.md` - API 路径更新 `/workspaces` → `/cargos`
+  - [x] `plans/phase-1/*.md` - 相关引用更新
+- [x] **Bay 代码重构**
+  - [x] `pkgs/bay/app/models/workspace.py` → `cargo.py`
+  - [x] `pkgs/bay/app/managers/workspace/` → `cargo/`
+  - [ ] Cargo API 路由 `/v1/cargos`（实现见“Cargo API”任务；当前无 `/v1/workspaces` 路由）
+  - [x] 数据库表名 `workspaces` → `cargos`
+  - [x] 字段名 `workspace_id` → `cargo_id`
+  - [x] `managed_by_sandbox_id` 保持不变
+- [x] **Ship（/workspace）说明**
+  - [x] Ship 内部仍保留 `workspace` 命名（路径沙箱与固定挂载点），不与 Bay 的 Cargo 概念混用
+  - [x] 挂载路径保持 `/workspace`（运行时契约）
+- [x] **测试更新**
+  - [x] 单元测试文件和用例更新
+  - [x] E2E 测试更新
 - [ ] **SDK 更新**
   - [ ] `sdk-reference/` 中的引用更新
-- [ ] **README 和文档更新**
-  - [ ] 根目录 README.md
-  - [ ] 各子包 README.md
+- [x] **README 和文档更新**
+  - [x] 根目录 README.md
+  - [x] 各子包 README.md
 
 ---
 
@@ -141,13 +141,13 @@ Phase 2            [░░░░░░░░░░░░░░░░░░░░
 
 > 详见 [`plans/phase-1/gc-design.md`](plans/phase-1/gc-design.md)
 
-- [ ] **IdleSessionGC**：空闲 Session 回收（idle_expires_at 过期）
-- [ ] **ExpiredSandboxGC**：过期 Sandbox 清理（expires_at 过期）
-- [ ] **OrphanCargoGC**：孤儿 managed workspace 清理
-- [ ] **OrphanContainerGC**：孤儿容器检测与清理
-- [ ] GC 调度器框架（GCTask + GCScheduler）
-- [ ] 启动时 reconcile
-- [ ] 配置化 GC 间隔与开关
+- [x] **IdleSessionGC**：空闲 Session 回收（idle_expires_at 过期）
+- [x] **ExpiredSandboxGC**：过期 Sandbox 清理（expires_at 过期）
+- [x] **OrphanCargoGC**：孤儿 managed cargo 清理
+- [x] **OrphanContainerGC**：孤儿容器检测与清理（默认禁用，需要 strict labels）
+- [x] GC 调度器框架（GCTask + GCScheduler）
+- [x] 启动时 reconcile
+- [x] 配置化 GC 间隔与开关
 
 ### ✅ Extend TTL (已完成)
 
