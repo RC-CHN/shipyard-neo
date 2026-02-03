@@ -15,6 +15,7 @@ from sqlmodel import select
 from app.config import get_settings
 from app.drivers.base import Driver
 from app.errors import ConflictError, NotFoundError
+from app.models.sandbox import Sandbox
 from app.models.workspace import Workspace
 
 logger = structlog.get_logger()
@@ -124,6 +125,7 @@ class WorkspaceManager:
         self,
         owner: str,
         *,
+        managed: bool | None = None,
         limit: int = 50,
         cursor: str | None = None,
     ) -> tuple[list[Workspace], str | None]:
@@ -131,6 +133,7 @@ class WorkspaceManager:
         
         Args:
             owner: Owner identifier
+            managed: Filter by managed status (None = all, True = managed only, False = external only)
             limit: Maximum number of results
             cursor: Pagination cursor
             
@@ -138,6 +141,10 @@ class WorkspaceManager:
             Tuple of (workspaces, next_cursor)
         """
         query = select(Workspace).where(Workspace.owner == owner)
+
+        # Filter by managed status if specified
+        if managed is not None:
+            query = query.where(Workspace.managed == managed)
 
         if cursor:
             # Cursor is the last workspace_id
@@ -164,31 +171,69 @@ class WorkspaceManager:
     ) -> None:
         """Delete a workspace.
         
-        For managed workspaces:
-        - Can only be deleted if the managing sandbox is deleted
-        - Or if force=True (internal cascade delete)
+        For external workspaces (managed=False):
+        - Cannot delete if still referenced by active sandboxes (deleted_at IS NULL)
+        - Returns 409 with active_sandbox_ids if referenced
+        
+        For managed workspaces (managed=True):
+        - If force=True: delete unconditionally (internal cascade delete)
+        - If force=False:
+          - If managed_by_sandbox_id is None: allow delete (orphan workspace)
+          - If managing sandbox doesn't exist or is soft-deleted: allow delete
+          - Otherwise: return 409
         
         Args:
             workspace_id: Workspace ID
             owner: Owner identifier
-            force: If True, skip managed check (for cascade delete)
+            force: If True, skip all checks (for cascade delete)
             
         Raises:
             NotFoundError: If workspace not found
-            ConflictError: If trying to delete a managed workspace
+            ConflictError: If workspace still in use or managed by active sandbox
         """
         workspace = await self.get(workspace_id, owner)
 
-        if workspace.managed and not force:
-            raise ConflictError(
-                f"Cannot delete managed workspace {workspace_id}. "
-                f"Delete the managing sandbox instead."
-            )
+        if not force:
+            if not workspace.managed:
+                # External workspace: check for active sandbox references
+                result = await self._db.execute(
+                    select(Sandbox.id).where(
+                        Sandbox.workspace_id == workspace_id,
+                        Sandbox.deleted_at.is_(None),
+                    )
+                )
+                active_sandbox_ids = [row[0] for row in result.fetchall()]
+                
+                if active_sandbox_ids:
+                    raise ConflictError(
+                        f"Cannot delete workspace {workspace_id}: still referenced by active sandboxes",
+                        details={"active_sandbox_ids": active_sandbox_ids},
+                    )
+            else:
+                # Managed workspace: check if managing sandbox is still active
+                if workspace.managed_by_sandbox_id is not None:
+                    # Check if the managing sandbox exists and is not soft-deleted
+                    result = await self._db.execute(
+                        select(Sandbox).where(Sandbox.id == workspace.managed_by_sandbox_id)
+                    )
+                    managing_sandbox = result.scalars().first()
+                    
+                    if managing_sandbox is not None and managing_sandbox.deleted_at is None:
+                        # Managing sandbox is still active
+                        raise ConflictError(
+                            f"Cannot delete managed workspace {workspace_id}: "
+                            f"managing sandbox {workspace.managed_by_sandbox_id} is still active. "
+                            f"Delete the sandbox instead.",
+                            details={"managed_by_sandbox_id": workspace.managed_by_sandbox_id},
+                        )
+                # If managed_by_sandbox_id is None or sandbox is deleted, allow deletion
 
         self._log.info(
             "workspace.delete",
             workspace_id=workspace_id,
             volume=workspace.driver_ref,
+            managed=workspace.managed,
+            force=force,
         )
 
         # Delete volume
