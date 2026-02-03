@@ -34,7 +34,7 @@ async def test_create_returns_valid_response():
             assert sandbox["id"].startswith("sandbox-")
             assert sandbox["status"] == "idle"
             assert sandbox["profile"] == DEFAULT_PROFILE
-            assert sandbox["workspace_id"].startswith("ws-")
+            assert sandbox["cargo_id"].startswith("ws-")
             assert "capabilities" in sandbox
             assert "created_at" in sandbox
 
@@ -66,14 +66,14 @@ async def test_create_and_exec_python():
 # --- Stop tests ---
 
 
-async def test_stop_preserves_workspace():
-    """Stop destroys session but keeps sandbox/workspace."""
+async def test_stop_preserves_cargo():
+    """Stop destroys session but keeps sandbox/cargo."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
     ) as client:
         async with create_sandbox(client) as sandbox:
             sandbox_id = sandbox["id"]
-            workspace_id = sandbox["workspace_id"]
+            cargo_id = sandbox["cargo_id"]
 
             # Start session
             await client.post(
@@ -88,12 +88,12 @@ async def test_stop_preserves_workspace():
             )
             assert stop_resp.status_code == 200
 
-            # Verify idle status, same workspace
+            # Verify idle status, same cargo
             get_resp = await client.get(f"/v1/sandboxes/{sandbox_id}")
             assert get_resp.status_code == 200
             stopped = get_resp.json()
             assert stopped["status"] == "idle"
-            assert stopped["workspace_id"] == workspace_id
+            assert stopped["cargo_id"] == cargo_id
 
 
 async def test_stop_is_idempotent():
@@ -145,8 +145,8 @@ async def test_delete_returns_404_after():
         assert get_resp.status_code == 404
 
 
-async def test_delete_removes_managed_workspace_volume():
-    """Delete removes managed workspace volume."""
+async def test_delete_removes_managed_cargo_volume():
+    """Delete removes managed cargo volume."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
     ) as client:
@@ -158,8 +158,8 @@ async def test_delete_removes_managed_workspace_volume():
         assert create_resp.status_code == 201
         sandbox = create_resp.json()
         sandbox_id = sandbox["id"]
-        workspace_id = sandbox["workspace_id"]
-        volume_name = f"bay-workspace-{workspace_id}"
+        cargo_id = sandbox["cargo_id"]
+        volume_name = f"bay-cargo-{cargo_id}"
 
         # Verify volume exists
         assert docker_volume_exists(volume_name), f"Volume {volume_name} should exist"
