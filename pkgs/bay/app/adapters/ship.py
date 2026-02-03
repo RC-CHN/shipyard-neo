@@ -86,7 +86,7 @@ class ShipAdapter(BaseAdapter):
                 )
             else:
                 # Fallback: create temporary client (for tests)
-                async with httpx.AsyncClient() as temp_client:
+                async with httpx.AsyncClient(trust_env=False) as temp_client:
                     response = await temp_client.request(
                         method,
                         url,
@@ -163,7 +163,7 @@ class ShipAdapter(BaseAdapter):
                 )
             else:
                 # Fallback for tests
-                async with httpx.AsyncClient() as temp_client:
+                async with httpx.AsyncClient(trust_env=False) as temp_client:
                     response = await temp_client.get(
                         f"{self._base_url}/health",
                         timeout=5.0,

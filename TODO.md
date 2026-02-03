@@ -101,7 +101,7 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 - [x] **Bay 代码重构**
   - [x] `pkgs/bay/app/models/workspace.py` → `cargo.py`
   - [x] `pkgs/bay/app/managers/workspace/` → `cargo/`
-  - [ ] Cargo API 路由 `/v1/cargos`（实现见“Cargo API”任务；当前无 `/v1/workspaces` 路由）
+  - [x] Cargo API 路由 `/v1/cargos`（当前无 `/v1/workspaces` 路由）
   - [x] 数据库表名 `workspaces` → `cargos`
   - [x] 字段名 `workspace_id` → `cargo_id`
   - [x] `managed_by_sandbox_id` 保持不变

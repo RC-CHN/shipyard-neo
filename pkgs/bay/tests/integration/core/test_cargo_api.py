@@ -1,12 +1,12 @@
-"""Workspace API tests: CRUD operations and lifecycle.
+"""Cargo API tests: CRUD operations and lifecycle.
 
-Purpose: Verify /v1/workspaces API endpoints work correctly.
+Purpose: Verify /v1/cargos API endpoints work correctly.
 
-Test cases from: plans/phase-1.5/workspace-api-implementation.md section 7
+Test cases from: plans/phase-1.5/cargo-api-implementation.md section 7 (ported to Cargo)
 
 Parallel-safe: Yes - each test creates/deletes its own resources.
 
-Note: GC-related tests are in tests/integration/gc/test_workspace_gc.py
+Note: GC-related tests are in tests/integration/gc/test_cargo_gc.py
 to ensure serial execution.
 """
 
@@ -39,13 +39,13 @@ pytestmark = e2e_skipif_marks
 
 
 @asynccontextmanager
-async def create_workspace(
+async def create_cargo(
     client: httpx.AsyncClient,
     *,
     size_limit_mb: int | None = None,
     idempotency_key: str | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Create external workspace with auto-cleanup."""
+    """Create external cargo with auto-cleanup."""
     body = {}
     if size_limit_mb is not None:
         body["size_limit_mb"] = size_limit_mb
@@ -55,24 +55,24 @@ async def create_workspace(
         headers["Idempotency-Key"] = idempotency_key
 
     resp = await client.post(
-        "/v1/workspaces", json=body, headers=headers, timeout=DEFAULT_TIMEOUT
+        "/v1/cargos", json=body, headers=headers, timeout=DEFAULT_TIMEOUT
     )
-    assert resp.status_code == 201, f"Create workspace failed: {resp.text}"
-    workspace = resp.json()
+    assert resp.status_code == 201, f"Create cargo failed: {resp.text}"
+    cargo = resp.json()
 
     try:
-        yield workspace
+        yield cargo
     finally:
         try:
             await client.delete(
-                f"/v1/workspaces/{workspace['id']}",
+                f"/v1/cargos/{cargo['id']}",
                 timeout=CLEANUP_TIMEOUT,
             )
         except httpx.TimeoutException:
             import warnings
 
             warnings.warn(
-                f"Timeout deleting workspace {workspace['id']} during cleanup.",
+                f"Timeout deleting cargo {cargo['id']} during cleanup.",
                 stacklevel=2,
             )
         except httpx.HTTPStatusError:
@@ -85,77 +85,77 @@ async def create_workspace(
 # =============================================================================
 
 
-async def test_create_workspace_returns_valid_response():
-    """Create external workspace returns required fields with correct format."""
+async def test_create_cargo_returns_valid_response():
+    """Create external cargo returns required fields with correct format."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        async with create_workspace(client) as workspace:
-            assert workspace["id"].startswith("ws-")
-            assert workspace["managed"] is False
-            assert workspace["managed_by_sandbox_id"] is None
-            assert workspace["backend"] == "docker_volume"
-            assert "size_limit_mb" in workspace
-            assert "created_at" in workspace
-            assert "last_accessed_at" in workspace
+        async with create_cargo(client) as cargo:
+            assert cargo["id"].startswith("ws-")
+            assert cargo["managed"] is False
+            assert cargo["managed_by_sandbox_id"] is None
+            assert cargo["backend"] == "docker_volume"
+            assert "size_limit_mb" in cargo
+            assert "created_at" in cargo
+            assert "last_accessed_at" in cargo
 
 
-async def test_create_workspace_with_custom_size():
-    """Create workspace with custom size_limit_mb."""
+async def test_create_cargo_with_custom_size():
+    """Create cargo with custom size_limit_mb."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        async with create_workspace(client, size_limit_mb=2048) as workspace:
-            assert workspace["size_limit_mb"] == 2048
+        async with create_cargo(client, size_limit_mb=2048) as cargo:
+            assert cargo["size_limit_mb"] == 2048
 
 
-async def test_create_workspace_idempotency():
-    """Create workspace with Idempotency-Key returns same result on retry (D4)."""
+async def test_create_cargo_idempotency():
+    """Create cargo with Idempotency-Key returns same result on retry (D4)."""
     import uuid
 
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
         # Use UUID to ensure uniqueness across parallel test runs
-        idempotency_key = f"test-ws-idem-{uuid.uuid4().hex}"
+        idempotency_key = f"test-cargo-idem-{uuid.uuid4().hex}"
 
         # First request
         resp1 = await client.post(
-            "/v1/workspaces",
+            "/v1/cargos",
             json={"size_limit_mb": 1024},
             headers={"Idempotency-Key": idempotency_key},
             timeout=DEFAULT_TIMEOUT,
         )
         assert resp1.status_code == 201, f"First request failed: {resp1.text}"
-        workspace1 = resp1.json()
+        cargo1 = resp1.json()
 
         # Second request with same key
         resp2 = await client.post(
-            "/v1/workspaces",
+            "/v1/cargos",
             json={"size_limit_mb": 1024},
             headers={"Idempotency-Key": idempotency_key},
             timeout=DEFAULT_TIMEOUT,
         )
         # Should return cached response (could be 200 or 201 depending on implementation)
         assert resp2.status_code in (200, 201), f"Second request failed: {resp2.text}"
-        workspace2 = resp2.json()
+        cargo2 = resp2.json()
 
-        assert workspace1["id"] == workspace2["id"]
+        assert cargo1["id"] == cargo2["id"]
 
         # Cleanup
         await client.delete(
-            f"/v1/workspaces/{workspace1['id']}", timeout=CLEANUP_TIMEOUT
+            f"/v1/cargos/{cargo1['id']}", timeout=CLEANUP_TIMEOUT
         )
 
 
-async def test_create_workspace_size_limit_validation():
+async def test_create_cargo_size_limit_validation():
     """size_limit_mb must be in range 1-65536 (D5)."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
         # Too small
         resp = await client.post(
-            "/v1/workspaces",
+            "/v1/cargos",
             json={"size_limit_mb": 0},
             timeout=DEFAULT_TIMEOUT,
         )
@@ -163,7 +163,7 @@ async def test_create_workspace_size_limit_validation():
 
         # Too large
         resp = await client.post(
-            "/v1/workspaces",
+            "/v1/cargos",
             json={"size_limit_mb": 100000},
             timeout=DEFAULT_TIMEOUT,
         )
@@ -175,69 +175,69 @@ async def test_create_workspace_size_limit_validation():
 # =============================================================================
 
 
-async def test_list_workspaces_default_returns_external_only():
-    """GET /v1/workspaces defaults to external workspaces only (D1)."""
+async def test_list_cargos_default_returns_external_only():
+    """GET /v1/cargos defaults to external cargos only (D1)."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create an external workspace
-        async with create_workspace(client) as ext_workspace:
-            # Create a sandbox (creates managed workspace)
+        # Create an external cargo
+        async with create_cargo(client) as ext_cargo:
+            # Create a sandbox (creates managed cargo)
             async with create_sandbox(client) as sandbox:
                 # List without managed param - should only show external
-                resp = await client.get("/v1/workspaces", timeout=DEFAULT_TIMEOUT)
+                resp = await client.get("/v1/cargos", timeout=DEFAULT_TIMEOUT)
                 assert resp.status_code == 200
                 data = resp.json()
 
-                workspace_ids = [w["id"] for w in data["items"]]
-                assert ext_workspace["id"] in workspace_ids
+                cargo_ids = [c["id"] for c in data["items"]]
+                assert ext_cargo["id"] in cargo_ids
 
-                # Managed workspace should NOT be in default list
+                # Managed cargo should NOT be in default list
                 for item in data["items"]:
                     assert item["managed"] is False
 
 
-async def test_list_workspaces_managed_filter():
-    """GET /v1/workspaces?managed=true shows managed workspaces (D1)."""
+async def test_list_cargos_managed_filter():
+    """GET /v1/cargos?managed=true shows managed cargos (D1)."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
         async with create_sandbox(client) as sandbox:
-            managed_ws_id = sandbox["workspace_id"]
+            managed_cargo_id = sandbox["cargo_id"]
 
             # List with managed=true
             resp = await client.get(
-                "/v1/workspaces?managed=true", timeout=DEFAULT_TIMEOUT
+                "/v1/cargos?managed=true", timeout=DEFAULT_TIMEOUT
             )
             assert resp.status_code == 200
             data = resp.json()
 
-            workspace_ids = [w["id"] for w in data["items"]]
-            assert managed_ws_id in workspace_ids
+            cargo_ids = [c["id"] for c in data["items"]]
+            assert managed_cargo_id in cargo_ids
 
             # All items should be managed
             for item in data["items"]:
                 assert item["managed"] is True
 
 
-async def test_list_workspaces_pagination():
-    """List workspaces supports pagination."""
+async def test_list_cargos_pagination():
+    """List cargos supports pagination."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create multiple workspaces
-        workspaces = []
+        # Create multiple cargos
+        cargos = []
         for _ in range(3):
             resp = await client.post(
-                "/v1/workspaces", json={}, timeout=DEFAULT_TIMEOUT
+                "/v1/cargos", json={}, timeout=DEFAULT_TIMEOUT
             )
             assert resp.status_code == 201
-            workspaces.append(resp.json())
+            cargos.append(resp.json())
 
         try:
             # List with limit=2
             resp = await client.get(
-                "/v1/workspaces?limit=2", timeout=DEFAULT_TIMEOUT
+                "/v1/cargos?limit=2", timeout=DEFAULT_TIMEOUT
             )
             assert resp.status_code == 200
             data = resp.json()
@@ -247,70 +247,70 @@ async def test_list_workspaces_pagination():
 
         finally:
             # Cleanup
-            for ws in workspaces:
+            for cargo in cargos:
                 await client.delete(
-                    f"/v1/workspaces/{ws['id']}", timeout=CLEANUP_TIMEOUT
+                    f"/v1/cargos/{cargo['id']}", timeout=CLEANUP_TIMEOUT
                 )
 
 
 # =============================================================================
-# GET WORKSPACE TESTS
+# GET CARGO TESTS
 # =============================================================================
 
 
-async def test_get_workspace_returns_details():
-    """GET /v1/workspaces/{id} returns workspace details."""
+async def test_get_cargo_returns_details():
+    """GET /v1/cargos/{id} returns cargo details."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        async with create_workspace(client, size_limit_mb=512) as workspace:
+        async with create_cargo(client, size_limit_mb=512) as cargo:
             resp = await client.get(
-                f"/v1/workspaces/{workspace['id']}", timeout=DEFAULT_TIMEOUT
+                f"/v1/cargos/{cargo['id']}", timeout=DEFAULT_TIMEOUT
             )
             assert resp.status_code == 200
             data = resp.json()
 
-            assert data["id"] == workspace["id"]
+            assert data["id"] == cargo["id"]
             assert data["managed"] is False
             assert data["size_limit_mb"] == 512
 
 
-async def test_get_workspace_not_found():
-    """GET /v1/workspaces/{id} returns 404 for non-existent workspace."""
+async def test_get_cargo_not_found():
+    """GET /v1/cargos/{id} returns 404 for non-existent cargo."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
         resp = await client.get(
-            "/v1/workspaces/ws-nonexistent", timeout=DEFAULT_TIMEOUT
+            "/v1/cargos/ws-nonexistent", timeout=DEFAULT_TIMEOUT
         )
         assert resp.status_code == 404
 
 
 # =============================================================================
-# DELETE WORKSPACE TESTS - External Workspace
+# DELETE CARGO TESTS - External Cargo
 # =============================================================================
 
 
-async def test_delete_external_workspace_success():
-    """DELETE /v1/workspaces/{id} succeeds for unreferenced external workspace."""
+async def test_delete_external_cargo_success():
+    """DELETE /v1/cargos/{id} succeeds for unreferenced external cargo."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create workspace (not using context manager)
+        # Create cargo (not using context manager)
         resp = await client.post(
-            "/v1/workspaces", json={}, timeout=DEFAULT_TIMEOUT
+            "/v1/cargos", json={}, timeout=DEFAULT_TIMEOUT
         )
         assert resp.status_code == 201
-        workspace = resp.json()
-        workspace_id = workspace["id"]
-        volume_name = f"bay-workspace-{workspace_id}"
+        cargo = resp.json()
+        cargo_id = cargo["id"]
+        volume_name = f"bay-cargo-{cargo_id}"
 
         # Verify volume exists
         assert docker_volume_exists(volume_name)
 
         # Delete
         resp = await client.delete(
-            f"/v1/workspaces/{workspace_id}", timeout=CLEANUP_TIMEOUT
+            f"/v1/cargos/{cargo_id}", timeout=CLEANUP_TIMEOUT
         )
         assert resp.status_code == 204
 
@@ -319,28 +319,28 @@ async def test_delete_external_workspace_success():
         assert not docker_volume_exists(volume_name)
 
 
-async def test_delete_external_workspace_referenced_by_active_sandbox():
-    """DELETE /v1/workspaces/{id} returns 409 when referenced by active sandbox (D3)."""
+async def test_delete_external_cargo_referenced_by_active_sandbox():
+    """DELETE /v1/cargos/{id} returns 409 when referenced by active sandbox (D3)."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create external workspace
-        async with create_workspace(client) as workspace:
-            workspace_id = workspace["id"]
+        # Create external cargo
+        async with create_cargo(client) as cargo:
+            cargo_id = cargo["id"]
 
-            # Create sandbox using this workspace
+            # Create sandbox using this cargo
             resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "workspace_id": workspace_id},
+                json={"profile": DEFAULT_PROFILE, "cargo_id": cargo_id},
                 timeout=DEFAULT_TIMEOUT,
             )
             assert resp.status_code == 201
             sandbox = resp.json()
 
             try:
-                # Try to delete workspace - should fail with 409
+                # Try to delete cargo - should fail with 409
                 resp = await client.delete(
-                    f"/v1/workspaces/{workspace_id}", timeout=DEFAULT_TIMEOUT
+                    f"/v1/cargos/{cargo_id}", timeout=DEFAULT_TIMEOUT
                 )
                 assert resp.status_code == 409
 
@@ -358,23 +358,23 @@ async def test_delete_external_workspace_referenced_by_active_sandbox():
                 )
 
 
-async def test_delete_external_workspace_after_sandbox_deleted():
-    """DELETE /v1/workspaces/{id} succeeds after referencing sandbox is deleted."""
+async def test_delete_external_cargo_after_sandbox_deleted():
+    """DELETE /v1/cargos/{id} succeeds after referencing sandbox is deleted."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create external workspace
+        # Create external cargo
         resp = await client.post(
-            "/v1/workspaces", json={}, timeout=DEFAULT_TIMEOUT
+            "/v1/cargos", json={}, timeout=DEFAULT_TIMEOUT
         )
         assert resp.status_code == 201
-        workspace = resp.json()
-        workspace_id = workspace["id"]
+        cargo = resp.json()
+        cargo_id = cargo["id"]
 
-        # Create sandbox using this workspace
+        # Create sandbox using this cargo
         resp = await client.post(
             "/v1/sandboxes",
-            json={"profile": DEFAULT_PROFILE, "workspace_id": workspace_id},
+            json={"profile": DEFAULT_PROFILE, "cargo_id": cargo_id},
             timeout=DEFAULT_TIMEOUT,
         )
         assert resp.status_code == 201
@@ -386,64 +386,64 @@ async def test_delete_external_workspace_after_sandbox_deleted():
         )
         assert resp.status_code == 204
 
-        # Now workspace can be deleted
+        # Now cargo can be deleted
         resp = await client.delete(
-            f"/v1/workspaces/{workspace_id}", timeout=CLEANUP_TIMEOUT
+            f"/v1/cargos/{cargo_id}", timeout=CLEANUP_TIMEOUT
         )
         assert resp.status_code == 204
 
 
 # =============================================================================
-# DELETE WORKSPACE TESTS - Managed Workspace (D2)
+# DELETE CARGO TESTS - Managed Cargo (D2)
 # =============================================================================
 
 
-async def test_delete_managed_workspace_active_sandbox_returns_409():
-    """DELETE /v1/workspaces/{id} returns 409 for managed workspace with active sandbox."""
+async def test_delete_managed_cargo_active_sandbox_returns_409():
+    """DELETE /v1/cargos/{id} returns 409 for managed cargo with active sandbox."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
         async with create_sandbox(client) as sandbox:
-            managed_ws_id = sandbox["workspace_id"]
+            managed_cargo_id = sandbox["cargo_id"]
 
-            # Try to delete managed workspace - should fail
+            # Try to delete managed cargo - should fail
             resp = await client.delete(
-                f"/v1/workspaces/{managed_ws_id}", timeout=DEFAULT_TIMEOUT
+                f"/v1/cargos/{managed_cargo_id}", timeout=DEFAULT_TIMEOUT
             )
             assert resp.status_code == 409
 
 
 # Note: test_delete_managed_workspace_after_sandbox_soft_deleted is covered
-# in unit tests (test_workspace_manager.py) because in the real API flow,
+# in unit tests (test_cargo_manager.py) because in the real API flow,
 # sandbox delete cascade-deletes the managed workspace, so it won't exist
 # for a subsequent API delete call. The D2 decision scenario (orphan workspace
 # after sandbox soft-delete) is properly tested at the unit test level.
 
 
 # =============================================================================
-# SANDBOX + WORKSPACE INTEGRATION TESTS
+# SANDBOX + CARGO INTEGRATION TESTS
 # =============================================================================
 
 
-async def test_sandbox_with_external_workspace():
-    """Create sandbox binding external workspace works correctly."""
+async def test_sandbox_with_external_cargo():
+    """Create sandbox binding external cargo works correctly."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        async with create_workspace(client) as workspace:
-            # Create sandbox with this workspace
+        async with create_cargo(client) as cargo:
+            # Create sandbox with this cargo
             resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "workspace_id": workspace["id"]},
+                json={"profile": DEFAULT_PROFILE, "cargo_id": cargo["id"]},
                 timeout=DEFAULT_TIMEOUT,
             )
             assert resp.status_code == 201
             sandbox = resp.json()
 
             try:
-                assert sandbox["workspace_id"] == workspace["id"]
+                assert sandbox["cargo_id"] == cargo["id"]
 
-                # Execute some code to verify workspace works
+                # Execute some code to verify cargo works
                 exec_resp = await client.post(
                     f"/v1/sandboxes/{sandbox['id']}/python/exec",
                     json={"code": "print('hello')", "timeout": 30},

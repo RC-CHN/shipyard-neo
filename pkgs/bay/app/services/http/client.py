@@ -120,6 +120,10 @@ class HTTPClientManager:
             timeout=timeout,
             # Disable HTTP/2 for simpler connection management
             http2=False,
+            # Do not inherit proxy settings from the environment. Bay talks to
+            # Ship over Docker/private network IPs which should not be routed
+            # through an HTTP proxy.
+            trust_env=False,
         )
 
         self._log.info(

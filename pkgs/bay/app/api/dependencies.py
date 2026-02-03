@@ -22,8 +22,8 @@ from app.db.session import get_session_dependency
 from app.drivers.base import Driver
 from app.drivers.docker import DockerDriver
 from app.errors import CapabilityNotSupportedError, UnauthorizedError
+from app.managers.cargo import CargoManager
 from app.managers.sandbox import SandboxManager
-from app.managers.workspace import WorkspaceManager
 from app.models.sandbox import Sandbox
 from app.services.idempotency import IdempotencyService
 
@@ -49,12 +49,12 @@ async def get_sandbox_manager(
     return SandboxManager(driver=driver, db_session=session)
 
 
-async def get_workspace_manager(
+async def get_cargo_manager(
     session: Annotated[AsyncSession, Depends(get_session_dependency)],
-) -> WorkspaceManager:
-    """Get WorkspaceManager with injected dependencies."""
+) -> CargoManager:
+    """Get CargoManager with injected dependencies."""
     driver = get_driver()
-    return WorkspaceManager(driver=driver, db_session=session)
+    return CargoManager(driver=driver, db_session=session)
 
 
 async def get_idempotency_service(
@@ -119,7 +119,7 @@ def authenticate(request: Request) -> str:
 DriverDep = Annotated[Driver, Depends(get_driver)]
 SessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 SandboxManagerDep = Annotated[SandboxManager, Depends(get_sandbox_manager)]
-WorkspaceManagerDep = Annotated[WorkspaceManager, Depends(get_workspace_manager)]
+CargoManagerDep = Annotated[CargoManager, Depends(get_cargo_manager)]
 IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
 AuthDep = Annotated[str, Depends(authenticate)]
 

@@ -1,8 +1,8 @@
-"""Workspace GC integration tests.
+"""Cargo GC integration tests.
 
-Purpose: Verify GC behavior with workspace API operations.
+Purpose: Verify GC behavior with cargo API operations.
 
-Test cases from: plans/phase-1.5/workspace-api-implementation.md section 7.2
+Test cases from: plans/phase-1.5/cargo-api-implementation.md section 7.2 (ported to Cargo)
 
 Serial execution required: Yes - GC tests must run exclusively.
 (Matched by conftest.py SERIAL_GROUPS[gc])
@@ -35,28 +35,28 @@ pytestmark = e2e_skipif_marks
 
 
 @asynccontextmanager
-async def create_workspace(
+async def create_cargo(
     client: httpx.AsyncClient,
     *,
     size_limit_mb: int | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Create external workspace with auto-cleanup."""
+    """Create external cargo with auto-cleanup."""
     body = {}
     if size_limit_mb is not None:
         body["size_limit_mb"] = size_limit_mb
 
     resp = await client.post(
-        "/v1/workspaces", json=body, timeout=DEFAULT_TIMEOUT
+        "/v1/cargos", json=body, timeout=DEFAULT_TIMEOUT
     )
-    assert resp.status_code == 201, f"Create workspace failed: {resp.text}"
-    workspace = resp.json()
+    assert resp.status_code == 201, f"Create cargo failed: {resp.text}"
+    cargo = resp.json()
 
     try:
-        yield workspace
+        yield cargo
     finally:
         try:
             await client.delete(
-                f"/v1/workspaces/{workspace['id']}",
+                f"/v1/cargos/{cargo['id']}",
                 timeout=CLEANUP_TIMEOUT,
             )
         except (httpx.TimeoutException, httpx.HTTPStatusError):
@@ -79,17 +79,17 @@ def gc_completed_without_error(gc_result: dict) -> bool:
 # =============================================================================
 
 
-async def test_gc_orphan_workspace_cleanup():
-    """GC should clean up orphan managed workspaces.
+async def test_gc_orphan_cargo_cleanup():
+    """GC should clean up orphan managed cargos.
     
-    After sandbox delete (which cascade-deletes managed workspace),
-    GC orphan_workspace task should run without error.
+    After sandbox delete (which cascade-deletes managed cargo),
+    GC orphan_cargo task should run without error.
     This verifies GC idempotency.
     """
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create sandbox (creates managed workspace)
+        # Create sandbox (creates managed cargo)
         resp = await client.post(
             "/v1/sandboxes",
             json={"profile": DEFAULT_PROFILE},
@@ -99,53 +99,53 @@ async def test_gc_orphan_workspace_cleanup():
         sandbox = resp.json()
         sandbox_id = sandbox["id"]
 
-        # Delete sandbox (cascade-deletes managed workspace)
+        # Delete sandbox (cascade-deletes managed cargo)
         resp = await client.delete(
             f"/v1/sandboxes/{sandbox_id}", timeout=CLEANUP_TIMEOUT
         )
         assert resp.status_code == 204
 
         # Trigger GC - should complete without error
-        # Even though workspace is already deleted, GC should be idempotent
-        gc_result = await trigger_gc(client, tasks=["orphan_workspace"])
+        # Even though cargo is already deleted, GC should be idempotent
+        gc_result = await trigger_gc(client, tasks=["orphan_cargo"])
         assert gc_completed_without_error(gc_result), f"GC failed: {gc_result}"
 
 
-async def test_gc_external_workspace_protected():
-    """External workspace referenced by active sandbox is protected during GC.
+async def test_gc_external_cargo_protected():
+    """External cargo referenced by active sandbox is protected during GC.
     
     Test case C from phase-1.5 implementation doc section 7.2.
     """
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS
     ) as client:
-        # Create external workspace
-        async with create_workspace(client) as ext_workspace:
-            ext_ws_id = ext_workspace["id"]
+        # Create external cargo
+        async with create_cargo(client) as ext_cargo:
+            ext_cargo_id = ext_cargo["id"]
 
-            # Create sandbox using external workspace
+            # Create sandbox using external cargo
             resp = await client.post(
                 "/v1/sandboxes",
-                json={"profile": DEFAULT_PROFILE, "workspace_id": ext_ws_id},
+                json={"profile": DEFAULT_PROFILE, "cargo_id": ext_cargo_id},
                 timeout=DEFAULT_TIMEOUT,
             )
             assert resp.status_code == 201
             sandbox = resp.json()
 
             try:
-                # Run GC - should NOT affect external workspace
-                gc_result = await trigger_gc(client, tasks=["orphan_workspace"])
+                # Run GC - should NOT affect external cargo
+                gc_result = await trigger_gc(client, tasks=["orphan_cargo"])
                 assert gc_completed_without_error(gc_result)
 
-                # External workspace should still exist
+                # External cargo should still exist
                 resp = await client.get(
-                    f"/v1/workspaces/{ext_ws_id}", timeout=DEFAULT_TIMEOUT
+                    f"/v1/cargos/{ext_cargo_id}", timeout=DEFAULT_TIMEOUT
                 )
                 assert resp.status_code == 200
 
                 # Try to delete - should fail with 409
                 resp = await client.delete(
-                    f"/v1/workspaces/{ext_ws_id}", timeout=DEFAULT_TIMEOUT
+                    f"/v1/cargos/{ext_cargo_id}", timeout=DEFAULT_TIMEOUT
                 )
                 assert resp.status_code == 409
 
@@ -180,8 +180,8 @@ async def test_gc_concurrent_sandbox_delete_idempotent():
         )
         assert resp.status_code == 204
 
-        # Immediately trigger GC (may try to clean same workspace)
-        gc_result = await trigger_gc(client, tasks=["orphan_workspace"])
+        # Immediately trigger GC (may try to clean same cargo)
+        gc_result = await trigger_gc(client, tasks=["orphan_cargo"])
         
         # Should complete without error (idempotent)
         assert gc_completed_without_error(gc_result), f"GC failed: {gc_result}"

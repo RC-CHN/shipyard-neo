@@ -216,7 +216,7 @@ class SessionManager:
                     response = await client.get(url, timeout=2.0)
                 else:
                     # Fallback: create temporary client
-                    async with httpx.AsyncClient() as temp_client:
+                    async with httpx.AsyncClient(trust_env=False) as temp_client:
                         response = await temp_client.get(url, timeout=2.0)
                 
                 if response.status_code == 200:
