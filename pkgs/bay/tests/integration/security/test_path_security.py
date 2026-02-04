@@ -18,12 +18,17 @@ pytestmark = e2e_skipif_marks
 @pytest.fixture
 async def sandbox_id():
     """Create sandbox for path security tests."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         r = await client.post("/v1/sandboxes", json={"profile": DEFAULT_PROFILE})
         assert r.status_code == 201
         sid = r.json()["id"]
         yield sid
-        await client.delete(f"/v1/sandboxes/{sid}")
+        try:
+            await client.delete(f"/v1/sandboxes/{sid}", timeout=120.0)
+        except httpx.TimeoutException:
+            pass  # Cleanup will be handled by GC or cleanup script
 
 
 # --- Reject tests (malicious paths) ---

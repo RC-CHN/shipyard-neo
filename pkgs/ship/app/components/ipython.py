@@ -58,20 +58,15 @@ async def ensure_kernel_running(km: AsyncKernelManager):
 
 
 # 静态初始化代码（matplotlib 字体配置等，不包含任何动态内容）
+# 注意：字体缓存已在 Docker 构建阶段预热，这里不再清理/重建
 _KERNEL_INIT_CODE = """
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-import shutil, os
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning, module='matplotlib')
 
-# 清除字体缓存以确保字体更新生效
-cache_dir = os.path.expanduser("~/.cache/matplotlib")
-if os.path.exists(cache_dir):
-    shutil.rmtree(cache_dir)
-
-# 重建字体列表
-fm._load_fontmanager(try_read_cache=False)
+# 使用构建时预热的字体缓存（不再清理和重建）
+# 如果缓存不存在，才会自动重建
 
 # 配置中文字体 + Symbola 作为 emoji fallback
 # Symbola 是矢量字体，支持任意缩放的 emoji 符号

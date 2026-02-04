@@ -18,13 +18,26 @@ import structlog
 
 from app.adapters.base import BaseAdapter, ExecutionResult, RuntimeMeta
 from app.errors import FileNotFoundError, ShipError, TimeoutError
+from app.services.http import http_client_manager
 
 logger = structlog.get_logger()
+
+
+def _get_shared_client() -> httpx.AsyncClient | None:
+    """Get shared HTTP client if available.
+    
+    Returns None if client manager is not initialized (e.g., in tests).
+    """
+    try:
+        return http_client_manager.client
+    except RuntimeError:
+        return None
 
 
 class ShipAdapter(BaseAdapter):
     """HTTP adapter for Ship runtime.
 
+    Supports connection pooling via shared HTTP client for better performance.
     Supported capabilities: python, shell, filesystem (includes upload/download), terminal
     """
 
@@ -57,29 +70,40 @@ class ShipAdapter(BaseAdapter):
         json: dict[str, Any] | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Make HTTP request to Ship."""
+        """Make HTTP request to Ship using shared connection pool."""
         url = f"{self._base_url}{path}"
         request_timeout = timeout or self._timeout
 
         try:
-            async with httpx.AsyncClient() as client:
+            # Use shared client for connection pooling
+            client = _get_shared_client()
+            if client is not None:
                 response = await client.request(
                     method,
                     url,
                     json=json,
                     timeout=request_timeout,
                 )
-
-                if response.status_code >= 400:
-                    self._log.error(
-                        "ship.request_failed",
-                        path=path,
-                        status=response.status_code,
-                        body=response.text,
+            else:
+                # Fallback: create temporary client (for tests)
+                async with httpx.AsyncClient(trust_env=False) as temp_client:
+                    response = await temp_client.request(
+                        method,
+                        url,
+                        json=json,
+                        timeout=request_timeout,
                     )
-                    raise ShipError(f"Ship request failed: {response.status_code}")
 
-                return response.json()
+            if response.status_code >= 400:
+                self._log.error(
+                    "ship.request_failed",
+                    path=path,
+                    status=response.status_code,
+                    body=response.text,
+                )
+                raise ShipError(f"Ship request failed: {response.status_code}")
+
+            return response.json()
 
         except httpx.TimeoutException:
             self._log.error("ship.timeout", path=path, timeout=request_timeout)
@@ -129,14 +153,22 @@ class ShipAdapter(BaseAdapter):
         return self._meta_cache
 
     async def health(self) -> bool:
-        """Check runtime health."""
+        """Check runtime health using shared connection pool."""
         try:
-            async with httpx.AsyncClient() as client:
+            client = _get_shared_client()
+            if client is not None:
                 response = await client.get(
                     f"{self._base_url}/health",
                     timeout=5.0,
                 )
-                return response.status_code == 200
+            else:
+                # Fallback for tests
+                async with httpx.AsyncClient(trust_env=False) as temp_client:
+                    response = await temp_client.get(
+                        f"{self._base_url}/health",
+                        timeout=5.0,
+                    )
+            return response.status_code == 200
         except Exception:
             return False
 
@@ -225,35 +257,57 @@ class ShipAdapter(BaseAdapter):
     # -- Upload/Download (part of filesystem capability) --
 
     async def upload_file(self, path: str, content: bytes) -> None:
-        """Upload binary file."""
+        """Upload binary file using shared connection pool."""
         try:
-            async with httpx.AsyncClient() as client:
-                files = {"file": ("file", content, "application/octet-stream")}
-                data = {"file_path": path}
+            files = {"file": ("file", content, "application/octet-stream")}
+            data = {"file_path": path}
+            
+            client = _get_shared_client()
+            if client is not None:
                 response = await client.post(
                     f"{self._base_url}/fs/upload",
                     files=files,
                     data=data,
                     timeout=self._timeout,
                 )
-                if response.status_code >= 400:
-                    raise ShipError(f"Upload failed: {response.status_code}")
+            else:
+                # Fallback for tests
+                async with httpx.AsyncClient() as temp_client:
+                    response = await temp_client.post(
+                        f"{self._base_url}/fs/upload",
+                        files=files,
+                        data=data,
+                        timeout=self._timeout,
+                    )
+            
+            if response.status_code >= 400:
+                raise ShipError(f"Upload failed: {response.status_code}")
         except httpx.RequestError as e:
             raise ShipError(f"Upload file failed: {e}")
 
     async def download_file(self, path: str) -> bytes:
-        """Download file as bytes."""
+        """Download file as bytes using shared connection pool."""
         try:
-            async with httpx.AsyncClient() as client:
+            client = _get_shared_client()
+            if client is not None:
                 response = await client.get(
                     f"{self._base_url}/fs/download",
                     params={"file_path": path},
                     timeout=self._timeout,
                 )
-                if response.status_code == 404:
-                    raise FileNotFoundError(f"File not found: {path}")
-                if response.status_code >= 400:
-                    raise ShipError(f"Download failed: {response.status_code}")
-                return response.content
+            else:
+                # Fallback for tests
+                async with httpx.AsyncClient() as temp_client:
+                    response = await temp_client.get(
+                        f"{self._base_url}/fs/download",
+                        params={"file_path": path},
+                        timeout=self._timeout,
+                    )
+            
+            if response.status_code == 404:
+                raise FileNotFoundError(f"File not found: {path}")
+            if response.status_code >= 400:
+                raise ShipError(f"Download failed: {response.status_code}")
+            return response.content
         except httpx.RequestError as e:
             raise ShipError(f"Download file failed: {e}")

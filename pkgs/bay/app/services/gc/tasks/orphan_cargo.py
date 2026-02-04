@@ -93,7 +93,7 @@ class OrphanCargoGC(GCTask):
             orphan_ids.append(cargo_id)
 
         # Case 2: managed=True and referenced sandbox is soft-deleted
-        # Use LEFT OUTER JOIN to find workspaces where sandbox.deleted_at IS NOT NULL
+        # Use LEFT OUTER JOIN to find cargos where sandbox.deleted_at IS NOT NULL
         SandboxAlias = aliased(Sandbox)
         query2 = (
             select(Cargo.id)

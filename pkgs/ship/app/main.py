@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from .components.filesystem import router as fs_router
-from .components.ipython import router as ipython_router
+from .components.ipython import router as ipython_router, get_or_create_kernel
 from .components.shell import router as shell_router
 from .components.term import router as term_router
 from .workspace import WORKSPACE_ROOT
@@ -15,8 +15,22 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
+    """应用生命周期管理
+    
+    启动时预热 Jupyter Kernel，避免首次请求时的冷启动延迟。
+    """
     logger.info("Starting Ship container...")
+    
+    # 预热 Jupyter Kernel（在后台启动）
+    # 这可以节省首次 /ipython/exec 请求时约 3-5 秒的内核启动时间
+    try:
+        logger.info("Pre-warming Jupyter kernel...")
+        await get_or_create_kernel()
+        logger.info("Jupyter kernel pre-warmed successfully")
+    except Exception as e:
+        # 预热失败不阻止服务启动，首次请求时会重试
+        logger.warning(f"Failed to pre-warm Jupyter kernel: {e}")
+    
     yield
     logger.info("Ship container shutting down")
 

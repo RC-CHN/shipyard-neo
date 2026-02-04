@@ -41,6 +41,12 @@ E2E_API_KEY = os.environ.get("E2E_API_KEY", "e2e-test-api-key")
 AUTH_HEADERS = {"Authorization": f"Bearer {E2E_API_KEY}"}
 DEFAULT_PROFILE = "python-default"
 
+# Timeout configuration for parallel test stability
+# Docker operations (create/delete container/volume) can be slow under load
+DEFAULT_TIMEOUT = 30.0  # Default timeout for most operations
+CLEANUP_TIMEOUT = 60.0  # Longer timeout for cleanup (delete) operations
+EXEC_TIMEOUT = 120.0    # Timeout for code execution
+
 
 # =============================================================================
 # SERIAL TEST GROUPS - Tests that must run serially
@@ -189,19 +195,36 @@ async def create_sandbox(
     profile: str = DEFAULT_PROFILE,
     ttl: int | None = None,
 ) -> AsyncGenerator[dict, None]:
-    """Create sandbox with auto-cleanup."""
+    """Create sandbox with auto-cleanup.
+    
+    Cleanup uses a longer timeout to handle parallel test load.
+    Timeout errors during cleanup are logged but not raised to avoid
+    masking actual test failures.
+    """
     body: dict = {"profile": profile}
     if ttl is not None:
         body["ttl"] = ttl
 
-    resp = await client.post("/v1/sandboxes", json=body)
+    resp = await client.post("/v1/sandboxes", json=body, timeout=DEFAULT_TIMEOUT)
     assert resp.status_code == 201, f"Create failed: {resp.text}"
     sandbox = resp.json()
 
     try:
         yield sandbox
     finally:
-        await client.delete(f"/v1/sandboxes/{sandbox['id']}")
+        try:
+            await client.delete(
+                f"/v1/sandboxes/{sandbox['id']}",
+                timeout=CLEANUP_TIMEOUT,
+            )
+        except httpx.TimeoutException:
+            # Log but don't fail - cleanup will happen via GC or manual cleanup
+            import warnings
+            warnings.warn(
+                f"Timeout deleting sandbox {sandbox['id']} during cleanup. "
+                "Sandbox will be cleaned up by GC or manual cleanup script.",
+                stacklevel=2,
+            )
 
 
 # =============================================================================

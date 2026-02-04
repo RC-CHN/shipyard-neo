@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db import close_db, init_db
 from app.errors import BayError
 from app.services.gc.lifecycle import init_gc_scheduler, shutdown_gc_scheduler
+from app.services.http import http_client_manager
 
 logger = structlog.get_logger()
 
@@ -24,6 +25,9 @@ async def lifespan(app: FastAPI):
     logger.info("bay.startup", version="0.1.0")
     await init_db()
 
+    # Initialize HTTP client with connection pooling
+    await http_client_manager.startup()
+
     # Initialize and start GC scheduler
     await init_gc_scheduler()
 
@@ -34,6 +38,9 @@ async def lifespan(app: FastAPI):
 
     # Stop GC scheduler
     await shutdown_gc_scheduler()
+
+    # Close HTTP client
+    await http_client_manager.shutdown()
 
     await close_db()
 

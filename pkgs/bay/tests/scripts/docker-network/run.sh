@@ -13,10 +13,10 @@
 #
 # Usage:
 #   ./run.sh              # Run all E2E tests (serial)
-#   ./run.sh --parallel   # Run tests in parallel (faster)
+#   ./run.sh --parallel   # Run tests in parallel (auto workers)
+#   ./run.sh --parallel -n 4  # Run with 4 workers
 #   ./run.sh -v           # Verbose mode
 #   ./run.sh -k "test_create"  # Run specific test
-#   ./run.sh --parallel -n 4   # Run in parallel with 4 workers
 
 set -e
 
@@ -163,7 +163,8 @@ start_bay_container() {
 
 run_tests() {
     local parallel_mode="$1"
-    shift
+    local num_workers="$2"
+    shift 2
 
     log_info "Running E2E tests (docker-network mode)..."
 
@@ -176,8 +177,8 @@ run_tests() {
     if [ "$parallel_mode" = "true" ]; then
         log_info "Running tests in two-phase mode (parallel + exclusive serial)"
 
-        log_info "Phase 1: parallel (not serial)"
-        uv run pytest tests/integration -n auto --dist loadgroup -m "not serial" "$@"
+        log_info "Phase 1: parallel (not serial) with -n ${num_workers}"
+        uv run pytest tests/integration -n "$num_workers" --dist loadgroup -m "not serial" "$@"
 
         log_info "Phase 2: exclusive serial (-n 1)"
         uv run pytest tests/integration -n 1 -m "serial" "$@"
@@ -193,11 +194,16 @@ trap cleanup EXIT
 # Parse arguments
 PYTEST_ARGS=""
 PARALLEL_MODE="false"
+NUM_WORKERS="auto"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --parallel)
             PARALLEL_MODE="true"
             shift
+            ;;
+        -n)
+            NUM_WORKERS="$2"
+            shift 2
             ;;
         *)
             PYTEST_ARGS="$PYTEST_ARGS $1"
@@ -214,6 +220,6 @@ start_bay_container
 # Set environment variable for tests to know which port to use
 export E2E_BAY_PORT=$BAY_PORT
 
-run_tests "$PARALLEL_MODE" $PYTEST_ARGS
+run_tests "$PARALLEL_MODE" "$NUM_WORKERS" $PYTEST_ARGS
 
 log_info "E2E tests completed successfully!"

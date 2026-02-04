@@ -121,13 +121,13 @@ async def test_extend_ttl_rejects_expired():
         # Short TTL
         create_resp = await client.post(
             "/v1/sandboxes",
-            json={"profile": DEFAULT_PROFILE, "ttl": 4},
+            json={"profile": DEFAULT_PROFILE, "ttl": 2},
         )
         assert create_resp.status_code == 201
         sandbox_id = create_resp.json()["id"]
 
         try:
-            # Wait for expiry
+            # Wait for expiry (extra margin for clock drift between client/server)
             await asyncio.sleep(5)
 
             extend_resp = await client.post(

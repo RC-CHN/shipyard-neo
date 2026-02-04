@@ -2,7 +2,7 @@
 
 > **Status**: Approved
 > **Phase**: 1.5 (Core GC)
-> **Goal**: Implement background Garbage Collection for Idle Sessions, Expired Sandboxes, Orphan Workspaces, and Orphan Containers.
+> **Goal**: Implement background Garbage Collection for Idle Sessions, Expired Sandboxes, Orphan Cargos, and Orphan Containers.
 
 ---
 

@@ -68,7 +68,9 @@ async def test_create_and_exec_python():
 
 async def test_stop_preserves_cargo():
     """Stop destroys session but keeps sandbox/cargo."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         async with create_sandbox(client) as sandbox:
             sandbox_id = sandbox["id"]
             cargo_id = sandbox["cargo_id"]
@@ -81,10 +83,12 @@ async def test_stop_preserves_cargo():
             )
 
             # Stop
-            stop_resp = await client.post(f"/v1/sandboxes/{sandbox_id}/stop")
+            stop_resp = await client.post(
+                f"/v1/sandboxes/{sandbox_id}/stop", timeout=60.0
+            )
             assert stop_resp.status_code == 200
 
-            # Verify idle status, same workspace
+            # Verify idle status, same cargo
             get_resp = await client.get(f"/v1/sandboxes/{sandbox_id}")
             assert get_resp.status_code == 200
             stopped = get_resp.json()
@@ -94,12 +98,16 @@ async def test_stop_preserves_cargo():
 
 async def test_stop_is_idempotent():
     """Stop is idempotent - repeated calls don't fail."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         async with create_sandbox(client) as sandbox:
             sandbox_id = sandbox["id"]
 
             for _ in range(3):
-                resp = await client.post(f"/v1/sandboxes/{sandbox_id}/stop")
+                resp = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/stop", timeout=60.0
+                )
                 assert resp.status_code == 200
 
 
@@ -108,7 +116,9 @@ async def test_stop_is_idempotent():
 
 async def test_delete_returns_404_after():
     """Delete makes sandbox return 404."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         # Create sandbox (not using context manager - we're testing delete explicitly)
         create_resp = await client.post(
             "/v1/sandboxes",
@@ -125,7 +135,9 @@ async def test_delete_returns_404_after():
         )
 
         # Delete
-        del_resp = await client.delete(f"/v1/sandboxes/{sandbox_id}")
+        del_resp = await client.delete(
+            f"/v1/sandboxes/{sandbox_id}", timeout=120.0
+        )
         assert del_resp.status_code == 204
 
         # Get should return 404
@@ -135,7 +147,9 @@ async def test_delete_returns_404_after():
 
 async def test_delete_removes_managed_cargo_volume():
     """Delete removes managed cargo volume."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         # Create
         create_resp = await client.post(
             "/v1/sandboxes",
@@ -151,7 +165,7 @@ async def test_delete_removes_managed_cargo_volume():
         assert docker_volume_exists(volume_name), f"Volume {volume_name} should exist"
 
         # Delete
-        await client.delete(f"/v1/sandboxes/{sandbox_id}")
+        await client.delete(f"/v1/sandboxes/{sandbox_id}", timeout=120.0)
         await asyncio.sleep(0.5)
 
         # Volume should be gone

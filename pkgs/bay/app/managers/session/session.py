@@ -21,6 +21,7 @@ from app.drivers.base import ContainerStatus, Driver
 from app.errors import SessionNotReadyError
 from app.models.cargo import Cargo
 from app.models.session import Session, SessionStatus
+from app.services.http import http_client_manager
 
 logger = structlog.get_logger()
 
@@ -182,7 +183,7 @@ class SessionManager:
 
         Polls the /health endpoint until it responds successfully.
         Uses generous timeouts to accommodate image pulling in production.
-
+        Uses shared HTTP client for connection pooling efficiency.
         Args:
             endpoint: Ship endpoint URL
             session_id: Session ID for logging
@@ -200,20 +201,33 @@ class SessionManager:
         interval = initial_interval
         attempt = 0
 
+        # Use shared HTTP client for connection pooling
+        # Falls back to creating temporary client if not initialized
+        try:
+            client = http_client_manager.client
+        except RuntimeError:
+            # Fallback for tests or when lifespan not used
+            client = None
         while True:
             attempt += 1
             try:
-                async with httpx.AsyncClient() as client:
+                if client is not None:
+                    # Use shared client
                     response = await client.get(url, timeout=2.0)
-                    if response.status_code == 200:
-                        elapsed = asyncio.get_event_loop().time() - start_time
-                        self._log.info(
-                            "session.runtime_ready",
-                            session_id=session_id,
-                            attempts=attempt,
-                            elapsed_ms=int(elapsed * 1000),
-                        )
-                        return
+                else:
+                    # Fallback: create temporary client
+                    async with httpx.AsyncClient(trust_env=False) as temp_client:
+                        response = await temp_client.get(url, timeout=2.0)
+                
+                if response.status_code == 200:
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    self._log.info(
+                        "session.runtime_ready",
+                        session_id=session_id,
+                        attempts=attempt,
+                        elapsed_ms=int(elapsed * 1000),
+                    )
+                    return
             except (httpx.RequestError, httpx.TimeoutException):
                 pass
 

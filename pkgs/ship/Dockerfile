@@ -93,6 +93,36 @@ COPY . .
 # 设置入口脚本权限
 RUN chmod +x /app/entrypoint.sh
 
+# 预热 matplotlib 字体缓存（构建时完成，运行时跳过）
+# 这可以节省每次容器启动时约 2-3 秒的字体缓存重建时间
+RUN python <<'EOF'
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# 构建字体缓存
+fm._load_fontmanager(try_read_cache=False)
+
+# 配置中文字体
+font_candidates = ['Noto Sans CJK SC', 'Noto Sans CJK JP', 'Noto Sans CJK TC']
+
+# 检查 Symbola 字体是否可用
+symbola_available = any('Symbola' in f.name for f in fm.fontManager.ttflist)
+if symbola_available:
+    font_candidates.append('Symbola')
+
+font_candidates.append('DejaVu Sans')
+
+plt.rcParams['font.sans-serif'] = font_candidates
+plt.rcParams['axes.unicode_minus'] = False
+
+# 创建一个图来触发完整的初始化
+fig, ax = plt.subplots()
+ax.set_title('Font cache warmup')
+plt.close(fig)
+
+print('Matplotlib font cache warmed up successfully')
+EOF
+
 # 暴露端口
 EXPOSE 8123
 

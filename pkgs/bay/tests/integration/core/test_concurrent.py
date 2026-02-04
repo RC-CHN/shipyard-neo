@@ -19,7 +19,9 @@ pytestmark = e2e_skipif_marks
 
 async def test_concurrent_exec_creates_single_session():
     """Concurrent python/exec calls should result in single session (no dup)."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         # Create sandbox
         create_resp = await client.post(
             "/v1/sandboxes",
@@ -67,4 +69,7 @@ async def test_concurrent_exec_creates_single_session():
             assert get_resp.status_code == 200
 
         finally:
-            await client.delete(f"/v1/sandboxes/{sandbox_id}")
+            try:
+                await client.delete(f"/v1/sandboxes/{sandbox_id}", timeout=120.0)
+            except httpx.TimeoutException:
+                pass  # Cleanup will be handled by GC or cleanup script

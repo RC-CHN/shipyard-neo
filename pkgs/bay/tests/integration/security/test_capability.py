@@ -25,25 +25,35 @@ RESTRICTED_PROFILE = "python-only-test"
 @pytest.fixture
 async def restricted_sandbox_id():
     """Create sandbox with restricted profile."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         r = await client.post("/v1/sandboxes", json={"profile": RESTRICTED_PROFILE})
         if r.status_code == 400 and "profile" in r.text.lower():
             pytest.skip(f"Profile '{RESTRICTED_PROFILE}' not configured")
         assert r.status_code == 201
         sid = r.json()["id"]
         yield sid
-        await client.delete(f"/v1/sandboxes/{sid}")
+        try:
+            await client.delete(f"/v1/sandboxes/{sid}", timeout=120.0)
+        except httpx.TimeoutException:
+            pass  # Cleanup will be handled by GC or cleanup script
 
 
 @pytest.fixture
 async def full_sandbox_id():
     """Create sandbox with full profile."""
-    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+    async with httpx.AsyncClient(
+        base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
+    ) as client:
         r = await client.post("/v1/sandboxes", json={"profile": DEFAULT_PROFILE})
         assert r.status_code == 201
         sid = r.json()["id"]
         yield sid
-        await client.delete(f"/v1/sandboxes/{sid}")
+        try:
+            await client.delete(f"/v1/sandboxes/{sid}", timeout=120.0)
+        except httpx.TimeoutException:
+            pass  # Cleanup will be handled by GC or cleanup script
 
 
 # --- Restricted profile tests ---
