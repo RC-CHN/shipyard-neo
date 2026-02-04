@@ -26,6 +26,10 @@ COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yaml"
 BAY_PORT=8002
 NETWORK_NAME="bay-e2e-test-network"
 
+# Docker Compose command (supports both Compose v2: `docker compose` and legacy: `docker-compose`)
+# Stored as an argv array, e.g. (docker compose) or (docker-compose)
+COMPOSE_CMD=()
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,13 +48,40 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Pick a compose implementation:
+# - Prefer Compose v2: `docker compose`
+# - Fallback to legacy: `docker-compose`
+# This avoids forcing users to install the legacy `docker-compose` package.
+detect_compose() {
+    if docker compose version >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker compose)
+        return 0
+    fi
+
+    if command -v docker-compose >/dev/null 2>&1; then
+        COMPOSE_CMD=(docker-compose)
+        return 0
+    fi
+
+    return 1
+}
+
+compose() {
+    # Ensure COMPOSE_CMD is initialized (important for cleanup path)
+    if [ ${#COMPOSE_CMD[@]} -eq 0 ]; then
+        detect_compose || return 1
+    fi
+
+    "${COMPOSE_CMD[@]}" "$@"
+}
+
 cleanup() {
     log_info "Cleaning up..."
     
     # Stop Bay container
     log_info "Stopping Bay container..."
     cd "$SCRIPT_DIR"
-    docker-compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+    compose -f "$COMPOSE_FILE" down 2>/dev/null || true
     
     # Clean up any leftover test containers
     log_info "Cleaning up test containers..."
@@ -77,12 +108,12 @@ check_prerequisites() {
     fi
     log_info "✓ Docker is available"
     
-    # Check docker-compose
-    if ! docker-compose version >/dev/null 2>&1; then
-        log_error "docker-compose is not installed"
+    # Check Docker Compose (v2 plugin or legacy)
+    if ! detect_compose; then
+        log_error "Docker Compose is not available (need either 'docker compose' or 'docker-compose')"
         exit 1
     fi
-    log_info "✓ docker-compose is available"
+    log_info "✓ Docker Compose is available (${COMPOSE_CMD[*]})"
     
     # Check compose file
     if [ ! -f "$COMPOSE_FILE" ]; then
@@ -129,8 +160,8 @@ start_bay_container() {
     
     cd "$SCRIPT_DIR"
     
-    # Start Bay with docker-compose (network will be created automatically)
-    docker-compose -f "$COMPOSE_FILE" up -d --build
+    # Start Bay with Docker Compose (network will be created automatically)
+    compose -f "$COMPOSE_FILE" up -d --build
     
     log_info "Bay container started"
     
@@ -146,9 +177,9 @@ start_bay_container() {
         fi
         
         # Check if container is still running
-        if ! docker-compose -f "$COMPOSE_FILE" ps | grep -q "Up"; then
+        if ! compose -f "$COMPOSE_FILE" ps | grep -q "Up"; then
             log_error "Bay container exited unexpectedly"
-            docker-compose -f "$COMPOSE_FILE" logs
+            compose -f "$COMPOSE_FILE" logs
             exit 1
         fi
         
@@ -157,7 +188,7 @@ start_bay_container() {
     done
     
     log_error "Bay failed to start within ${max_attempts} seconds"
-    docker-compose -f "$COMPOSE_FILE" logs
+    compose -f "$COMPOSE_FILE" logs
     exit 1
 }
 
