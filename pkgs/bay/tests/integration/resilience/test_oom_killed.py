@@ -37,31 +37,31 @@ pytestmark = e2e_skipif_marks
 OOM_TEST_PROFILE = "oom-test"
 
 
-def _check_oom_profile_exists() -> bool:
-    """Check if the OOM test profile exists by querying /v1/profiles."""
+async def _skip_if_oom_profile_missing():
+    """Check if OOM test profile exists and skip if not."""
     try:
-        resp = httpx.get(
-            f"{BAY_BASE_URL}/v1/profiles",
-            headers=AUTH_HEADERS,
-            timeout=5.0,
-        )
-        if resp.status_code == 200:
-            profiles = resp.json()
-            return any(p.get("id") == OOM_TEST_PROFILE for p in profiles)
-        return False
-    except Exception:
-        return False
+        async with httpx.AsyncClient(
+            base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=5.0
+        ) as client:
+            resp = await client.get("/v1/profiles")
+            if resp.status_code == 200:
+                profiles = resp.json()
+                if not any(p.get("id") == OOM_TEST_PROFILE for p in profiles):
+                    pytest.skip(f"OOM test profile '{OOM_TEST_PROFILE}' not found")
+            else:
+                pytest.skip(f"Failed to query profiles: {resp.status_code}")
+    except Exception as e:
+        pytest.skip(f"Failed to check OOM profile: {e}")
 
 
 class TestOOMKilled:
     """Test system behavior when container is killed due to OOM."""
 
-    @pytest.mark.skipif(
-        not _check_oom_profile_exists(),
-        reason=f"OOM test profile '{OOM_TEST_PROFILE}' not found",
-    )
     async def test_oom_returns_error_not_hang(self) -> None:
         """When container OOMs, exec should return error, not hang indefinitely."""
+        # Dynamic check - skip if profile not configured
+        await _skip_if_oom_profile_missing()
+
         async with httpx.AsyncClient(
             base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=120.0
         ) as client:
@@ -115,12 +115,11 @@ print(f'Allocated {len(big_list)} MB')
                 status_resp = await client.get(f"/v1/sandboxes/{sandbox_id}")
                 assert status_resp.status_code == 200
 
-    @pytest.mark.skipif(
-        not _check_oom_profile_exists(),
-        reason=f"OOM test profile '{OOM_TEST_PROFILE}' not found",
-    )
     async def test_container_exit_code_indicates_oom(self) -> None:
         """Container exit code should indicate OOM kill (137 = SIGKILL)."""
+        # Dynamic check - skip if profile not configured
+        await _skip_if_oom_profile_missing()
+
         async with httpx.AsyncClient(
             base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=120.0
         ) as client:
