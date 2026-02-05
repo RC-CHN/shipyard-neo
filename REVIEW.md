@@ -310,20 +310,16 @@ def get_profile(self, profile_id: str) -> ProfileConfig | None:
 
 ## 🟡 低优先级审查项
 
-### 11. 错误类型命名冲突
+### 11. ✅ 错误类型命名冲突（已修复）
 
-**文件**: [`pkgs/bay/app/errors.py`](pkgs/bay/app/errors.py:142)
+**文件**: [`pkgs/bay/app/errors.py`](pkgs/bay/app/errors.py:94)
 
-**问题**: 自定义 `FileNotFoundError` 与 Python 内置类型同名：
+**问题**: 自定义 `FileNotFoundError` 与 Python 内置类型同名
 
-```python
-class FileNotFoundError(BayError):  # 覆盖了 builtins.FileNotFoundError
-    ...
-```
-
-**审查要点**:
-- [ ] 可能导致 `except FileNotFoundError` 捕获错误的异常
-- [ ] 建议重命名为 `CargoFileNotFoundError` 或类似
+**已解决** (2026-02-05):
+- [x] `FileNotFoundError` → `CargoFileNotFoundError`
+- [x] `TimeoutError` → `RequestTimeoutError`
+- [x] 更新 [`pkgs/bay/app/adapters/ship.py`](pkgs/bay/app/adapters/ship.py:20) 中的导入和使用
 
 ---
 
@@ -347,32 +343,41 @@ container_labels = {
 
 ---
 
-### 13. 硬编码的端口和超时
+### 13. ⏸️ 硬编码的端口和超时（暂不处理）
 
 **文件**: 多处
 
 **审查要点**:
 - [ ] [`pkgs/bay/app/config.py:105`](pkgs/bay/app/config.py:105): `runtime_port: int | None = 8123`
-- [ ] [`pkgs/bay/app/managers/session/session.py:176`](pkgs/bay/app/managers/session/session.py:176): `max_wait_seconds: float = 120.0`
-- [ ] [`pkgs/bay/app/adapters/ship.py:43`](pkgs/bay/app/adapters/ship.py:43): `timeout: float = 30.0`
+- [ ] [`pkgs/bay/app/managers/session/session.py:210`](pkgs/bay/app/managers/session/session.py:210): `max_wait_seconds: float = 120.0`
+- [ ] [`pkgs/bay/app/adapters/ship.py:55`](pkgs/bay/app/adapters/ship.py:55): `timeout: float = 30.0`
 - [ ] 这些魔法数字应该集中到配置文件
+
+**2026-02-05 分析结论：暂不处理**
+
+当前设计是合理的：
+- `runtime_port` 已在 `ProfileConfig` 中配置化
+- `max_wait_seconds` 和 `timeout` 作为函数参数默认值，可被调用者覆盖
+- 集中配置化需要改动配置结构，成本较高
+- 当前默认值经过实践验证，足够使用
 
 ---
 
-### 14. 类型注解不一致
+### 14. ✅ 类型注解不一致（已修复）
 
 **文件**: [`pkgs/bay/app/api/v1/sandboxes.py`](pkgs/bay/app/api/v1/sandboxes.py:58)
 
-**问题**: 函数参数类型注解使用了旧风格：
+**问题**: 函数参数类型注解缺失
+
+**已解决** (2026-02-05):
+- [x] `_sandbox_to_response()` 添加完整类型注解
+- [x] 统一使用 `str | None` 风格（PEP 604）
 
 ```python
-def _sandbox_to_response(sandbox, current_session=None) -> SandboxResponse:
-    # sandbox 和 current_session 没有类型注解
+def _sandbox_to_response(
+    sandbox: Sandbox, current_session: Session | None = None
+) -> SandboxResponse:
 ```
-
-**审查要点**:
-- [ ] 部分函数缺少完整的类型注解
-- [ ] 混用 `str | None` 和 `Optional[str]`，应统一风格
 
 ---
 
@@ -585,9 +590,9 @@ pkgs/bay/app/services/gc/
 
 ### 进度统计
 
-- **已解决**: 6 项（并发锁改进、路径安全、GC 机制、httpx 连接管理、Session 启动失败清理、后台进程内存泄露）
-- **暂不处理**: 3 项（时间竞态条件、配置热加载、数据库事务边界）
-- **待评估**: 9 项
+- **已解决**: 8 项（并发锁改进、路径安全、GC 机制、httpx 连接管理、Session 启动失败清理、后台进程内存泄露、错误类型命名冲突、类型注解不一致）
+- **暂不处理**: 4 项（时间竞态条件、配置热加载、数据库事务边界、硬编码端口超时）
+- **待评估**: 6 项
 
 ---
 
@@ -601,6 +606,7 @@ pkgs/bay/app/services/gc/
 
 | 日期 | 变更内容 |
 |:---|:---|
+| 2026-02-05 | **#11 错误类型命名冲突已修复**、**#14 类型注解已修复**、#13 硬编码暂不处理；修复 config.yaml workspace→cargo 命名 |
 | 2026-02-05 | 分析 #4/#7/#8/#9：时间竞态条件暂不处理、**后台进程内存泄露已修复**、配置热加载暂不处理、事务边界暂不处理 |
 | 2026-02-02 | 更新 GC 机制为已完成；更新路径安全为已完成；更新并发锁为已改进；新增已做得好的部分 |
 | 2026-01-31 | 初始版本 |

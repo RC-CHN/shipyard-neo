@@ -13,7 +13,8 @@ from pydantic import BaseModel
 
 from app.api.dependencies import AuthDep, IdempotencyServiceDep, SandboxManagerDep
 from app.config import get_settings
-from app.models.sandbox import SandboxStatus
+from app.models.sandbox import Sandbox, SandboxStatus
+from app.models.session import Session
 
 router = APIRouter()
 
@@ -55,7 +56,9 @@ class ExtendTTLRequest(BaseModel):
     extend_by: int
 
 
-def _sandbox_to_response(sandbox, current_session=None) -> SandboxResponse:
+def _sandbox_to_response(
+    sandbox: Sandbox, current_session: Session | None = None
+) -> SandboxResponse:
     """Convert Sandbox model to API response."""
     settings = get_settings()
     profile = settings.get_profile(sandbox.profile_id)

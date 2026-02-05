@@ -17,7 +17,7 @@ import httpx
 import structlog
 
 from app.adapters.base import BaseAdapter, ExecutionResult, RuntimeMeta
-from app.errors import FileNotFoundError, ShipError, TimeoutError
+from app.errors import CargoFileNotFoundError, RequestTimeoutError, ShipError
 from app.services.http import http_client_manager
 
 logger = structlog.get_logger()
@@ -107,7 +107,7 @@ class ShipAdapter(BaseAdapter):
 
         except httpx.TimeoutException:
             self._log.error("ship.timeout", path=path, timeout=request_timeout)
-            raise TimeoutError(f"Ship request timed out: {path}")
+            raise RequestTimeoutError(f"Ship request timed out: {path}")
         except httpx.RequestError as e:
             self._log.error("ship.request_error", path=path, error=str(e))
             raise ShipError(f"Ship request error: {e}")
@@ -305,7 +305,7 @@ class ShipAdapter(BaseAdapter):
                     )
             
             if response.status_code == 404:
-                raise FileNotFoundError(f"File not found: {path}")
+                raise CargoFileNotFoundError(f"File not found: {path}")
             if response.status_code >= 400:
                 raise ShipError(f"Download failed: {response.status_code}")
             return response.content

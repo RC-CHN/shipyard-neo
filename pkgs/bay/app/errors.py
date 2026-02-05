@@ -91,8 +91,11 @@ class SessionNotReadyError(BayError):
         super().__init__(message, details)
 
 
-class TimeoutError(BayError):
-    """Operation timed out."""
+class RequestTimeoutError(BayError):
+    """Operation timed out.
+
+    Note: Renamed from TimeoutError to avoid shadowing Python's builtin TimeoutError.
+    """
 
     code = "timeout"
     message = "Operation timed out"
@@ -139,8 +142,11 @@ class ValidationError(BayError):
     status_code = 400
 
 
-class FileNotFoundError(BayError):
-    """File not found in sandbox workspace."""
+class CargoFileNotFoundError(BayError):
+    """File not found in sandbox workspace.
+
+    Note: Renamed from FileNotFoundError to avoid shadowing Python's builtin FileNotFoundError.
+    """
 
     code = "file_not_found"
     message = "File not found"
