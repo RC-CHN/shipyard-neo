@@ -19,7 +19,7 @@
 
 ---
 
-## 🔴 高优先级审查项
+## 🔴 高优先级审查项 (5项)
 
 ### 1. ✅ 并发控制与锁机制（已改进）
 
@@ -160,9 +160,11 @@ response = await client.request(...)
 
 ## 🟠 中优先级审查项
 
-### 6. Shell 命令注入风险
+### 6. ⏸️ Shell 命令执行安全边界（设计预期）
 
 **文件**: [`pkgs/ship/app/components/user_manager.py`](pkgs/ship/app/components/user_manager.py:240)
+
+**当前状态**: 已确认“任意命令执行”为 Sandbox 核心功能，非安全漏洞。
 
 **代码**:
 ```python
@@ -173,11 +175,17 @@ sudo_args.extend([
 ])
 ```
 
-**审查要点**:
-- [ ] `command` 直接拼接到 shell 命令中，虽然前面有 `shlex.quote(working_dir)`
-- [ ] 用户传入的 `command` 可以包含任意 shell 命令（这可能是设计意图，但需要确认）
-- [ ] 是否需要对危险命令做黑名单？
-- [ ] cwd 参数已做校验，但 env 参数呢？
+**安全边界声明**:
+- ✅ **设计意图**: Sandbox 的核心价值即提供完整的 Shell 执行环境，用户代码（Agent）需要执行任意命令。
+- ✅ **隔离保障**: 依赖 Docker 容器进行资源隔离与网络命名空间隔离。
+- ✅ **攻击面控制**:
+    - 建议通过 Resource Limits (CPU/Mem) 防止 DoS。
+    - 建议通过 Network Policy 限制容器外连（如仅允许白名单）。
+- ✅ **审计**: 命令执行记录应作为审计日志留存（当前通过 Logger 记录）。
+
+**2026-02-05 分析结论：暂不处理**
+- 这是一个 Feature，不是 Bug。
+- 重点在于 Runtime 层的容器逃逸防护，而非应用层的命令过滤。
 
 ---
 
@@ -287,24 +295,16 @@ async def delete(self, sandbox: Sandbox) -> None:
 
 ---
 
-### 10. Profile 查找效率
+### 10. ⏸️ Profile 查找效率（暂不处理）
 
 **文件**: [`pkgs/bay/app/config.py`](pkgs/bay/app/config.py:186)
 
-**问题**: 线性查找 Profile：
+**问题**: 线性查找 Profile。
 
-```python
-def get_profile(self, profile_id: str) -> ProfileConfig | None:
-    for profile in self.profiles:
-        if profile.id == profile_id:
-            return profile
-    return None
-```
-
-**审查要点**:
-- [ ] 每次请求都遍历整个 profiles 列表
-- [ ] Profile 数量增多后性能下降
-- [ ] 应该在初始化时构建 `dict[str, ProfileConfig]`
+**2026-02-05 分析结论：暂不处理**
+- ✅ 当前 Profile 数量（<10个）下，线性查找开销可忽略不计（纳秒级）。
+- ✅ 属于“过度优化”范畴，除非 Profile 数量达到数百个。
+- ✅ 保持代码简单直观优先。
 
 ---
 
@@ -323,23 +323,16 @@ def get_profile(self, profile_id: str) -> ProfileConfig | None:
 
 ---
 
-### 12. 日志信息完整性
+### 12. ⏸️ 日志信息完整性（架构预留）
 
 **文件**: [`pkgs/bay/app/drivers/docker/docker.py`](pkgs/bay/app/drivers/docker/docker.py:149)
 
-**问题**: TODO 注释表明 owner 信息缺失：
+**问题**: `bay.owner` 硬编码为 "default"。
 
-```python
-container_labels = {
-    "bay.owner": "default",  # TODO: get from session/sandbox
-    ...
-}
-```
-
-**审查要点**:
-- [ ] 容器标签中的 owner 被硬编码为 "default"
-- [ ] 影响多租户隔离和资源追踪
-- [ ] 需要从 session/sandbox 传递真实 owner
+**2026-02-05 分析结论：暂不处理**
+- ✅ 当前系统定位为单租户/受信环境使用。
+- ✅ 硬编码 "default" 是为了保持 label 结构完整，为未来多租户扩展预留的 slot。
+- ✅ 在引入多租户鉴权体系前，无需修改此逻辑。
 
 ---
 
@@ -385,11 +378,21 @@ def _sandbox_to_response(
 
 **文件**: `pkgs/bay/tests/`, `pkgs/ship/tests/`
 
-**审查要点**:
-- [ ] 单元测试是否覆盖了并发场景？
-- [ ] 是否有针对资源泄露的测试？
-- [ ] 是否有边界条件测试（如 TTL=0, 空命令等）？
-- [ ] 集成测试是否模拟了网络分区、容器崩溃等异常场景？
+**当前状态**:
+- ✅ **Unit 测试**: 覆盖了 Manager 层的核心逻辑（TTL, 软删除, 级联清理）。
+- ✅ **Integration 测试**: 覆盖了 E2E 生命周期、并发 Exec、GC 流程。
+- ✅ **并发测试**: `test_concurrent.py` 验证了并发请求下的 Session 单例创建。
+
+**改进建议 (可测性强的鲁棒性场景)**:
+- [ ] **容器意外退出测试 (Container Crash)**:
+    - 模拟方法: 在 Integration 测试中手动 `docker kill` 运行中的 Session 容器。
+    - 预期行为: 后续 API 请求应返回正确的错误 (Session 丢失) 或触发自动恢复，而不是一直超时或 500。
+- [ ] **资源配额 OOM 测试 (OOM Killed)**:
+    - 模拟方法: 创建带 128MB 内存限制的 Profile，执行消耗 200MB 内存的 Python 脚本。
+    - 预期行为: Sandbox 状态应正确流转为 FAILED/CRASHED，且能从日志中明确 OOM 原因。
+- [ ] **GC 竞态冲突测试 (Race Condition)**:
+    - 模拟方法: 手动触发 GC 删除逻辑，同时发起新的 API 请求。
+    - 预期行为: 锁机制应保证两者串行化，避免“数据库有记录但容器已被删”的僵尸状态。
 
 ---
 
@@ -423,39 +426,32 @@ pkgs/bay/app/services/gc/
 - [x] 配置化 GC 间隔与开关
 - [x] Admin API 支持手动触发 GC（用于测试）
 - [x] 单元测试 (`test_gc_scheduler.py`, `test_gc_tasks.py`)
-- [x] E2E 测试 (`test_gc_e2e.py`, `test_gc_workflow_scenario.py`)
+- [x] E2E 测试 (`pkgs/bay/tests/integration/gc/`, `pkgs/bay/tests/integration/workflows/`)
 
 **待完成**:
 - [ ] 启动时 reconcile（对账孤儿资源）
 
 ---
 
-### 17. 可观测性缺失
+### 17. ⏸️ 可观测性缺失（暂不处理）
 
-**审查要点**:
-- [ ] 无 Prometheus metrics 埋点
-- [ ] 无分布式追踪 (OpenTelemetry)
-- [ ] 日志缺少请求上下文（虽然有 request_id，但未贯穿）
-- [ ] 无健康检查的详细状态（仅返回 `{"status": "healthy"}`）
+**审查要点**: 缺少 Prometheus Metrics 和 OpenTelemetry Tracing。
 
-**轻量化建议**:
-- Metrics: 考虑 `prometheus-fastapi-instrumentator`（<100行接入）
-- Tracing: 暂缓，等有真实排查需求再加
-- 健康检查: 增加数据库连接检测、Docker 连接检测即可
+**2026-02-05 分析结论：暂不处理**
+- ✅ 本版本聚焦核心功能闭环。
+- ✅ 当前通过 Structlog 日志排查问题已足够。
+- ✅ 待系统进入生产环境运维阶段再引入监控组件。
 
 ---
 
-### 18. 数据迁移策略
+### 18. ⏸️ 数据迁移策略（暂不处理）
 
-**审查要点**:
-- [ ] 使用 SQLite 作为默认数据库，生产环境迁移路径不清晰
-- [ ] 无 Alembic 迁移脚本（或未找到）
-- [ ] Model 变更后的向后兼容性
+**审查要点**: 缺少 Alembic 迁移脚本和生产环境迁移路径。
 
-**轻量化建议**:
-- 保持 SQLite 作为默认选项，对于绝大多数单机部署场景足够
-- 仅当明确需要多实例时再考虑 PostgreSQL
-- 用 `alembic` 管理迁移，它是标准做法且足够轻量
+**2026-02-05 分析结论：暂不处理**
+- ✅ 当前处于快速迭代期，Schema 变更可通过重置数据库解决。
+- ✅ 默认 SQLite 模式适配单机部署，无需复杂的迁移机制。
+- ✅ 留待后续稳定版本引入。
 
 ---
 
@@ -583,16 +579,34 @@ pkgs/bay/app/services/gc/
 
 | 优先级 | 项目数 | 关键问题 |
 |:---:|:---:|:---|
-| 🔴 高 | 3 | ~~并发锁~~ ✅、~~路径安全~~ ✅、资源泄露、时间竞态、连接管理 |
-| 🟠 中 | 5 | 命令注入、内存泄露、配置缓存、事务边界、查找效率 |
-| 🟡 低 | 5 | 命名冲突、日志完整性、硬编码、类型注解、测试覆盖 |
-| 📋 架构 | 2 | ~~GC机制~~ ✅、可观测性、数据迁移 |
+| 🔴 高 | 5 | ~~并发锁~~ ✅、~~路径安全~~ ✅、~~资源泄露~~ ✅、时间竞态(⏸️)、~~连接管理~~ ✅ |
+| 🟠 中 | 5 | 命令执行(⏸️)、~~内存泄露~~ ✅、配置缓存(⏸️)、事务边界(⏸️)、查找效率(⏸️) |
+| 🟡 低 | 5 | ~~命名冲突~~ ✅、日志完整性(⏸️)、硬编码(⏸️)、~~类型注解~~ ✅、测试覆盖 |
+| 📋 架构 | 3 | ~~GC机制~~ ✅、可观测性、数据迁移 |
 
 ### 进度统计
 
-- **已解决**: 8 项（并发锁改进、路径安全、GC 机制、httpx 连接管理、Session 启动失败清理、后台进程内存泄露、错误类型命名冲突、类型注解不一致）
-- **暂不处理**: 4 项（时间竞态条件、配置热加载、数据库事务边界、硬编码端口超时）
-- **待评估**: 6 项
+- **已解决**: 8 项
+    - 并发锁改进 (#1)
+    - 路径安全 (#2)
+    - GC 机制 (#16)
+    - httpx 连接管理 (#5)
+    - Session 启动失败清理 (#3)
+    - 后台进程内存泄露 (#7)
+    - 错误类型命名冲突 (#11)
+    - 类型注解不一致 (#14)
+- **暂不处理**: 9 项
+    - 时间竞态条件 (#4)
+    - Shell 命令安全边界 (#6) - *Feature not Bug*
+    - 配置热加载 (#8)
+    - 数据库事务边界 (#9)
+    - Profile 查找效率 (#10)
+    - 日志/Owner 预留 (#12)
+    - 硬编码端口超时 (#13)
+    - 可观测性 (#17)
+    - 数据迁移策略 (#18)
+- **待处理**: 1 项
+    - 测试覆盖 (#15) - *已提出具体增强建议*
 
 ---
 
@@ -607,6 +621,7 @@ pkgs/bay/app/services/gc/
 | 日期 | 变更内容 |
 |:---|:---|
 | 2026-02-05 | **#11 错误类型命名冲突已修复**、**#14 类型注解已修复**、#13 硬编码暂不处理；修复 config.yaml workspace→cargo 命名 |
+| 2026-02-05 | 分析 #17/#18：可观测性与数据迁移在本版本暂不考虑；更新 #15 提出鲁棒性测试建议；更新 #6/#10/#12 状态 |
 | 2026-02-05 | 分析 #4/#7/#8/#9：时间竞态条件暂不处理、**后台进程内存泄露已修复**、配置热加载暂不处理、事务边界暂不处理 |
 | 2026-02-02 | 更新 GC 机制为已完成；更新路径安全为已完成；更新并发锁为已改进；新增已做得好的部分 |
 | 2026-01-31 | 初始版本 |
