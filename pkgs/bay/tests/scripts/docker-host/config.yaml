@@ -80,6 +80,22 @@ profiles:
     idle_timeout: 2  # Very short - 2 seconds for quick GC testing
     env: {}
 
+  # Profile with strict memory limit for OOM testing (Phase 1.5)
+  # Used by test_oom_killed.py to verify container OOM behavior
+  - id: oom-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "128m"  # Strict 128MB limit to trigger OOM quickly
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 300
+    env: {}
+
 gc:
   # Disable automatic GC during E2E tests.
   # Tests use POST /v1/admin/gc/run to trigger GC manually when needed.
