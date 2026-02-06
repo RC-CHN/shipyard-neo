@@ -1,33 +1,33 @@
 # Shipyard Neo Python SDK
 
-A Python client library for the Bay API - secure sandbox execution for AI agents.
+Bay API 的 Python 客户端库 - 为 AI 代理提供安全的沙箱执行环境。
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-## Features
+## 特性
 
-- **Async-first design** - Built on `httpx` for modern async Python
-- **Type-safe** - Full type hints with Pydantic models
-- **Capability-based access** - Python, Shell, and Filesystem operations
-- **Automatic session management** - Lazy startup, transparent resume
-- **Idempotency support** - Safe retries for network failures
-- **Persistent storage** - Cargo volumes survive sandbox restarts
+- **异步优先设计** - 基于 `httpx` 构建，支持现代异步 Python
+- **类型安全** - 使用 Pydantic 模型提供完整的类型提示
+- **基于能力的访问控制** - 支持 Python、Shell 和文件系统操作
+- **自动会话管理** - 延迟启动，透明恢复
+- **幂等性支持** - 网络故障时可安全重试
+- **持久化存储** - Cargo 卷在沙箱重启后仍然保留
 
-## Installation
+## 安装
 
 ```bash
 pip install shipyard-neo-sdk
 ```
 
-Or install from source:
+或从源码安装：
 
 ```bash
 cd shipyard-neo-sdk
 pip install -e .
 ```
 
-## Quick Start
+## 快速开始
 
 ```python
 import asyncio
@@ -38,76 +38,76 @@ async def main():
         endpoint_url="http://localhost:8000",
         access_token="your-token",
     ) as client:
-        # Create a sandbox
+        # 创建沙箱
         sandbox = await client.create_sandbox(profile="python-default", ttl=600)
         
-        # Execute Python code
+        # 执行 Python 代码
         result = await sandbox.python.exec("print('Hello, World!')")
         print(result.output)  # "Hello, World!\n"
         
-        # Execute shell commands
+        # 执行 shell 命令
         result = await sandbox.shell.exec("ls -la")
         print(result.output)
         
-        # File operations
+        # 文件操作
         await sandbox.filesystem.write_file("app.py", "print('hi')")
         content = await sandbox.filesystem.read_file("app.py")
         
-        # Cleanup
+        # 清理
         await sandbox.delete()
 
 asyncio.run(main())
 ```
 
-## API Reference
+## API 参考
 
 ### BayClient
 
-The main entry point for the SDK.
+SDK 的主入口。
 
 ```python
 from shipyard_neo import BayClient
 
-# Using environment variables (SHIPYARD_ENDPOINT_URL, SHIPYARD_ACCESS_TOKEN)
+# 使用环境变量 (SHIPYARD_ENDPOINT_URL, SHIPYARD_ACCESS_TOKEN)
 async with BayClient() as client:
     ...
 
-# Explicit configuration
+# 显式配置
 async with BayClient(
     endpoint_url="http://localhost:8000",
     access_token="your-token",
-    timeout=30.0,  # Default request timeout
+    timeout=30.0,  # 默认请求超时时间
 ) as client:
     ...
 ```
 
-#### Methods
+#### 方法
 
-| Method | Description |
+| 方法 | 描述 |
 |:--|:--|
-| `create_sandbox()` | Create a new sandbox |
-| `get_sandbox(id)` | Get an existing sandbox |
-| `list_sandboxes()` | List all sandboxes |
-| `cargos` | Access CargoManager for cargo operations |
+| `create_sandbox()` | 创建新沙箱 |
+| `get_sandbox(id)` | 获取已存在的沙箱 |
+| `list_sandboxes()` | 列出所有沙箱 |
+| `cargos` | 访问 CargoManager 进行 cargo 操作 |
 
-### Sandbox Creation
+### 创建沙箱
 
 ```python
-# Basic creation
+# 基本创建
 sandbox = await client.create_sandbox(
-    profile="python-default",  # Profile ID (default: "python-default")
-    ttl=600,                   # Time-to-live in seconds (optional)
+    profile="python-default",  # Profile ID（默认值: "python-default"）
+    ttl=600,                   # 生存时间，单位秒（可选）
 )
 
-# With external cargo
+# 使用外部 cargo
 cargo = await client.cargos.create(size_limit_mb=512)
 sandbox = await client.create_sandbox(
     profile="python-default",
-    cargo_id=cargo.id,  # Attach external cargo
+    cargo_id=cargo.id,  # 附加外部 cargo
     ttl=600,
 )
 
-# With idempotency key (for safe retries)
+# 使用幂等性键（用于安全重试）
 sandbox = await client.create_sandbox(
     profile="python-default",
     ttl=600,
@@ -115,74 +115,74 @@ sandbox = await client.create_sandbox(
 )
 ```
 
-### Sandbox Properties
+### 沙箱属性
 
 ```python
-sandbox.id            # str: Unique sandbox ID
+sandbox.id            # str: 唯一沙箱 ID
 sandbox.status        # SandboxStatus: IDLE, STARTING, READY, FAILED, EXPIRED
 sandbox.profile       # str: Profile ID
-sandbox.cargo_id      # str: Associated cargo ID
+sandbox.cargo_id      # str: 关联的 cargo ID
 sandbox.capabilities  # list[str]: ["python", "shell", "filesystem"]
-sandbox.created_at    # datetime: Creation timestamp
-sandbox.expires_at    # datetime | None: TTL expiration (None = infinite)
+sandbox.created_at    # datetime: 创建时间戳
+sandbox.expires_at    # datetime | None: TTL 过期时间（None 表示无限期）
 ```
 
-### Sandbox Lifecycle
+### 沙箱生命周期
 
 ```python
-# Refresh local state from server
+# 从服务器刷新本地状态
 await sandbox.refresh()
 
-# Stop the sandbox (reclaims compute, preserves files)
+# 停止沙箱（回收计算资源，保留文件）
 await sandbox.stop()
 
-# Delete the sandbox permanently
+# 永久删除沙箱
 await sandbox.delete()
 
-# Extend TTL by N seconds
-await sandbox.extend_ttl(300)  # Extend by 5 minutes
+# 延长 TTL N 秒
+await sandbox.extend_ttl(300)  # 延长 5 分钟
 
-# With idempotency key
+# 使用幂等性键
 await sandbox.extend_ttl(300, idempotency_key="extend-001")
 
-# Send keepalive (extends idle timeout only, NOT TTL)
+# 发送保活信号（仅延长空闲超时，不延长 TTL）
 await sandbox.keepalive()
 ```
 
-### Listing Sandboxes
+### 列出沙箱
 
 ```python
 from shipyard_neo import SandboxStatus
 
-# List all sandboxes
+# 列出所有沙箱
 result = await client.list_sandboxes()
 for sb in result.items:
     print(f"{sb.id}: {sb.status}")
 
-# With pagination
+# 使用分页
 result = await client.list_sandboxes(limit=50)
 while result.next_cursor:
     result = await client.list_sandboxes(cursor=result.next_cursor, limit=50)
     for sb in result.items:
         process(sb)
 
-# Filter by status
+# 按状态过滤
 result = await client.list_sandboxes(status=SandboxStatus.READY)
 ```
 
-## Capabilities
+## 能力
 
-### Python Capability
+### Python 能力
 
-Execute Python code in an IPython kernel. Variables persist across calls.
+在 IPython 内核中执行 Python 代码。变量在多次调用间保持持久。
 
 ```python
-# Simple execution
+# 简单执行
 result = await sandbox.python.exec("print('Hello!')")
 assert result.success
 print(result.output)  # "Hello!\n"
 
-# Multi-line code
+# 多行代码
 code = """
 def fibonacci(n):
     if n <= 1: return n
@@ -193,29 +193,29 @@ print(f"fib(10) = {result}")
 """
 result = await sandbox.python.exec(code)
 
-# Variable persistence
+# 变量持久化
 await sandbox.python.exec("x = 42")
-result = await sandbox.python.exec("print(x)")  # Works!
+result = await sandbox.python.exec("print(x)")  # 可以正常工作！
 
-# Error handling
+# 错误处理
 result = await sandbox.python.exec("1 / 0")
 if not result.success:
     print(result.error)  # "ZeroDivisionError: division by zero"
 
-# Custom timeout
+# 自定义超时
 result = await sandbox.python.exec("import time; time.sleep(10)", timeout=15)
 ```
 
 #### PythonExecResult
 
-| Attribute | Type | Description |
+| 属性 | 类型 | 描述 |
 |:--|:--|:--|
-| `success` | `bool` | Whether execution completed without exception |
-| `output` | `str` | stdout output |
-| `error` | `str \| None` | Error traceback (on failure) |
-| `data` | `dict \| None` | IPython rich output |
+| `success` | `bool` | 执行是否无异常完成 |
+| `output` | `str` | stdout 输出 |
+| `error` | `str \| None` | 错误堆栈跟踪（失败时） |
+| `data` | `dict \| None` | IPython 富文本输出 |
 
-**Success Example:**
+**成功示例：**
 
 ```python
 result = await sandbox.python.exec("2 ** 10")
@@ -228,7 +228,7 @@ result = await sandbox.python.exec("2 ** 10")
 # }
 ```
 
-**Failure Example:**
+**失败示例：**
 
 ```python
 result = await sandbox.python.exec("1 / 0")
@@ -245,41 +245,41 @@ result = await sandbox.python.exec("1 / 0")
 # result.data = None
 ```
 
-### Shell Capability
+### Shell 能力
 
-Execute shell commands.
+执行 shell 命令。
 
 ```python
-# Simple command
+# 简单命令
 result = await sandbox.shell.exec("echo 'Hello!'")
 print(result.output)      # "Hello!\n"
 print(result.exit_code)   # 0
 
-# Pipe operations
+# 管道操作
 result = await sandbox.shell.exec("ls -la | grep py")
 
-# Custom working directory
+# 自定义工作目录
 result = await sandbox.shell.exec("pwd && ls", cwd="src")
 
-# Exit code handling
+# 退出码处理
 result = await sandbox.shell.exec("exit 42")
 assert not result.success
 assert result.exit_code == 42
 
-# Custom timeout
+# 自定义超时
 result = await sandbox.shell.exec("sleep 10", timeout=15)
 ```
 
 #### ShellExecResult
 
-| Attribute | Type | Description |
+| 属性 | 类型 | 描述 |
 |:--|:--|:--|
-| `success` | `bool` | Whether execution succeeded (exit_code == 0) |
-| `output` | `str` | Combined stdout + stderr output |
-| `error` | `str \| None` | Error message |
-| `exit_code` | `int \| None` | Process exit code |
+| `success` | `bool` | 执行是否成功 (exit_code == 0) |
+| `output` | `str` | 合并的 stdout + stderr 输出 |
+| `error` | `str \| None` | 错误消息 |
+| `exit_code` | `int \| None` | 进程退出码 |
 
-**Success Example:**
+**成功示例：**
 
 ```python
 result = await sandbox.shell.exec("whoami && pwd")
@@ -289,7 +289,7 @@ result = await sandbox.shell.exec("whoami && pwd")
 # result.exit_code = 0
 ```
 
-**Failure Example:**
+**失败示例：**
 
 ```python
 result = await sandbox.shell.exec("exit 42")
@@ -299,7 +299,7 @@ result = await sandbox.shell.exec("exit 42")
 # result.exit_code = 42
 ```
 
-**Pipe Example:**
+**管道示例：**
 
 ```python
 result = await sandbox.shell.exec("echo -e 'apple\\nbanana\\ncherry' | grep an")
@@ -308,144 +308,144 @@ result = await sandbox.shell.exec("echo -e 'apple\\nbanana\\ncherry' | grep an")
 # result.exit_code = 0
 ```
 
-### Filesystem Capability
+### Filesystem 能力
 
-Read, write, and manage files in the sandbox workspace (`/workspace`).
+在沙箱工作区（`/workspace`）中读取、写入和管理文件。
 
 ```python
-# Write text file
+# 写入文本文件
 await sandbox.filesystem.write_file("app.py", "print('hello')")
 
-# Write to nested path (directories created automatically)
+# 写入嵌套路径（目录自动创建）
 await sandbox.filesystem.write_file("src/main.py", "# main code")
 
-# Read text file
+# 读取文本文件
 content = await sandbox.filesystem.read_file("app.py")
 
-# List directory
+# 列出目录
 entries = await sandbox.filesystem.list_dir(".")
 for entry in entries:
     print(f"{entry.name}: {'dir' if entry.is_dir else 'file'}")
 
-# List nested directory
+# 列出嵌套目录
 entries = await sandbox.filesystem.list_dir("src")
 
-# Delete file or directory
+# 删除文件或目录
 await sandbox.filesystem.delete("app.py")
 
-# Upload binary file
+# 上传二进制文件
 binary_data = open("image.png", "rb").read()
 await sandbox.filesystem.upload("assets/image.png", binary_data)
 
-# Download binary file
+# 下载二进制文件
 data = await sandbox.filesystem.download("assets/image.png")
 open("downloaded.png", "wb").write(data)
 ```
 
 #### FileInfo
 
-| Attribute | Type | Description |
+| 属性 | 类型 | 描述 |
 |:--|:--|:--|
-| `name` | `str` | File/directory name |
-| `path` | `str` | Full path relative to /workspace |
-| `is_dir` | `bool` | Whether it's a directory |
-| `size` | `int \| None` | Size in bytes (None for directories) |
-| `modified_at` | `datetime \| None` | Last modification time |
+| `name` | `str` | 文件/目录名称 |
+| `path` | `str` | 相对于 /workspace 的完整路径 |
+| `is_dir` | `bool` | 是否为目录 |
+| `size` | `int \| None` | 大小（字节）（目录为 None） |
+| `modified_at` | `datetime \| None` | 最后修改时间 |
 
-**Directory Listing Example:**
+**目录列表示例：**
 
 ```python
 entries = await sandbox.filesystem.list_dir(".")
-# Returns: [FileInfo, FileInfo, ...]
+# 返回: [FileInfo, FileInfo, ...]
 #
-# Directory example:
+# 目录示例：
 #   entry.name = "mydir"
 #   entry.path = "mydir"
 #   entry.is_dir = True
 #   entry.size = None
 #
-# File example:
+# 文件示例：
 #   entry.name = "test.txt"
 #   entry.path = "test.txt"
 #   entry.is_dir = False
 #   entry.size = 13
 
-# Print all entries
+# 打印所有条目
 for e in entries:
     if e.is_dir:
         print(f"📁 {e.name}/")
     else:
         print(f"📄 {e.name} ({e.size} bytes)")
 
-# Typical output:
+# 典型输出：
 # 📁 mydir/
 # 📁 nested/
 # 📄 test.txt (13 bytes)
 ```
 
-## Cargo Management
+## Cargo 管理
 
-Cargo is persistent storage that survives sandbox restarts. There are two types:
-- **Managed cargo**: Created automatically with sandbox, deleted with sandbox
-- **External cargo**: Created separately, persists after sandbox deletion
+Cargo 是持久化存储，在沙箱重启后仍然保留。有两种类型：
+- **托管 cargo**：随沙箱自动创建，随沙箱删除
+- **外部 cargo**：单独创建，沙箱删除后仍然保留
 
 ```python
-# Create external cargo
+# 创建外部 cargo
 cargo = await client.cargos.create(size_limit_mb=512)
 print(f"Created cargo: {cargo.id}")
 
-# Get cargo info
+# 获取 cargo 信息
 cargo = await client.cargos.get(cargo.id)
 print(f"Managed: {cargo.managed}")
 print(f"Size limit: {cargo.size_limit_mb} MB")
 
-# List external cargos (managed cargos not included by default)
+# 列出外部 cargo（默认不包含托管 cargo）
 result = await client.cargos.list()
 for c in result.items:
     print(f"{c.id}: {c.size_limit_mb} MB")
 
-# Delete cargo
+# 删除 cargo
 await client.cargos.delete(cargo.id)
 ```
 
-### Using External Cargo
+### 使用外部 Cargo
 
 ```python
-# Create external cargo
+# 创建外部 cargo
 cargo = await client.cargos.create(size_limit_mb=1024)
 
-# Create sandbox with external cargo
+# 使用外部 cargo 创建沙箱
 sandbox = await client.create_sandbox(
     profile="python-default",
     cargo_id=cargo.id,
     ttl=600,
 )
 
-# Write data to cargo
+# 向 cargo 写入数据
 await sandbox.filesystem.write_file("data.txt", "Important data")
 
-# Delete sandbox (cargo persists!)
+# 删除沙箱（cargo 保留！）
 await sandbox.delete()
 
-# Create new sandbox with same cargo
+# 使用同一 cargo 创建新沙箱
 sandbox2 = await client.create_sandbox(
     profile="python-default",
     cargo_id=cargo.id,
     ttl=600,
 )
 
-# Data is still there!
+# 数据仍然存在！
 content = await sandbox2.filesystem.read_file("data.txt")
 assert content == "Important data"
 
-# Cleanup
+# 清理
 await sandbox2.delete()
 await client.cargos.delete(cargo.id)
 ```
 
-## Error Handling
+## 错误处理
 
-All errors inherit from `BayError`.
+所有错误都继承自 `BayError`。
 
 ```python
 from shipyard_neo import (
@@ -474,38 +474,38 @@ except BayError as e:
     print(f"API error: {e.message}")
 ```
 
-### Error Types
+### 错误类型
 
-| Exception | HTTP Code | Description |
+| 异常 | HTTP 状态码 | 描述 |
 |:--|:--|:--|
-| `UnauthorizedError` | 401 | Invalid or missing access token |
-| `ForbiddenError` | 403 | Permission denied |
-| `NotFoundError` | 404 | Resource not found |
-| `QuotaExceededError` | 429 | Rate limit or quota exceeded |
-| `ConflictError` | 409 | Resource conflict (e.g., cargo in use) |
-| `ValidationError` | 422 | Invalid request parameters |
-| `SessionNotReadyError` | 503 | Session not ready (try again) |
-| `RequestTimeoutError` | 504 | Request timeout |
-| `ShipError` | 502 | Ship (container) error |
-| `SandboxExpiredError` | 410 | Sandbox TTL expired |
-| `SandboxTTLInfiniteError` | 400 | Cannot extend infinite TTL |
-| `CapabilityNotSupportedError` | 403 | Profile doesn't support capability |
-| `InvalidPathError` | 400 | Invalid file path |
-| `CargoFileNotFoundError` | 404 | File not found in workspace |
+| `UnauthorizedError` | 401 | 访问令牌无效或缺失 |
+| `ForbiddenError` | 403 | 权限被拒绝 |
+| `NotFoundError` | 404 | 资源未找到 |
+| `QuotaExceededError` | 429 | 超出速率限制或配额 |
+| `ConflictError` | 409 | 资源冲突（如 cargo 正在使用中） |
+| `ValidationError` | 422 | 请求参数无效 |
+| `SessionNotReadyError` | 503 | 会话未就绪（请重试） |
+| `RequestTimeoutError` | 504 | 请求超时 |
+| `ShipError` | 502 | Ship（容器）错误 |
+| `SandboxExpiredError` | 410 | 沙箱 TTL 已过期 |
+| `SandboxTTLInfiniteError` | 400 | 无法延长无限期 TTL |
+| `CapabilityNotSupportedError` | 403 | Profile 不支持该能力 |
+| `InvalidPathError` | 400 | 文件路径无效 |
+| `CargoFileNotFoundError` | 404 | 工作区中未找到文件 |
 
-## Idempotency
+## 幂等性
 
-For safe retries during network failures, use idempotency keys:
+为了在网络故障时安全重试，请使用幂等性键：
 
 ```python
-# Sandbox creation
+# 创建沙箱
 sandbox = await client.create_sandbox(
     profile="python-default",
     ttl=600,
     idempotency_key="unique-request-123",
 )
 
-# Retry with same key returns same sandbox
+# 使用相同的键重试会返回相同的沙箱
 sandbox2 = await client.create_sandbox(
     profile="python-default",
     ttl=600,
@@ -513,20 +513,20 @@ sandbox2 = await client.create_sandbox(
 )
 assert sandbox.id == sandbox2.id
 
-# TTL extension
+# TTL 延长
 await sandbox.extend_ttl(300, idempotency_key="extend-001")
-# Retry returns same result
+# 重试返回相同结果
 await sandbox.extend_ttl(300, idempotency_key="extend-001")
 ```
 
-## Environment Variables
+## 环境变量
 
-The SDK supports configuration via environment variables:
+SDK 支持通过环境变量进行配置：
 
-| Variable | Description |
+| 变量 | 描述 |
 |:--|:--|
-| `SHIPYARD_ENDPOINT_URL` | Bay API endpoint URL |
-| `SHIPYARD_ACCESS_TOKEN` | Authentication token |
+| `SHIPYARD_ENDPOINT_URL` | Bay API 端点 URL |
+| `SHIPYARD_ACCESS_TOKEN` | 认证令牌 |
 
 ```python
 import os
@@ -534,65 +534,65 @@ import os
 os.environ["SHIPYARD_ENDPOINT_URL"] = "http://localhost:8000"
 os.environ["SHIPYARD_ACCESS_TOKEN"] = "your-token"
 
-# No explicit configuration needed
+# 无需显式配置
 async with BayClient() as client:
     sandbox = await client.create_sandbox()
 ```
 
-## Advanced Usage
+## 高级用法
 
-### Session Lifecycle
+### 会话生命周期
 
-Sessions are managed transparently. A capability call (Python/Shell/Filesystem) will automatically start a session if needed:
+会话被透明管理。能力调用（Python/Shell/Filesystem）会在需要时自动启动会话：
 
 ```python
-# Sandbox starts in IDLE state (no session)
+# 沙箱以 IDLE 状态启动（无会话）
 sandbox = await client.create_sandbox()
 print(sandbox.status)  # SandboxStatus.IDLE
 
-# First capability call triggers session start
+# 首次能力调用触发会话启动
 result = await sandbox.python.exec("print('hello')")
 await sandbox.refresh()
 print(sandbox.status)  # SandboxStatus.READY
 
-# Stop reclaims resources but preserves files
+# 停止会回收资源但保留文件
 await sandbox.stop()
 print(sandbox.status)  # SandboxStatus.IDLE
 
-# Next capability call auto-resumes
+# 下次能力调用会自动恢复
 result = await sandbox.python.exec("print('back!')")
-# Note: Python variables are lost after stop
+# 注意：停止后 Python 变量会丢失
 ```
 
-### Long-Running Tasks
+### 长时间运行的任务
 
-For long-running operations, extend the timeout:
+对于长时间运行的操作，请延长超时时间：
 
 ```python
-# Python execution with longer timeout
+# 使用更长超时的 Python 执行
 result = await sandbox.python.exec(
     "import time; time.sleep(60)",
     timeout=120,
 )
 
-# Shell execution with longer timeout
+# 使用更长超时的 Shell 执行
 result = await sandbox.shell.exec(
     "find / -name '*.py' 2>/dev/null",
     timeout=120,
 )
 ```
 
-### Keepalive for Idle Timeout
+### 空闲超时的保活
 
-If you're between operations but want to prevent idle timeout:
+如果你在操作之间但希望防止空闲超时：
 
 ```python
-# Keepalive extends idle timeout but NOT TTL
+# 保活会延长空闲超时但不会延长 TTL
 await sandbox.keepalive()
 
-# Note: keepalive does NOT start a session if none exists
+# 注意：如果没有会话存在，保活不会启动会话
 ```
 
-## License
+## 许可证
 
-AGPL-3.0-or-later. See [LICENSE](./LICENSE) for details.
+AGPL-3.0-or-later。详见 [LICENSE](./LICENSE)。
