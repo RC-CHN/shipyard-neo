@@ -1,12 +1,12 @@
 """Resilience test: OOM Killed container behavior.
 
-Purpose: Verify the system correctly handles containers killed due to memory limits.
+Purpose: Verify the system correctly handles runtimes killed due to memory limits.
 
 Scenario:
 1. Create a sandbox using a profile with limited memory (e.g., 128MB).
 2. Execute code that attempts to allocate more memory than allowed.
-3. Verify the container is killed by OOM and the sandbox status reflects this.
-4. Optionally verify the error message/logs indicate OOM.
+3. Verify the runtime is killed by OOM and the sandbox status remains accessible.
+4. Optionally verify the exit code indicates OOM.
 
 Note: This test requires a profile with strict memory limits.
       If such profile doesn't exist, the test will be skipped.
@@ -17,7 +17,6 @@ Parallel-safe: Yes - each test creates/deletes its own sandbox.
 from __future__ import annotations
 
 import asyncio
-import subprocess
 
 import httpx
 import pytest
@@ -27,6 +26,8 @@ from tests.integration.conftest import (
     BAY_BASE_URL,
     create_sandbox,
     e2e_skipif_marks,
+    get_runtime_exit_code,
+    get_runtime_id_by_sandbox,
 )
 
 pytestmark = e2e_skipif_marks
@@ -56,10 +57,10 @@ async def _skip_if_oom_profile_missing():
 
 
 class TestOOMKilled:
-    """Test system behavior when container is killed due to OOM."""
+    """Test system behavior when runtime is killed due to OOM."""
 
     async def test_oom_returns_error_not_hang(self) -> None:
-        """When container OOMs, exec should return error, not hang indefinitely."""
+        """When runtime OOMs, exec should return error, not hang indefinitely."""
         # Dynamic check - skip if profile not configured
         await _skip_if_oom_profile_missing()
 
@@ -82,9 +83,9 @@ print(f'Allocated {len(big_list)} MB')
 
                 # Execute the memory-hungry code
                 # This should either:
-                # - Return error (container killed)
+                # - Return error (runtime killed)
                 # - Return MemoryError from Python
-                # - Timeout (container killed before response)
+                # - Timeout (runtime killed before response)
                 try:
                     exec_resp = await client.post(
                         f"/v1/sandboxes/{sandbox_id}/python/exec",
@@ -92,7 +93,7 @@ print(f'Allocated {len(big_list)} MB')
                         timeout=90.0,
                     )
                 except httpx.ReadTimeout:
-                    # Timeout is acceptable - container was killed
+                    # Timeout is acceptable - runtime was killed
                     pass
                 else:
                     # If we got a response, verify it's an error
@@ -117,7 +118,7 @@ print(f'Allocated {len(big_list)} MB')
                 assert status_resp.status_code == 200
 
     async def test_container_exit_code_indicates_oom(self) -> None:
-        """Container exit code should indicate OOM kill (137 = SIGKILL)."""
+        """Runtime exit code should indicate OOM kill (137 = SIGKILL)."""
         # Dynamic check - skip if profile not configured
         await _skip_if_oom_profile_missing()
 
@@ -127,7 +128,7 @@ print(f'Allocated {len(big_list)} MB')
             async with create_sandbox(client, profile=OOM_TEST_PROFILE) as sandbox:
                 sandbox_id = sandbox["id"]
 
-                # First, start a session to get a container
+                # First, start a session to get a runtime
                 warmup = await client.post(
                     f"/v1/sandboxes/{sandbox_id}/python/exec",
                     json={"code": "print('warmup')", "timeout": 30},
@@ -135,23 +136,10 @@ print(f'Allocated {len(big_list)} MB')
                 )
                 assert warmup.status_code == 200
 
-                # Find container ID
-                result = subprocess.run(
-                    [
-                        "docker",
-                        "ps",
-                        "-q",
-                        "--filter",
-                        f"label=bay.sandbox_id={sandbox_id}",
-                    ],
-                    capture_output=True,
-                    timeout=10,
-                    text=True,
-                )
-                if result.returncode != 0 or not result.stdout.strip():
-                    pytest.skip("Could not find container")
-
-                container_id = result.stdout.strip().split("\n")[0]
+                # Find runtime ID (Docker container ID or K8s Pod name)
+                runtime_id = get_runtime_id_by_sandbox(sandbox_id)
+                if runtime_id is None:
+                    pytest.skip("Could not find runtime")
 
                 # Trigger OOM
                 oom_code = """
@@ -170,27 +158,14 @@ for i in range(500):
 
                 await asyncio.sleep(2.0)
 
-                # Check container exit code
-                inspect_result = subprocess.run(
-                    [
-                        "docker",
-                        "inspect",
-                        "-f",
-                        "{{.State.ExitCode}}",
-                        container_id,
-                    ],
-                    capture_output=True,
-                    timeout=10,
-                    text=True,
-                )
+                # Check runtime exit code
+                exit_code = get_runtime_exit_code(runtime_id)
+                if exit_code is None:
+                    pytest.skip("Could not determine runtime exit code")
 
-                if inspect_result.returncode == 0:
-                    exit_code_str = inspect_result.stdout.strip()
-                    if exit_code_str.isdigit():
-                        exit_code = int(exit_code_str)
-                        # 137 = 128 + 9 (SIGKILL)
-                        # This is typical for OOM kill
-                        # But we don't strictly require it since Python might catch MemoryError first
-                        if exit_code == 137:
-                            # OOM confirmed
-                            pass
+                # 137 = 128 + 9 (SIGKILL)
+                # This is typical for OOM kill
+                # But we don't strictly require it since Python might catch MemoryError first
+                if exit_code == 137:
+                    # OOM confirmed
+                    pass

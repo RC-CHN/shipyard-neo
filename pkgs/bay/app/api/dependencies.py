@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.db.session import get_session_dependency
 from app.drivers.base import Driver
 from app.drivers.docker import DockerDriver
+from app.drivers.k8s import K8sDriver
 from app.errors import CapabilityNotSupportedError, UnauthorizedError
 from app.managers.cargo import CargoManager
 from app.managers.sandbox import SandboxManager
@@ -37,6 +38,8 @@ def get_driver() -> Driver:
     settings = get_settings()
     if settings.driver.type == "docker":
         return DockerDriver()
+    elif settings.driver.type == "k8s":
+        return K8sDriver()
     else:
         raise ValueError(f"Unsupported driver type: {settings.driver.type}")
 

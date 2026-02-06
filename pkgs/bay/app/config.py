@@ -58,10 +58,29 @@ class DockerConfig(BaseModel):
 
 
 class K8sConfig(BaseModel):
-    """Kubernetes driver configuration (Phase 2)."""
+    """Kubernetes driver configuration (Phase 2).
+
+    Bay acts as the only external gateway. Ship Pods communicate via Pod IP directly.
+    No Service/Ingress needed for individual Ship Pods.
+    """
 
     namespace: str = "bay"
-    kubeconfig: str | None = None
+    kubeconfig: str | None = None  # None = in-cluster config
+
+    # PVC storage class (None = use cluster default)
+    storage_class: str | None = None
+
+    # Default storage size for PVC
+    default_storage_size: str = "1Gi"
+
+    # Image pull secrets (for private registries)
+    image_pull_secrets: list[str] = Field(default_factory=list)
+
+    # Pod startup timeout in seconds
+    pod_startup_timeout: int = 60
+
+    # Pod labels prefix (for filtering)
+    label_prefix: str = "bay"
 
 
 class DriverConfig(BaseModel):

@@ -41,6 +41,10 @@ E2E_API_KEY = os.environ.get("E2E_API_KEY", "e2e-test-api-key")
 AUTH_HEADERS = {"Authorization": f"Bearer {E2E_API_KEY}"}
 DEFAULT_PROFILE = "python-default"
 
+# Driver type detection: 'docker' (default) or 'k8s'
+E2E_DRIVER_TYPE = os.environ.get("E2E_DRIVER_TYPE", "docker")
+E2E_K8S_NAMESPACE = os.environ.get("E2E_K8S_NAMESPACE", "bay-e2e-test")
+
 # Timeout configuration for parallel test stability
 # Docker operations (create/delete container/volume) can be slow under load
 DEFAULT_TIMEOUT = 30.0  # Default timeout for most operations
@@ -190,6 +194,170 @@ def docker_container_exists(name: str) -> bool:
 
 
 # =============================================================================
+# K8S HELPERS
+# =============================================================================
+
+def k8s_pvc_exists(name: str, namespace: str | None = None) -> bool:
+    """Check if a PersistentVolumeClaim exists in K8s."""
+    ns = namespace or E2E_K8S_NAMESPACE
+    try:
+        return subprocess.run(
+            ["kubectl", "get", "pvc", name, "-n", ns],
+            capture_output=True, timeout=10
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def k8s_get_pod_by_label(label_key: str, label_value: str, namespace: str | None = None) -> str | None:
+    """Get Pod name by label. Returns first matching pod name or None."""
+    ns = namespace or E2E_K8S_NAMESPACE
+    try:
+        result = subprocess.run(
+            [
+                "kubectl", "get", "pods",
+                "-n", ns,
+                "-l", f"{label_key}={label_value}",
+                "-o", "jsonpath={.items[0].metadata.name}",
+            ],
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    except Exception:
+        return None
+
+
+def k8s_delete_pod(pod_name: str, namespace: str | None = None, force: bool = False) -> bool:
+    """Delete a Pod. Returns True if succeeded."""
+    ns = namespace or E2E_K8S_NAMESPACE
+    cmd = ["kubectl", "delete", "pod", pod_name, "-n", ns]
+    if force:
+        cmd.extend(["--grace-period=0", "--force"])
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0
+    except Exception:
+        return False
+
+
+def k8s_get_pod_exit_code(pod_name: str, namespace: str | None = None) -> int | None:
+    """Get Pod container exit code. Returns None if not available."""
+    ns = namespace or E2E_K8S_NAMESPACE
+    try:
+        result = subprocess.run(
+            [
+                "kubectl", "get", "pod", pod_name,
+                "-n", ns,
+                "-o", "jsonpath={.status.containerStatuses[0].state.terminated.exitCode}",
+            ],
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return int(result.stdout.strip())
+        return None
+    except Exception:
+        return None
+
+
+# =============================================================================
+# UNIFIED STORAGE HELPERS
+# =============================================================================
+
+def cargo_volume_exists(cargo_id: str) -> bool:
+    """Check if a cargo's underlying volume/PVC exists.
+    
+    Automatically detects driver type from E2E_DRIVER_TYPE environment variable
+    and uses appropriate check method.
+    
+    Args:
+        cargo_id: The cargo ID (e.g., 'ws-abc123')
+    
+    Returns:
+        True if the volume/PVC exists, False otherwise
+    """
+    volume_name = f"bay-cargo-{cargo_id}"
+    
+    if E2E_DRIVER_TYPE == "k8s":
+        return k8s_pvc_exists(volume_name)
+    else:
+        return docker_volume_exists(volume_name)
+
+
+# =============================================================================
+# UNIFIED CONTAINER/POD HELPERS
+# =============================================================================
+
+def get_runtime_id_by_sandbox(sandbox_id: str) -> str | None:
+    """Get container ID (Docker) or Pod name (K8s) for a sandbox.
+    
+    Returns the first matching runtime instance or None if not found.
+    """
+    if E2E_DRIVER_TYPE == "k8s":
+        return k8s_get_pod_by_label("bay.sandbox_id", sandbox_id)
+    else:
+        # Docker mode
+        try:
+            result = subprocess.run(
+                [
+                    "docker", "ps", "-q",
+                    "--filter", f"label=bay.sandbox_id={sandbox_id}",
+                ],
+                capture_output=True,
+                timeout=10,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().split("\n")[0]
+            return None
+        except Exception:
+            return None
+
+
+def kill_runtime(runtime_id: str) -> bool:
+    """Force kill a container (Docker) or delete a Pod (K8s).
+    
+    Returns True if succeeded.
+    """
+    if E2E_DRIVER_TYPE == "k8s":
+        return k8s_delete_pod(runtime_id, force=True)
+    else:
+        # Docker mode
+        try:
+            return subprocess.run(
+                ["docker", "kill", runtime_id],
+                capture_output=True,
+                timeout=10,
+            ).returncode == 0
+        except Exception:
+            return False
+
+
+def get_runtime_exit_code(runtime_id: str) -> int | None:
+    """Get container/Pod exit code. Returns None if not available."""
+    if E2E_DRIVER_TYPE == "k8s":
+        return k8s_get_pod_exit_code(runtime_id)
+    else:
+        # Docker mode
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.ExitCode}}", runtime_id],
+                capture_output=True,
+                timeout=10,
+                text=True,
+            )
+            if result.returncode == 0 and result.stdout.strip().isdigit():
+                return int(result.stdout.strip())
+            return None
+        except Exception:
+            return None
+
+
+# =============================================================================
 # SANDBOX FIXTURES
 # =============================================================================
 
@@ -228,6 +396,15 @@ async def create_sandbox(
             warnings.warn(
                 f"Timeout deleting sandbox {sandbox['id']} during cleanup. "
                 "Sandbox will be cleaned up by GC or manual cleanup script.",
+                stacklevel=2,
+            )
+        except httpx.TransportError as e:
+            # In some failure modes (e.g. Bay pod restart / port-forward drop),
+            # the server may disconnect during cleanup. Don't mask the test result.
+            import warnings
+
+            warnings.warn(
+                f"Transport error deleting sandbox {sandbox['id']} during cleanup: {e}",
                 stacklevel=2,
             )
 

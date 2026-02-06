@@ -17,7 +17,7 @@ from ..conftest import (
     BAY_BASE_URL,
     DEFAULT_PROFILE,
     create_sandbox,
-    docker_volume_exists,
+    cargo_volume_exists,
     e2e_skipif_marks,
 )
 
@@ -159,14 +159,13 @@ async def test_delete_removes_managed_cargo_volume():
         sandbox = create_resp.json()
         sandbox_id = sandbox["id"]
         cargo_id = sandbox["cargo_id"]
-        volume_name = f"bay-cargo-{cargo_id}"
 
-        # Verify volume exists
-        assert docker_volume_exists(volume_name), f"Volume {volume_name} should exist"
+        # Verify volume/PVC exists (works for both Docker and K8s)
+        assert cargo_volume_exists(cargo_id), f"Volume for cargo {cargo_id} should exist"
 
         # Delete
         await client.delete(f"/v1/sandboxes/{sandbox_id}", timeout=120.0)
         await asyncio.sleep(0.5)
 
         # Volume should be gone
-        assert not docker_volume_exists(volume_name), f"Volume {volume_name} should be deleted"
+        assert not cargo_volume_exists(cargo_id), f"Volume for cargo {cargo_id} should be deleted"

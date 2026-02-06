@@ -1,0 +1,117 @@
+# Bay E2E test config for Kubernetes mode (kind)
+#
+# This config is used when Bay runs on the host and connects to
+# Ship Pods in a kind cluster via Pod IP.
+#
+# Usage:
+#   ./run.sh  # This script sets up kind cluster and runs tests
+
+server:
+  host: "0.0.0.0"
+  port: 8003
+
+database:
+  # Test database (will be deleted after test)
+  url: "sqlite+aiosqlite:///./bay-k8s-e2e-test.db"
+  echo: false
+
+driver:
+  type: k8s
+  k8s:
+    namespace: "bay"
+    # kubeconfig will be set via environment variable
+    kubeconfig: null
+    storage_class: null  # Use default storage class in kind
+    default_storage_size: "1Gi"
+    image_pull_secrets: []
+    pod_startup_timeout: 120  # Longer timeout for kind
+    label_prefix: "bay"
+
+cargo:
+  root_path: "/var/lib/bay/cargos"
+  default_size_limit_mb: 1024
+  mount_path: "/workspace"
+
+security:
+  # E2E test mode: require API key for authentication testing
+  api_key: "e2e-test-api-key"
+  allow_anonymous: false
+
+profiles:
+  - id: python-default
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem
+      - shell
+      - python
+      - upload
+      - download
+    idle_timeout: 300  # Shorter timeout for tests
+    env: {}
+
+  # Restricted profile for capability enforcement testing
+  - id: python-only-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - python  # Only python - no shell/filesystem access
+    idle_timeout: 300
+    env: {}
+
+  # Profile with very short idle_timeout for GC testing
+  - id: short-idle-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "1g"
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 2  # Very short - 2 seconds for quick GC testing
+    env: {}
+
+  # Profile with strict memory limit for OOM testing
+  - id: oom-test
+    image: "ship:latest"
+    runtime_type: ship
+    runtime_port: 8123
+    resources:
+      cpus: 1.0
+      memory: "128m"  # Strict 128MB limit to trigger OOM quickly
+    capabilities:
+      - filesystem
+      - shell
+      - python
+    idle_timeout: 300
+    env: {}
+
+gc:
+  # Disable automatic GC during E2E tests.
+  # Tests use POST /v1/admin/gc/run to trigger GC manually when needed.
+  enabled: false
+  run_on_startup: false
+  interval_seconds: 300  # Not used when enabled=false
+
+  # Make instance_id deterministic for strict orphan container cleanup
+  instance_id: "bay-k8s-e2e"
+
+  idle_session:
+    enabled: true
+  expired_sandbox:
+    enabled: true
+  orphan_cargo:
+    enabled: true
+  orphan_container:
+    enabled: true

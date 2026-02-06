@@ -9,7 +9,7 @@ Phase 1.5 Behavior:
 
 Scenario:
 1. Create a sandbox and start a session (exec Python code).
-2. Use `docker kill` to forcefully terminate the container.
+2. Kill the underlying runtime instance (Docker container or K8s Pod).
 3. Query sandbox status via API and verify it reflects the failure.
 4. Attempt another exec and verify it recovers automatically (returns 200).
 
@@ -19,7 +19,6 @@ Parallel-safe: Yes - each test creates/deletes its own sandbox.
 from __future__ import annotations
 
 import asyncio
-import subprocess
 
 import httpx
 import pytest
@@ -30,51 +29,18 @@ from tests.integration.conftest import (
     DEFAULT_PROFILE,
     create_sandbox,
     e2e_skipif_marks,
+    get_runtime_id_by_sandbox,
+    kill_runtime,
 )
 
 pytestmark = e2e_skipif_marks
 
 
-def _docker_kill_container(container_name_or_id: str) -> bool:
-    """Force kill a Docker container. Returns True if command succeeded."""
-    try:
-        result = subprocess.run(
-            ["docker", "kill", container_name_or_id],
-            capture_output=True,
-            timeout=10,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def _get_container_id_by_session(session_id: str) -> str | None:
-    """Get container ID by session label."""
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "ps",
-                "-q",
-                "--filter",
-                f"label=bay.session_id={session_id}",
-            ],
-            capture_output=True,
-            timeout=10,
-            text=True,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip().split("\n")[0]
-        return None
-    except Exception:
-        return None
-
-
 class TestContainerCrash:
-    """Test system behavior when container is forcefully terminated."""
+    """Test system behavior when runtime instance is forcefully terminated."""
 
     async def test_auto_recovery_after_container_killed(self) -> None:
-        """Phase 1.5: After docker kill, subsequent exec should auto-recover and return 200."""
+        """Phase 1.5: After kill, subsequent exec should auto-recover and return 200."""
         async with httpx.AsyncClient(
             base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
         ) as client:
@@ -90,33 +56,18 @@ class TestContainerCrash:
                 assert exec1.status_code == 200, f"Initial exec failed: {exec1.text}"
                 assert exec1.json()["success"] is True
 
-                # 2) Find container to kill
-                container_id = None
-                result = subprocess.run(
-                    [
-                        "docker",
-                        "ps",
-                        "-q",
-                        "--filter",
-                        f"label=bay.sandbox_id={sandbox_id}",
-                    ],
-                    capture_output=True,
-                    timeout=10,
-                    text=True,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    container_id = result.stdout.strip().split("\n")[0]
+                # 2) Find runtime instance to kill
+                runtime_id = get_runtime_id_by_sandbox(sandbox_id)
+                if runtime_id is None:
+                    pytest.skip("Could not find runtime instance to kill")
 
-                if container_id is None:
-                    pytest.skip("Could not find container to kill")
+                old_runtime_id = runtime_id
 
-                old_container_id = container_id
+                # 3) Kill the runtime instance
+                killed = kill_runtime(runtime_id)
+                assert killed, f"Failed to kill runtime instance {runtime_id}"
 
-                # 3) Kill the container
-                killed = _docker_kill_container(container_id)
-                assert killed, f"Failed to kill container {container_id}"
-
-                # 4) Small delay to let container fully exit
+                # 4) Small delay to let runtime fully exit
                 await asyncio.sleep(0.5)
 
                 # 5) Attempt another exec - Phase 1.5 should auto-recover
@@ -139,24 +90,12 @@ class TestContainerCrash:
                     assert exec2_result["success"] is True
                     assert "after_crash" in exec2_result.get("output", "")
 
-                    # Verify a new container was created (not the old dead one)
-                    new_result = subprocess.run(
-                        [
-                            "docker",
-                            "ps",
-                            "-q",
-                            "--filter",
-                            f"label=bay.sandbox_id={sandbox_id}",
-                        ],
-                        capture_output=True,
-                        timeout=10,
-                        text=True,
-                    )
-                    if new_result.returncode == 0 and new_result.stdout.strip():
-                        new_container_id = new_result.stdout.strip().split("\n")[0]
+                    # Verify a new runtime was created (not the old dead one)
+                    new_runtime_id = get_runtime_id_by_sandbox(sandbox_id)
+                    if new_runtime_id is not None:
                         assert (
-                            new_container_id != old_container_id
-                        ), "Should have created a new container after crash recovery"
+                            new_runtime_id != old_runtime_id
+                        ), "Should have created a new runtime after crash recovery"
                 elif exec2.status_code == 503:
                     # Recovery in progress - retry once more
                     await asyncio.sleep(2.0)
@@ -170,7 +109,7 @@ class TestContainerCrash:
                     assert exec3_result["success"] is True
 
     async def test_sandbox_status_updates_after_container_exit(self) -> None:
-        """Sandbox status should update when container exits unexpectedly."""
+        """Sandbox status should update when runtime exits unexpectedly."""
         async with httpx.AsyncClient(
             base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
         ) as client:
@@ -190,22 +129,10 @@ class TestContainerCrash:
                 initial_status = status1.json()["status"]
                 assert initial_status in ("ready", "starting")
 
-                # Find and kill container
-                result = subprocess.run(
-                    [
-                        "docker",
-                        "ps",
-                        "-q",
-                        "--filter",
-                        f"label=bay.sandbox_id={sandbox_id}",
-                    ],
-                    capture_output=True,
-                    timeout=10,
-                    text=True,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    container_id = result.stdout.strip().split("\n")[0]
-                    _docker_kill_container(container_id)
+                # Find and kill runtime
+                runtime_id = get_runtime_id_by_sandbox(sandbox_id)
+                if runtime_id is not None:
+                    kill_runtime(runtime_id)
 
                 # Poll for status change (with timeout)
                 deadline = asyncio.get_event_loop().time() + 10.0

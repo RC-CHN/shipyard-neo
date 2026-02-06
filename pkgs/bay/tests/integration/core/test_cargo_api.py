@@ -26,7 +26,7 @@ from ..conftest import (
     DEFAULT_PROFILE,
     DEFAULT_TIMEOUT,
     create_sandbox,
-    docker_volume_exists,
+    cargo_volume_exists,
     e2e_skipif_marks,
 )
 
@@ -303,10 +303,9 @@ async def test_delete_external_cargo_success():
         assert resp.status_code == 201
         cargo = resp.json()
         cargo_id = cargo["id"]
-        volume_name = f"bay-cargo-{cargo_id}"
 
-        # Verify volume exists
-        assert docker_volume_exists(volume_name)
+        # Verify volume/PVC exists (works for both Docker and K8s)
+        assert cargo_volume_exists(cargo_id)
 
         # Delete
         resp = await client.delete(
@@ -316,7 +315,7 @@ async def test_delete_external_cargo_success():
 
         # Verify gone
         await asyncio.sleep(0.5)
-        assert not docker_volume_exists(volume_name)
+        assert not cargo_volume_exists(cargo_id)
 
 
 async def test_delete_external_cargo_referenced_by_active_sandbox():

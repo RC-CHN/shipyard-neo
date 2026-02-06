@@ -17,6 +17,9 @@ dependencies = [
     # Docker
     "aiodocker>=0.21.0",
     
+    # Kubernetes
+    "kubernetes-asyncio>=31.0.0",
+    
     # HTTP client
     "httpx>=0.26.0",
     

@@ -22,7 +22,7 @@ from ..conftest import (
     AUTH_HEADERS,
     BAY_BASE_URL,
     DEFAULT_PROFILE,
-    docker_volume_exists,
+    cargo_volume_exists,
     e2e_skipif_marks,
 )
 
@@ -128,11 +128,10 @@ class TestServerlessExecutionWorkflow:
             sandbox = create_response.json()
             sandbox_id = sandbox["id"]
             cargo_id = sandbox["cargo_id"]
-            volume_name = f"bay-cargo-{cargo_id}"
 
-            # Verify volume was created
-            assert docker_volume_exists(volume_name), (
-                f"Volume {volume_name} should exist after create"
+            # Verify volume/PVC was created (works for both Docker and K8s)
+            assert cargo_volume_exists(cargo_id), (
+                f"Volume for cargo {cargo_id} should exist after create"
             )
 
             # Execute to start container
@@ -147,8 +146,8 @@ class TestServerlessExecutionWorkflow:
             assert delete_response.status_code == 204
 
             await asyncio.sleep(1.0)
-            assert not docker_volume_exists(volume_name), (
-                f"Volume {volume_name} should be deleted after delete"
+            assert not cargo_volume_exists(cargo_id), (
+                f"Volume for cargo {cargo_id} should be deleted after delete"
             )
             get_response = await client.get(f"/v1/sandboxes/{sandbox_id}")
             assert get_response.status_code == 404
