@@ -394,6 +394,12 @@ Cargo is persistent storage that survives sandbox restarts. There are two types:
 cargo = await client.cargos.create(size_limit_mb=512)
 print(f"Created cargo: {cargo.id}")
 
+# With idempotency key (for safe retries)
+cargo = await client.cargos.create(
+    size_limit_mb=512,
+    idempotency_key="cargo-unique-123",
+)
+
 # Get cargo info
 cargo = await client.cargos.get(cargo.id)
 print(f"Managed: {cargo.managed}")

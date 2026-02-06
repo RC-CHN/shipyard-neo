@@ -394,6 +394,12 @@ Cargo 是持久化存储，在沙箱重启后仍然保留。有两种类型：
 cargo = await client.cargos.create(size_limit_mb=512)
 print(f"Created cargo: {cargo.id}")
 
+# 使用幂等性键创建（用于安全重试）
+cargo = await client.cargos.create(
+    size_limit_mb=512,
+    idempotency_key="cargo-unique-123",
+)
+
 # 获取 cargo 信息
 cargo = await client.cargos.get(cargo.id)
 print(f"Managed: {cargo.managed}")
