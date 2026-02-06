@@ -30,6 +30,7 @@ from tests.integration.conftest import (
     create_sandbox,
     e2e_skipif_marks,
     get_runtime_id_by_sandbox,
+    get_runtime_identity,
     kill_runtime,
 )
 
@@ -61,7 +62,9 @@ class TestContainerCrash:
                 if runtime_id is None:
                     pytest.skip("Could not find runtime instance to kill")
 
-                old_runtime_id = runtime_id
+                # Get the unique identity of the runtime (Pod UID in K8s, container ID in Docker)
+                # This is the true unique identifier that changes when a new instance is created
+                old_runtime_identity = get_runtime_identity(runtime_id)
 
                 # 3) Kill the runtime instance
                 killed = kill_runtime(runtime_id)
@@ -91,11 +94,15 @@ class TestContainerCrash:
                     assert "after_crash" in exec2_result.get("output", "")
 
                     # Verify a new runtime was created (not the old dead one)
+                    # Use get_runtime_identity to get the unique identity (Pod UID in K8s)
+                    # Pod name stays the same (bay-session-{session_id}), but UID changes
                     new_runtime_id = get_runtime_id_by_sandbox(sandbox_id)
-                    if new_runtime_id is not None:
-                        assert (
-                            new_runtime_id != old_runtime_id
-                        ), "Should have created a new runtime after crash recovery"
+                    if new_runtime_id is not None and old_runtime_identity is not None:
+                        new_runtime_identity = get_runtime_identity(new_runtime_id)
+                        if new_runtime_identity is not None:
+                            assert (
+                                new_runtime_identity != old_runtime_identity
+                            ), "Should have created a new runtime after crash recovery"
                 elif exec2.status_code == 503:
                     # Recovery in progress - retry once more
                     await asyncio.sleep(2.0)

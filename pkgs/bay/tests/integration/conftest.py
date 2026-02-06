@@ -264,6 +264,32 @@ def k8s_get_pod_exit_code(pod_name: str, namespace: str | None = None) -> int | 
         return None
 
 
+def k8s_get_pod_uid(pod_name: str, namespace: str | None = None) -> str | None:
+    """Get Pod UID (changes when a Pod is recreated with the same name)."""
+    ns = namespace or E2E_K8S_NAMESPACE
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                "pod",
+                pod_name,
+                "-n",
+                ns,
+                "-o",
+                "jsonpath={.metadata.uid}",
+            ],
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    except Exception:
+        return None
+
+
 # =============================================================================
 # UNIFIED STORAGE HELPERS
 # =============================================================================
@@ -355,6 +381,20 @@ def get_runtime_exit_code(runtime_id: str) -> int | None:
             return None
         except Exception:
             return None
+
+
+def get_runtime_identity(runtime_id: str) -> str | None:
+    """Get a stable identity token for the runtime instance.
+
+    - Docker: container ID is already unique/stable for the lifetime of the container.
+    - K8s: Pod name can be reused; use Pod UID to detect recreation.
+
+    Returns None if the identity can't be determined.
+    """
+    if E2E_DRIVER_TYPE == "k8s":
+        return k8s_get_pod_uid(runtime_id)
+    return runtime_id
+
 
 
 # =============================================================================
