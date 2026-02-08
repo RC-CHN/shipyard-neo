@@ -127,6 +127,7 @@ async def test_non_json_502_maps_to_ship_error_with_bounded_snippet(httpx_mock):
     async with BayClient(
         endpoint_url="http://localhost:8000",
         access_token="test-token",
+        max_retries=0,
     ) as client:
         with pytest.raises(ShipError) as exc_info:
             await client.get_sandbox("sbx_123")

@@ -53,9 +53,7 @@ class HTTPClient:
         method_upper = method.upper()
         if method_upper in {"GET", "PUT", "DELETE"}:
             return True
-        if method_upper == "POST" and has_idempotency_key:
-            return True
-        return False
+        return method_upper == "POST" and has_idempotency_key
 
     @staticmethod
     def _is_retryable_status(status_code: int) -> bool:
