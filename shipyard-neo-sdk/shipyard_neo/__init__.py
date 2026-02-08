@@ -21,29 +21,49 @@ from shipyard_neo.errors import (
     UnauthorizedError,
     ValidationError,
 )
+from shipyard_neo.skills import SkillManager
 from shipyard_neo.types import (
     CargoInfo,
     CargoList,
+    ExecutionHistoryEntry,
+    ExecutionHistoryList,
     FileInfo,
     PythonExecResult,
     SandboxInfo,
     SandboxList,
     SandboxStatus,
     ShellExecResult,
+    SkillCandidateInfo,
+    SkillCandidateList,
+    SkillCandidateStatus,
+    SkillEvaluationInfo,
+    SkillReleaseInfo,
+    SkillReleaseList,
+    SkillReleaseStage,
 )
 
 __all__ = [
     # Client
     "BayClient",
+    "SkillManager",
     # Types
     "SandboxStatus",
     "SandboxInfo",
     "SandboxList",
     "CargoInfo",
     "CargoList",
+    "ExecutionHistoryEntry",
+    "ExecutionHistoryList",
     "FileInfo",
     "PythonExecResult",
     "ShellExecResult",
+    "SkillCandidateStatus",
+    "SkillReleaseStage",
+    "SkillCandidateInfo",
+    "SkillCandidateList",
+    "SkillEvaluationInfo",
+    "SkillReleaseInfo",
+    "SkillReleaseList",
     # Errors
     "BayError",
     "NotFoundError",

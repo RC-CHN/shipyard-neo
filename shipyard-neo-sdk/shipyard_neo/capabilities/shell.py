@@ -18,6 +18,9 @@ class ShellCapability(BaseCapability):
         *,
         timeout: int = 30,
         cwd: str | None = None,
+        include_code: bool = False,
+        description: str | None = None,
+        tags: str | None = None,
     ) -> ShellExecResult:
         """Execute a shell command in the sandbox.
 
@@ -25,6 +28,9 @@ class ShellCapability(BaseCapability):
             command: Shell command to execute
             timeout: Execution timeout in seconds (1-300)
             cwd: Working directory relative to /workspace
+            include_code: Include executed command in response payload
+            description: Optional execution description to store in history
+            tags: Optional comma-separated tags to store in history
 
         Returns:
             ShellExecResult with output, error, and exit code
@@ -38,6 +44,9 @@ class ShellCapability(BaseCapability):
         body: dict = {
             "command": command,
             "timeout": timeout,
+            "include_code": include_code,
+            "description": description,
+            "tags": tags,
         }
         if cwd is not None:
             body["cwd"] = cwd

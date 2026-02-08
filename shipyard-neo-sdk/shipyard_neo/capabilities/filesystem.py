@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from shipyard_neo.capabilities.base import BaseCapability
 from shipyard_neo.types import FileInfo
 

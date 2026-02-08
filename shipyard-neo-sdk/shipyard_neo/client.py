@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 from types import TracebackType
-from typing import TYPE_CHECKING
 
 from shipyard_neo._http import HTTPClient
 from shipyard_neo.cargo import CargoManager
 from shipyard_neo.sandbox import Sandbox
+from shipyard_neo.skills import SkillManager
 from shipyard_neo.types import SandboxInfo, SandboxList, SandboxStatus
 
 
@@ -69,8 +69,9 @@ class BayClient:
 
         # Cargo manager (initialized lazily with HTTP client)
         self._cargos: CargoManager | None = None
+        self._skills: SkillManager | None = None
 
-    async def __aenter__(self) -> "BayClient":
+    async def __aenter__(self) -> BayClient:
         """Enter async context, initializing HTTP client."""
         self._http = HTTPClient(
             base_url=self._endpoint_url,
@@ -80,6 +81,7 @@ class BayClient:
         )
         await self._http.__aenter__()
         self._cargos = CargoManager(self._http)
+        self._skills = SkillManager(self._http)
         return self
 
     async def __aexit__(
@@ -93,6 +95,7 @@ class BayClient:
             await self._http.__aexit__(exc_type, exc_val, exc_tb)
             self._http = None
             self._cargos = None
+            self._skills = None
 
     @property
     def http(self) -> HTTPClient:
@@ -107,6 +110,13 @@ class BayClient:
         if self._cargos is None:
             raise RuntimeError("BayClient not initialized. Use 'async with' context.")
         return self._cargos
+
+    @property
+    def skills(self) -> SkillManager:
+        """Skill lifecycle API."""
+        if self._skills is None:
+            raise RuntimeError("BayClient not initialized. Use 'async with' context.")
+        return self._skills
 
     # Sandbox operations
 

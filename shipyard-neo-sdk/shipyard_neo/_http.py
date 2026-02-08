@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from shipyard_neo.errors import BayError, raise_for_error_response
+from shipyard_neo.errors import raise_for_error_response
 
 logger = logging.getLogger("shipyard_neo")
 
@@ -47,7 +47,7 @@ class HTTPClient:
         self._max_retries = max_retries
         self._client: httpx.AsyncClient | None = None
 
-    async def __aenter__(self) -> "HTTPClient":
+    async def __aenter__(self) -> HTTPClient:
         """Enter async context, creating HTTP client."""
         # Don't set Content-Type here; set it per-request
         # This allows multipart uploads to set their own content type
