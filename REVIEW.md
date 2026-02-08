@@ -7,13 +7,13 @@
 > - **轻量化优先**：拒绝引入不必要的重型依赖，用最简单的方案解决实际问题
 > - "Theory loses. Every single time." — 解决真实问题，不做过度设计
 >
-> **最后更新**: 2026-02-05
+> **最后更新**: 2026-02-08
 
 ---
 
 ## 总体评价
 
-这个项目架构清晰，分层合理（Bay 编排层 + Ship 运行时）。数据模型设计体现了"计算与存储分离"的核心理念。项目已经很好地保持了轻量化——仅依赖 FastAPI + SQLite/SQLModel + Docker，没有引入 Redis/etcd 等分布式组件。
+这个项目架构清晰，分层合理（Bay 编排层 + Ship 运行时）。数据模型设计体现了"计算与存储分离"的核心理念。项目已经很好地保持了轻量化——核心依赖保持在 FastAPI + SQLite/SQLModel + Docker/K8s 客户端，没有引入 Redis/etcd 等分布式组件。
 
 以下审查建议均遵循**轻量化原则**，优先使用现有工具和简单方案。
 
@@ -368,20 +368,13 @@ def _sandbox_to_response(
 **文件**: `pkgs/bay/tests/`, `pkgs/ship/tests/`
 
 **当前状态**:
-- ✅ **Unit 测试**: 覆盖了 Manager 层的核心逻辑（TTL, 软删除, 级联清理）。
-- ✅ **Integration 测试**: 覆盖了 E2E 生命周期、并发 Exec、GC 流程。
+- ✅ **Unit 测试**: Bay 共 233 项（`pytest tests/unit --collect-only`）。
+- ✅ **Integration/E2E 测试**: Bay 共 140 项（`pytest tests/integration --collect-only`）。
 - ✅ **并发测试**: `test_concurrent.py` 验证了并发请求下的 Session 单例创建。
+- ✅ **鲁棒性测试**: 已补齐 `test_container_crash.py`、`test_oom_killed.py`、`test_gc_race_condition.py`。
 
-**改进建议 (可测性强的鲁棒性场景)**:
-- [ ] **容器意外退出测试 (Container Crash)**:
-    - 模拟方法: 在 Integration 测试中手动 `docker kill` 运行中的 Session 容器。
-    - 预期行为: 后续 API 请求应返回正确的错误 (Session 丢失) 或触发自动恢复，而不是一直超时或 500。
-- [ ] **资源配额 OOM 测试 (OOM Killed)**:
-    - 模拟方法: 创建带 128MB 内存限制的 Profile，执行消耗 200MB 内存的 Python 脚本。
-    - 预期行为: Sandbox 状态应正确流转为 FAILED/CRASHED，且能从日志中明确 OOM 原因。
-- [ ] **GC 竞态冲突测试 (Race Condition)**:
-    - 模拟方法: 手动触发 GC 删除逻辑，同时发起新的 API 请求。
-    - 预期行为: 锁机制应保证两者串行化，避免“数据库有记录但容器已被删”的僵尸状态。
+**后续可选增强**:
+- [ ] K8s 场景下网络分区/节点重调度测试（提升生产级故障覆盖）
 
 ---
 
@@ -543,6 +536,10 @@ pkgs/bay/app/services/gc/
 8. **Extend TTL**: 支持延长 Sandbox TTL，带幂等性保护
 9. **并发锁模块**: 独立的锁管理模块，支持锁清理
 10. **测试覆盖**: 并行测试支持（pytest-xdist），E2E 场景丰富
+11. **K8s Driver**: 已落地 Pod + PVC + Pod IP 直连的 Kubernetes 编排能力
+12. **容器健康探测**: SessionManager 增加死容器探测与自动恢复
+13. **Python SDK**: `shipyard-neo-sdk` 提供异步、类型安全的 Bay API 客户端
+14. **MCP Server**: `shipyard-neo-mcp` 已提供 MCP 工具化接入能力
 
 ---
 
@@ -575,7 +572,7 @@ pkgs/bay/app/services/gc/
 
 ### 进度统计
 
-- **已解决**: 8 项
+- **已解决**: 9 项
     - 并发锁改进 (#1)
     - 路径安全 (#2)
     - GC 机制 (#16)
@@ -584,6 +581,7 @@ pkgs/bay/app/services/gc/
     - 后台进程内存泄露 (#7)
     - 错误类型命名冲突 (#11)
     - 类型注解不一致 (#14)
+    - 测试覆盖增强（容器崩溃/OOM/GC 竞态）(#15)
 - **暂不处理**: 9 项
     - 时间竞态条件 (#4)
     - Shell 命令安全边界 (#6) - *Feature not Bug*
@@ -594,8 +592,7 @@ pkgs/bay/app/services/gc/
     - 硬编码端口超时 (#13)
     - 可观测性 (#17)
     - 数据迁移策略 (#18)
-- **待处理**: 1 项
-    - 测试覆盖 (#15) - *已提出具体增强建议*
+- **待处理**: 0 项
 
 ---
 
@@ -609,6 +606,8 @@ pkgs/bay/app/services/gc/
 
 | 日期 | 变更内容 |
 |:---|:---|
+| 2026-02-08 | 更新审查日期；补充 K8s Driver、容器健康探测、Python SDK、MCP Server 的落地状态；更新“已做得较好的部分” |
+| 2026-02-08 | #15 测试覆盖更新为已增强：新增容器崩溃/OOM/GC 竞态鲁棒性测试，并同步最新测试规模统计（233/140） |
 | 2026-02-05 | **#11 错误类型命名冲突已修复**、**#14 类型注解已修复**、#13 硬编码暂不处理；修复 config.yaml workspace→cargo 命名 |
 | 2026-02-05 | 分析 #17/#18：可观测性与数据迁移在本版本暂不考虑；更新 #15 提出鲁棒性测试建议；更新 #6/#10/#12 状态 |
 | 2026-02-05 | 分析 #4/#7/#8/#9：时间竞态条件暂不处理、**后台进程内存泄露已修复**、配置热加载暂不处理、事务边界暂不处理 |

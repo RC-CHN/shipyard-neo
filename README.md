@@ -57,7 +57,7 @@ flowchart LR
 
 ## 📊 项目状态
 
-> **当前阶段**：Phase 2 核心功能推进中，K8s Driver / SDK / MCP Server 已完成
+> **当前阶段**：Phase 2 核心功能推进中（截至 2026-02-08：K8s Driver / Python SDK / MCP Server 已完成）
 
 ### ✅ 已完成 (Phase 1 Core + Phase 2 部分)
 
@@ -82,7 +82,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | **Cargo API** | 🟠 中 | 对外暴露独立 Cargo 管理（目前仅 managed） |
 | **可观测性增强** | 🟡 中 | request_id 有，Prometheus metrics 未做 |
-| **MCP 协议层（Ship 原生）** | 🟡 中 | Ship 支持 MCP over SSE，LLM 原生工具发现 |
+| **Ship 原生 MCP 协议层** | 🟡 中 | 与 `shipyard-neo-mcp`（独立 MCP Server）不同，此项指 Ship 内置 MCP over SSE |
 | **多容器支持** | 🟡 低 | Browser + Ship Sidecar 模式 |
 
 > 详细进度请参考 [`TODO.md`](TODO.md) 和 [`plans/phase-1/progress.md`](plans/phase-1/progress.md)
@@ -109,6 +109,7 @@ flowchart LR
 ### 演进规划
 
 *   [Phase 1 进度](plans/phase-1/phase-1.md) - 核心功能完成情况
+*   [Phase 1 详细进度](plans/phase-1/progress.md) - 历史里程碑与测试覆盖追踪
 *   [GC 机制设计](plans/phase-1/gc-design.md) - 资源回收策略
 *   [Phase 2 规划](plans/phase-2/phase-2.md) - 多容器与能力路由
 *   [K8s Driver 分析](plans/phase-2/k8s-driver-analysis.md) - Kubernetes 驱动设计与实现
@@ -136,6 +137,12 @@ docker build -t ship:latest .
 
 ```bash
 pip install shipyard-neo-sdk
+```
+
+```bash
+# 若尚未发布到你可访问的索引，可从源码安装
+cd shipyard-neo-sdk
+pip install -e .
 ```
 
 ```python
@@ -169,6 +176,13 @@ asyncio.run(main())
     }
   }
 }
+```
+
+```bash
+# 本地源码方式启动
+cd shipyard-neo-mcp
+pip install -e .
+shipyard-mcp
 ```
 
 ### 运行测试

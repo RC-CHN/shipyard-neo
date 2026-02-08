@@ -1,7 +1,7 @@
 # Bay Phase 2 规划：多容器与能力路由
 
-> 状态：**Draft**
-> 日期：2026-01-29
+> 状态：**In Progress**
+> 日期：2026-02-08
 
 ## 1. 核心目标
 
@@ -23,6 +23,12 @@ Phase 2 的核心目标是引入**多容器支持 (Multi-Container Support)**，
 
 3.  **Session 复用优化 (可选)**：
     - 引入 Session 池化或 Keep-Warm 机制，减少冷启动时间。
+
+### 1.2 已落地里程碑（Phase 2 先行项）
+
+- [x] **K8s Driver 基础能力**：Pod + PVC + Pod IP 直连（`feat(bay): add Kubernetes driver`）
+- [x] **Python SDK**：`shipyard-neo-sdk` 独立仓库与 API 客户端能力完成
+- [x] **MCP Server**：`shipyard-neo-mcp` 提供 Bay 沙箱能力的 MCP 接入
 
 ## 2. 架构变更预览
 
@@ -369,8 +375,9 @@ class BrowserAdapter(BaseAdapter):
 
 ## 6. 下一步行动
 
-1. **确认上述决策点** - 逐项讨论并敲定
-2. **设计 Profile Schema** - 支持多容器声明
-3. **实现 ContainerInfo 模型** - 扩展 Session
-4. **实现 BrowserAdapter** - 参考 ShipAdapter
-5. **扩展 CapabilityRouter** - 支持多容器路由
+1. ~~K8s Driver 基础实现~~ ✅ 已完成（作为 Phase 2 先行项）
+2. **确认上述决策点** - 逐项讨论并敲定
+3. **设计 Profile Schema** - 支持多容器声明
+4. **实现 ContainerInfo 模型** - 扩展 Session
+5. **实现 BrowserAdapter** - 参考 ShipAdapter
+6. **扩展 CapabilityRouter** - 支持多容器路由

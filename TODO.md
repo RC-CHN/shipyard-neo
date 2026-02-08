@@ -1,15 +1,15 @@
 # Shipyard Neo 项目待办清单
 
-> 更新日期：2026-02-02
+> 更新日期：2026-02-08
 > 
 > 本文档追踪项目级别的待办事项和演进路线。详细设计请参考 [`plans/`](plans/) 目录。
 
 ## 📊 总体进度概览
 
 ```
-Phase 1 (MVP)      [████████████████████░░░░] 85%
-Phase 1.5 (P1)     [██████░░░░░░░░░░░░░░░░░░] 25%
-Phase 2            [██░░░░░░░░░░░░░░░░░░░░░░] 10%
+Phase 1 (MVP)      [████████████████████████] 100%
+Phase 1.5 (P1)     [█████████████████░░░░░░░] 70%
+Phase 2            [██████████████░░░░░░░░░░] 60%
 ```
 
 ---
@@ -72,9 +72,10 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 
 ### 测试 (100%)
 
-- [x] 97 个单元测试（Bay）
-- [x] 33 个 E2E 测试（Bay）
+- [x] 233 个单元测试（Bay，`pytest tests/unit --collect-only`）
+- [x] 140 个集成/E2E 测试（Bay，`pytest tests/integration --collect-only`）
 - [x] docker-host / docker-network 两种测试模式
+- [x] kind (K8s) 测试脚本
 
 ---
 
@@ -119,15 +120,22 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 
 ---
 
-## 🚧 Phase 1.5 (P1) - 进行中
+## 🚧 Phase 1.5 (P1) - 收尾中
 
-### 路径安全校验
+### 路径安全校验（已完成）
 
 - [x] Bay 侧路径校验实现（禁止绝对路径、目录穿越）
 - [x] 与 Ship `resolve_path` 对齐
 - [x] 单元测试覆盖
 
-### 可观测性增强
+### 稳定性增强（已完成）
+
+- [x] 主动容器健康探测（Dead Container Probe + 自动恢复，`2667d1c`）
+- [x] 进程级 Adapter Pool 修复（`1740ac4`）
+- [x] Sandbox Status 过滤修复（`827bbac`）
+- [x] 容器崩溃 / OOM / GC 竞态回归测试（`tests/integration/resilience/`）
+
+### 可观测性增强（待完成）
 
 - [ ] Prometheus metrics 暴露
 - [ ] 结构化日志完善
@@ -135,7 +143,7 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 
 ---
 
-## 📋 Phase 2 - 待开发
+## 📋 Phase 2 - 进行中
 
 ### 🔴 高优先级：GC 机制
 
@@ -164,26 +172,37 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 
 > 详见 [`plans/bay-api.md#6.3`](plans/bay-api.md)（重命名后）
 
-- [ ] `POST /v1/cargos` - 创建独立 Cargo
-- [ ] `GET /v1/cargos` - 列出 Cargos
-- [ ] `GET /v1/cargos/{id}` - 查询 Cargo
-- [ ] `DELETE /v1/cargos/{id}` - 删除 Cargo
+- [x] `POST /v1/cargos` - 创建独立 Cargo
+- [x] `GET /v1/cargos` - 列出 Cargos
+- [x] `GET /v1/cargos/{id}` - 查询 Cargo
+- [x] `DELETE /v1/cargos/{id}` - 删除 Cargo
 - [ ] `POST /v1/cargos/{id}/files/read` - 直读文件
 - [ ] `POST /v1/cargos/{id}/files/write` - 直写文件
 - [ ] 权限控制（更高 scope）
-- [ ] managed vs external 删除规则
+- [x] managed vs external 删除规则
 
-### 🟠 中优先级：SDK 完善
+### ✅ 中优先级：Python SDK（shipyard-neo-sdk，已完成）
 
-> 当前 SDK 为参考实现，需与新 Bay API 对齐
+> 详见 [`shipyard-neo-sdk/README.md`](shipyard-neo-sdk/README.md)
 
-- [ ] 与 Bay `/v1/*` API 对齐
-- [ ] 错误处理增强
-- [ ] 类型定义完善
-- [ ] 文档与示例更新
-- [ ] 发布到 PyPI
+- [x] 与 Bay `/v1/*` API 对齐
+- [x] 错误处理增强
+- [x] 类型定义完善
+- [x] 文档与示例更新
+- [x] SDK 测试用例与 CI 结构（仓库内 `tests/`）
+- [ ] 发布到 PyPI（按发布策略执行）
 
-### 🟡 中优先级：MCP 协议层
+### ✅ 中优先级：MCP Server（shipyard-neo-mcp，已完成）
+
+> 详见 [`shipyard-neo-mcp/README.md`](shipyard-neo-mcp/README.md)
+
+- [x] 独立 MCP Server 工程
+- [x] 沙箱生命周期工具（create/delete）
+- [x] Python/Shell 执行工具
+- [x] Filesystem 工具（read/write/list/delete）
+- [x] 环境变量与 MCP 客户端配置文档
+
+### 🟡 中优先级：MCP 协议层（Ship 原生，待开发）
 
 > 详见 [`plans/ship-refactor-and-mcp.md`](plans/ship-refactor-and-mcp.md)
 
@@ -205,12 +224,13 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 - [ ] Browser 容器镜像（Playwright）
 - [ ] BrowserAdapter 实现
 
-### 🟡 低优先级：K8s Driver
+### ✅ 低优先级：K8s Driver（基础能力已完成）
 
-- [ ] K8sDriver 实现
-- [ ] Pod + PVC 管理
+- [x] K8sDriver 实现（`e759a5c`）
+- [x] Pod + PVC 管理
+- [x] Pod IP 直连 + Kind 测试脚本
 - [ ] NetworkPolicy 配置
-- [ ] 生产级部署文档
+- [ ] 生产级部署文档（RBAC / 监控 / 告警）
 
 ---
 
@@ -310,6 +330,8 @@ Phase 2            [██░░░░░░░░░░░░░░░░░░
 | [`plans/phase-1/progress.md`](plans/phase-1/progress.md) | Phase 1 详细进度追踪 |
 | [`plans/phase-1/gc-design.md`](plans/phase-1/gc-design.md) | GC 机制设计 |
 | [`plans/phase-2/phase-2.md`](plans/phase-2/phase-2.md) | Phase 2 规划 |
+| [`plans/phase-2/k8s-driver-analysis.md`](plans/phase-2/k8s-driver-analysis.md) | K8s Driver 设计与落地说明 |
+| [`plans/phase-2/sdk-design.md`](plans/phase-2/sdk-design.md) | Python SDK 设计 |
 | [`plans/phase-3/phase-3.md`](plans/phase-3/phase-3.md) | Phase 3 轻量化重构概览 |
 | [`plans/phase-3/bay-go-design.md`](plans/phase-3/bay-go-design.md) | Bay Go 重写详细设计 |
 | [`plans/ship-refactor-and-mcp.md`](plans/ship-refactor-and-mcp.md) | Ship MCP 集成设计 |
@@ -328,6 +350,12 @@ cd pkgs/bay && ./tests/scripts/docker-host/run.sh
 # Bay E2E 测试 (docker-network 模式)
 cd pkgs/bay && ./tests/scripts/docker-network/run.sh
 
+# Bay K8s 测试 (Kind)
+cd pkgs/bay && ./tests/scripts/kind/run.sh
+
 # Ship 单元测试
 cd pkgs/ship && uv run pytest tests/unit -v
+
+# SDK 测试
+cd shipyard-neo-sdk && uv sync --extra dev && uv run pytest -v
 ```

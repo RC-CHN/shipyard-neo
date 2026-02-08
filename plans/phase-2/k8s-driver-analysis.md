@@ -1,5 +1,11 @@
 # K8s Driver 实现分析
 
+> 状态：**已落地实现**
+>
+> 落地提交：`e759a5c` (2026-02-06)
+>
+> 说明：本文档最初用于实现前分析，当前已与代码实现对齐。核心实现位于 `pkgs/bay/app/drivers/k8s/k8s.py`，单元测试位于 `pkgs/bay/tests/unit/drivers/test_k8s_driver.py`。
+
 ## 1. 架构兼容性评估
 
 **结论：架构设计良好，添加 K8s 驱动比较方便。**
@@ -23,7 +29,7 @@ Bay 采用了清晰的分层架构，Driver 层完全抽象，上层业务代码
 └─────────────────────────────────────────┘
 ```
 
-## 2. 需要实现的 Driver 接口方法
+## 2. Driver 接口实现完成情况
 
 ```python
 class K8sDriver(Driver):
@@ -44,6 +50,8 @@ class K8sDriver(Driver):
     async def list_runtime_instances(labels) -> list[RuntimeInstance]  # 列出 Pod
     async def destroy_runtime_instance(instance_id) -> None   # 强制删除 Pod
 ```
+
+以上接口已全部落地，并在 Bay 的 `DriverType.k8s` 分支中接入。
 
 ## 3. K8s 特殊考虑
 

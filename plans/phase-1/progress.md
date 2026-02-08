@@ -1,6 +1,6 @@
 # Bay Phase 1 进度追踪
 
-> 更新日期：2026-01-30 15:05 (UTC+8)
+> 更新日期：2026-02-08 11:30 (UTC+8)
 >
 > 基于：[`phase-1.md`](phase-1.md)、[`capability-adapter-design.md`](capability-adapter-design.md)、[`idempotency-design.md`](idempotency-design.md)、[`auth-design.md`](auth-design.md)、[`profile-capability-enforcement.md`](profile-capability-enforcement.md)
 
@@ -18,6 +18,9 @@
 | 并发竞态修复 | ✅ 100% | ensure_running 加锁 + 双重检查 |
 | 鉴权 | ✅ 100% | API Key 认证 + `AuthDep` 注入，支持 dev 模式 `X-Owner` |
 | **Profile 能力检查** | ✅ 100% | **新增** 前置能力拦截，依赖注入实现 |
+| **路径安全校验** | ✅ 100% | Bay + Ship 双层路径防护已落地 |
+| **容器健康探测** | ✅ 100% | 死容器主动探测 + 自动恢复（Phase 1.5） |
+| **K8s Driver** | ✅ 100% | Pod + PVC + Pod IP 直连能力已落地（Phase 2 先行项） |
 
 ## 2. Capability Adapter 重构详情
 
@@ -31,7 +34,7 @@
 | 4 | 添加 upload/download API | ✅ | `api/v1/capabilities.py` |
 | 5 | 更新 config（ipython → python） | ✅ | `config.py`, `config.yaml.example` |
 | 6 | 更新/重命名测试文件 | ✅ | `tests/unit/test_ship_adapter.py` |
-| 7 | 运行所有测试验证 | ✅ | 20 E2E passed (2026-01-29 11:33) |
+| 7 | 运行所有测试验证 | ✅ | 已形成持续回归基线（详见第 6 节当前测试规模） |
 
 ### 2.1 已创建的文件
 
@@ -58,7 +61,7 @@
 | # | 任务 | 状态 | 说明 |
 |:--|:--|:--|:--|
 | 1 | 鉴权与 owner 隔离 | ✅ | API Key 认证（可关闭匿名）；`X-Owner` 仅在 `allow_anonymous=true` 时用于开发测试 |
-| 2 | 路径安全校验 | ⏳ | Ship 有 resolve_path，Bay 未做 |
+| 2 | 路径安全校验 | ✅ | Bay `validate_relative_path` + Ship `resolve_path` 双层防护 |
 | 3 | 可观测性 | ⏳ | request_id 基础有，metrics 未做 |
 
 ## 5. 新增功能（capability-adapter-design.md）
@@ -75,31 +78,20 @@
 
 ## 6. 测试状态
 
-### 6.1 单元测试（97 tests）
+### 6.1 当前规模（2026-02-08）
 
-| 文件 | 测试数 | 状态 |
+| 测试类型 | 数量 | 说明 |
 |:--|:--|:--|
-| `test_auth.py` | 18 | ✅ （API Key / allow_anonymous / X-Owner 行为） |
-| `test_docker_driver.py` | 12 | ✅ |
-| `test_sandbox_manager.py` | 12 | ✅ |
-| `test_ship_adapter.py` | 21 | ✅ （含 write_file, delete_file） |
-| `test_idempotency.py` | 24 | ✅ |
-| `test_capability_check.py` | 6 | ✅ **新增** Profile 能力检查单元测试 |
+| Unit | 233 | `cd pkgs/bay && uv run pytest tests/unit --collect-only -q` |
+| Integration / E2E | 140 | `cd pkgs/bay && uv run pytest tests/integration --collect-only -q` |
 
-### 6.2 E2E 测试（33 tests）
+### 6.2 关键覆盖面
 
-| 测试类 | 测试数 | 状态 |
-|:--|:--|:--|
-| `TestE2E00Auth` | 3 | ✅ （缺失/错误/正确 API Key） |
-| `TestE2E01MinimalPath` | 2 | ✅ |
-| `TestE2E02Stop` | 2 | ✅ |
-| `TestE2E03Delete` | 3 | ✅ |
-| `TestE2E04ConcurrentEnsureRunning` | 1 | ✅ |
-| `TestE2E05FileUploadDownload` | 4 | ✅ |
-| `TestE2E06Filesystem` | 4 | ✅ read/write/list/delete |
-| `TestE2E07Idempotency` | 4 | ✅ |
-| `TestCapabilityEnforcementE2E` | 8 | ✅ **新增** Profile 能力拦截 |
-| `TestFullProfileAllowsAll` | 3 | ✅ **新增** 全能力 Profile 验证 |
+- Session 生命周期、并发 ensure_running、幂等与鉴权
+- Filesystem / Upload / Download / Cargo API
+- GC 任务（Idle Session / Expired Sandbox / Orphan Cargo / Orphan Container）
+- Resilience 场景（Container Crash / OOM Killed / GC Race Condition）
+- Docker 与 Kind(K8s) 双环境测试脚本
 
 ### 6.3 测试运行命令
 
@@ -112,17 +104,22 @@ cd pkgs/bay && ./tests/scripts/docker-host/run.sh
 
 # E2E 测试 (docker-network 模式)
 cd pkgs/bay && ./tests/scripts/docker-network/run.sh
+
+# K8s 测试 (Kind)
+cd pkgs/bay && ./tests/scripts/kind/run.sh
 ```
 
 ## 7. 下一步行动
 
-1. ~~运行 E2E 测试验证~~ ✅ 20 passed (2026-01-29 11:33)
+1. ~~运行 E2E 测试验证~~ ✅ 已完成并纳入持续回归
 2. ~~删除 clients/runtime/ 目录~~ ✅ 已删除
 3. ~~Idempotency-Key 接入~~ ✅ 已完成
 4. ~~并发 ensure_running 竞态修复~~ ✅ 已完成
 5. ~~Filesystem E2E 测试补充~~ ✅ 4 tests 已添加
 6. ~~鉴权设计与实现（API Key/AuthDep）~~ ✅ 已实现（见 [`auth-design.md`](auth-design.md) 与 [`dependencies.authenticate()`](../../pkgs/bay/app/api/dependencies.py:59)）
-7. **路径安全校验** - 参考 [`auth-design.md`](auth-design.md)
+7. ~~路径安全校验~~ ✅ 已完成（Bay + Ship 双层防护）
+8. ~~容器健康探测~~ ✅ 已完成（`2667d1c`）
+9. 下一步：可观测性增强（metrics / tracing）
 
 ## 8. 依赖关系
 
@@ -137,7 +134,9 @@ cd pkgs/bay && ./tests/scripts/docker-network/run.sh
     ↓
 [x] 鉴权实现（API Key/AuthDep）
     ↓
-[ ] 路径安全校验
+[x] 路径安全校验
+    ↓
+[x] 容器健康探测
 ```
 
 ## 9. Idempotency 实现详情
@@ -213,9 +212,9 @@ return sandbox → CapabilityRouter → Ship Adapter → 容器
 | 错误类 | code | status_code |
 |:--|:--|:--|
 | NotFoundError | `not_found` | 404 |
-| FileNotFoundError | `file_not_found` | 404 |
+| CargoFileNotFoundError | `file_not_found` | 404 |
 | ShipError | `ship_error` | 502 |
 | SessionNotReadyError | `session_not_ready` | 503 |
-| TimeoutError | `timeout` | 504 |
+| RequestTimeoutError | `timeout` | 504 |
 | ValidationError | `validation_error` | 400 |
 | CapabilityNotSupportedError | `capability_not_supported` | 400 |
