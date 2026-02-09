@@ -81,14 +81,18 @@ async def _wait_until_http_ok(
 async def test_browser_screenshot_download_and_python_parse_png_dimensions():
     """Ship+Gull E2E: open page -> screenshot -> download -> python parse."""
 
-    # Docker-only for now (k8s images/registry + scheduling would need separate harness)
     from ..conftest import E2E_DRIVER_TYPE
-
-    if E2E_DRIVER_TYPE != "docker":
-        pytest.skip("browser workflow e2e is docker-only for now")
 
     if not _docker_image_exists("gull:latest"):
         pytest.skip("gull:latest image not available (build pkgs/gull/Dockerfile)")
+
+    # In K8s, containers in the same Pod share the network namespace,
+    # so they reach each other via localhost.
+    # In Docker, containers use the session network DNS aliases (hostname = spec.name).
+    if E2E_DRIVER_TYPE == "k8s":
+        ship_host_for_browser = "localhost"
+    else:
+        ship_host_for_browser = "ship"
 
     profile_id = "browser-python"
 
@@ -144,10 +148,11 @@ async def test_browser_screenshot_download_and_python_parse_png_dimensions():
                 "http://127.0.0.1:9000/index.html",
             )
 
-            # 4) Gull: open page via container DNS (ship hostname)
+            # 4) Gull: open page via container DNS (Docker) or localhost (K8s)
+            browser_url = f"http://{ship_host_for_browser}:9000/index.html"
             b1 = await client.post(
                 f"/v1/sandboxes/{sandbox_id}/browser/exec",
-                json={"cmd": "open http://ship:9000/index.html", "timeout": 60},
+                json={"cmd": f"open {browser_url}", "timeout": 60},
                 timeout=EXEC_TIMEOUT,
             )
             assert b1.status_code == 200, b1.text

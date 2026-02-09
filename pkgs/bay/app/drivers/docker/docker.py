@@ -718,7 +718,13 @@ class DockerDriver(Driver):
         """Create multiple containers for a session.
 
         Phase 2: Creates one container per ContainerSpec, all on the same
-        network and sharing the same cargo volume.
+        session network and sharing the same cargo volume.
+
+        If a global Bay network is configured (e.g. ``bay-e2e-test-network``),
+        each container is also connected to that network so Bay can reach the
+        containers via container IP.  Without this, Bay (running on the global
+        network) cannot reach containers that only belong to the session
+        network.
 
         Args:
             session: Session model
@@ -738,7 +744,17 @@ class DockerDriver(Driver):
             session_id=session.id,
             container_count=len(containers_specs),
             network=network_name,
+            bay_network=self._network,
         )
+
+        # Check if Bay's global network exists and differs from session network
+        connect_bay_network = False
+        if (
+            self._network
+            and self._network != network_name
+            and await self._network_exists(self._network)
+        ):
+            connect_bay_network = True
 
         results: list[MultiContainerInfo] = []
 
@@ -764,6 +780,28 @@ class DockerDriver(Driver):
                     config=config,
                     name=container_name,
                 )
+
+                # Also connect to Bay's global network so Bay can reach
+                # the container via container IP.
+                if connect_bay_network:
+                    try:
+                        bay_net = await client.networks.get(self._network)
+                        await bay_net.connect(
+                            {"Container": container.id}
+                        )
+                        self._log.debug(
+                            "docker.create_multi.connected_bay_network",
+                            container_name=container_name,
+                            bay_network=self._network,
+                        )
+                    except DockerError as net_err:
+                        self._log.warning(
+                            "docker.create_multi.connect_bay_network_failed",
+                            container_name=container_name,
+                            bay_network=self._network,
+                            error=str(net_err),
+                        )
+
                 results.append(
                     MultiContainerInfo(
                         name=spec.name,
