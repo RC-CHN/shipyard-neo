@@ -343,7 +343,13 @@ class K8sDriver(Driver):
         await self.destroy(container_id)
 
     async def destroy(self, container_id: str) -> None:
-        """Delete a Pod."""
+        """Delete a Pod and wait for it to be fully removed.
+
+        Waiting for the Pod to disappear is critical because K8s PVC protection
+        finalizer prevents PVC deletion while a Pod still references the PVC.
+        Without waiting, a subsequent delete_volume() call would leave the PVC
+        in Terminating state until the Pod is gone.
+        """
         api_client = await self._get_api_client()
         v1 = client.CoreV1Api(api_client)
 
@@ -360,8 +366,47 @@ class K8sDriver(Driver):
         except ApiException as e:
             if e.status == 404:
                 self._log.warning("k8s.destroy.not_found", pod_name=container_id)
+                return  # Already gone, no need to wait
             else:
                 raise
+
+        # Wait for Pod to be fully removed (up to grace period + buffer)
+        await self._wait_pod_deleted(v1, container_id, timeout=30)
+
+    async def _wait_pod_deleted(
+        self,
+        v1: client.CoreV1Api,
+        pod_name: str,
+        timeout: int = 30,
+    ) -> None:
+        """Poll until a Pod no longer exists (404).
+
+        Args:
+            v1: CoreV1Api instance
+            pod_name: Name of the Pod to wait for
+            timeout: Maximum seconds to wait
+        """
+        for _ in range(timeout):
+            try:
+                await v1.read_namespaced_pod(
+                    name=pod_name,
+                    namespace=self._namespace,
+                )
+            except ApiException as e:
+                if e.status == 404:
+                    self._log.debug(
+                        "k8s.destroy.pod_gone",
+                        pod_name=pod_name,
+                    )
+                    return
+                raise
+            await asyncio.sleep(1)
+
+        self._log.warning(
+            "k8s.destroy.timeout_waiting_for_deletion",
+            pod_name=pod_name,
+            timeout=timeout,
+        )
 
     async def status(
         self, container_id: str, *, runtime_port: int | None = None

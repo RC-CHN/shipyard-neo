@@ -165,7 +165,14 @@ async def test_delete_removes_managed_cargo_volume():
 
         # Delete
         await client.delete(f"/v1/sandboxes/{sandbox_id}", timeout=120.0)
-        await asyncio.sleep(0.5)
 
-        # Volume should be gone
-        assert not cargo_volume_exists(cargo_id), f"Volume for cargo {cargo_id} should be deleted"
+        # In K8s, PVC deletion may be delayed by the pvc-protection
+        # finalizer. Poll with retries instead of a fixed sleep.
+        for _attempt in range(15):
+            if not cargo_volume_exists(cargo_id):
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(
+                f"Volume for cargo {cargo_id} should be deleted"
+            )

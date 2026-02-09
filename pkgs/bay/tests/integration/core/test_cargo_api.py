@@ -313,9 +313,15 @@ async def test_delete_external_cargo_success():
         )
         assert resp.status_code == 204
 
-        # Verify gone
-        await asyncio.sleep(0.5)
-        assert not cargo_volume_exists(cargo_id)
+        # In K8s, PVC deletion may have a brief delay. Poll with retries.
+        for _attempt in range(15):
+            if not cargo_volume_exists(cargo_id):
+                break
+            await asyncio.sleep(1.0)
+        else:
+            raise AssertionError(
+                f"Volume for cargo {cargo_id} should be deleted"
+            )
 
 
 async def test_delete_external_cargo_referenced_by_active_sandbox():
