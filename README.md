@@ -46,6 +46,8 @@ flowchart LR
 *   **全功能 Python 环境**：内置 IPython 内核，支持变量保持、图表生成和交互式执行。
 *   **真实 Shell 访问**：支持执行标准 Linux 命令，安装依赖，运行脚本。
 *   **文件系统控制**：完整的上传、下载、读写、列表和删除操作。
+*   **执行历史记录 (Execution History)**：自动记录 Python/Shell 执行证据，可按 `type/success/tags` 查询并打注释。
+*   **技能生命周期 (Skill Lifecycle)**：支持 Candidate 创建、评测、发布（Canary/Stable）、回滚。
 *   **多租户隔离**：基于 Sandbox ID 的强逻辑隔离。
 *   **多驱动支持**：同时支持 Docker 和 Kubernetes 容器编排后端。
 *   **Python SDK**：类型安全的异步客户端库（`shipyard-neo-sdk`），开箱即用。
@@ -57,7 +59,7 @@ flowchart LR
 
 ## 📊 项目状态
 
-> **当前阶段**：Phase 2 核心功能推进中（截至 2026-02-08：K8s Driver / Python SDK / MCP Server 已完成）
+> **当前阶段**：Phase 2 核心功能推进中（截至 2026-02-09：K8s Driver / Python SDK / MCP Server / Skills Lifecycle 已落地）
 
 ### ✅ 已完成 (Phase 1 Core + Phase 2 部分)
 
@@ -75,12 +77,13 @@ flowchart LR
 | **K8s Driver** | ✅ 100% | Kubernetes 容器编排驱动（Pod + PVC + Pod IP 直连） |
 | **Python SDK** | ✅ 100% | `shipyard-neo-sdk`，完整 Sandbox/Cargo/Capability API |
 | **MCP Server** | ✅ 100% | `shipyard-neo-mcp`，AI Agent 沙箱执行的 MCP 协议接入 |
+| **Execution History API** | ✅ 100% | 执行记录查询、单条读取、最近一条、注释更新 |
+| **Skill Lifecycle API** | ✅ 100% | 候选创建、评测、发布、版本列表与回滚 |
 
 ### 🚧 进行中 / 待办
 
 | 模块 | 优先级 | 说明 |
 | :--- | :--- | :--- |
-| **Cargo API** | 🟠 中 | 对外暴露独立 Cargo 管理（目前仅 managed） |
 | **可观测性增强** | 🟡 中 | request_id 有，Prometheus metrics 未做 |
 | **Ship 原生 MCP 协议层** | 🟡 中 | 与 `shipyard-neo-mcp`（独立 MCP Server）不同，此项指 Ship 内置 MCP over SSE |
 | **多容器支持** | 🟡 低 | Browser + Ship Sidecar 模式 |
@@ -95,8 +98,40 @@ flowchart LR
 | **[`pkgs/ship`](pkgs/ship/README.md)** | **Ship 运行时**。构建为 Docker 镜像，作为执行环境。 |
 | **[`shipyard-neo-sdk`](shipyard-neo-sdk/README.md)** | **Python SDK**。类型安全的异步客户端库（`pip install shipyard-neo-sdk`）。 |
 | **[`shipyard-neo-mcp`](shipyard-neo-mcp/README.md)** | **MCP Server**。MCP 协议接入层，让 AI Agent 原生调用沙箱能力。 |
-| **[`sdk-reference`](sdk-reference/)** | **旧版 SDK 参考实现**（已被 `shipyard-neo-sdk` 替代）。 |
 | **[`plans`](plans/)** | **设计文档**。包含架构决策、API 契约和演进路线图。 |
+
+## 🔁 Skills Self-Update 基建
+
+当前仓库已提供可组合的“技能自迭代”基础能力：
+
+1. **Evidence 采集**：`/v1/sandboxes/{id}/python/exec` 与 `/shell/exec` 自动回传 `execution_id` 并持久化执行证据。  
+2. **Evidence 管理**：`/v1/sandboxes/{id}/history` 提供检索、过滤、注释（`description/tags/notes`）。  
+3. **Candidate 生命周期**：`/v1/skills/candidates` → `evaluate` → `promote`。  
+4. **Release 运营**：`/v1/skills/releases` 支持活动版本查询与 `rollback`。  
+
+对应调用入口：
+
+- SDK：`sandbox.get_execution_history(...)`、`client.skills.*`
+- MCP：`get_execution_history`、`create_skill_candidate`、`promote_skill_candidate` 等工具
+
+示例流水图（从尝试到发布）：
+
+```mermaid
+flowchart TD
+    A[Agent 执行任务<br/>python/exec shell/exec] --> B[Bay 自动记录执行证据<br/>execution_id output success time]
+    B --> C[Agent 标注证据<br/>description tags notes]
+    C --> D[创建 Skill Candidate<br/>source_execution_ids]
+    D --> E[评测 Candidate<br/>passed score report]
+    E --> F{是否通过评测}
+    F -- 否 --> G[继续迭代<br/>补充新证据]
+    G --> A
+    F -- 是 --> H[Promote 发布<br/>canary 或 stable]
+    H --> I[线上观察与指标监控]
+    I --> J{效果是否达标}
+    J -- 是 --> K[保持当前版本<br/>持续学习]
+    J -- 否 --> L[Rollback 到上一版本]
+    L --> G
+```
 
 ## 📚 深度文档
 
@@ -110,6 +145,7 @@ flowchart LR
 
 *   [Phase 1 进度](plans/phase-1/phase-1.md) - 核心功能完成情况
 *   [Phase 1 详细进度](plans/phase-1/progress.md) - 历史里程碑与测试覆盖追踪
+*   [Skills Self-Update 落地指南](doc/skills_self_update_guide_zh.md) - 执行历史与技能生命周期的工程化接入方案
 *   [GC 机制设计](plans/phase-1/gc-design.md) - 资源回收策略
 *   [Phase 2 规划](plans/phase-2/phase-2.md) - 多容器与能力路由
 *   [K8s Driver 分析](plans/phase-2/k8s-driver-analysis.md) - Kubernetes 驱动设计与实现

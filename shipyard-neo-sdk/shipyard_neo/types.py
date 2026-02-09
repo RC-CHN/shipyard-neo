@@ -104,6 +104,9 @@ class PythonExecResult(BaseModel):
     output: str
     error: str | None = None
     data: dict[str, Any] | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    code: str | None = None
 
 
 class ShellExecResult(BaseModel):
@@ -113,6 +116,109 @@ class ShellExecResult(BaseModel):
     output: str
     error: str | None = None
     exit_code: int | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    command: str | None = None
+
+
+class ExecutionHistoryEntry(BaseModel):
+    """Execution history entry."""
+
+    id: str
+    session_id: str | None = None
+    exec_type: str
+    code: str
+    success: bool
+    execution_time_ms: int
+    output: str | None = None
+    error: str | None = None
+    description: str | None = None
+    tags: str | None = None
+    notes: str | None = None
+    created_at: datetime
+
+
+class ExecutionHistoryList(BaseModel):
+    """Execution history list response."""
+
+    entries: list[ExecutionHistoryEntry]
+    total: int
+
+
+class SkillCandidateStatus(str, Enum):
+    """Skill candidate lifecycle status."""
+
+    DRAFT = "draft"
+    EVALUATING = "evaluating"
+    PROMOTED = "promoted"
+    REJECTED = "rejected"
+    ROLLED_BACK = "rolled_back"
+
+
+class SkillReleaseStage(str, Enum):
+    """Skill release stage."""
+
+    CANARY = "canary"
+    STABLE = "stable"
+
+
+class SkillCandidateInfo(BaseModel):
+    """Skill candidate information."""
+
+    id: str
+    skill_key: str
+    scenario_key: str | None = None
+    payload_ref: str | None = None
+    source_execution_ids: list[str]
+    status: SkillCandidateStatus
+    latest_score: float | None = None
+    latest_pass: bool | None = None
+    last_evaluated_at: datetime | None = None
+    promotion_release_id: str | None = None
+    created_by: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SkillCandidateList(BaseModel):
+    """Skill candidate list response."""
+
+    items: list[SkillCandidateInfo]
+    total: int
+
+
+class SkillEvaluationInfo(BaseModel):
+    """Skill evaluation information."""
+
+    id: str
+    candidate_id: str
+    benchmark_id: str | None = None
+    score: float | None = None
+    passed: bool
+    report: str | None = None
+    evaluated_by: str | None = None
+    created_at: datetime
+
+
+class SkillReleaseInfo(BaseModel):
+    """Skill release information."""
+
+    id: str
+    skill_key: str
+    candidate_id: str
+    version: int
+    stage: SkillReleaseStage
+    is_active: bool
+    promoted_by: str | None = None
+    promoted_at: datetime
+    rollback_of: str | None = None
+
+
+class SkillReleaseList(BaseModel):
+    """Skill release list response."""
+
+    items: list[SkillReleaseInfo]
+    total: int
 
 
 # Internal request models (not exported)

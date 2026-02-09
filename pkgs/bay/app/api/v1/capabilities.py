@@ -6,6 +6,7 @@ See: plans/phase-1/capability-adapter-design.md
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -14,11 +15,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.dependencies import (
+    AuthDep,
     FilesystemCapabilityDep,
     PythonCapabilityDep,
     SandboxManagerDep,
     ShellCapabilityDep,
+    SkillLifecycleServiceDep,
 )
+from app.models.skill import ExecutionType
 from app.router.capability import CapabilityRouter
 from app.validators.path import (
     validate_optional_relative_path,
@@ -58,6 +62,9 @@ class PythonExecRequest(BaseModel):
 
     code: str
     timeout: int = Field(default=30, ge=1, le=300)
+    include_code: bool = False
+    description: str | None = None
+    tags: str | None = None
 
 
 class PythonExecResponse(BaseModel):
@@ -77,6 +84,9 @@ class PythonExecResponse(BaseModel):
     output: str
     error: str | None = None
     data: dict[str, Any] | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    code: str | None = None
 
 
 class ShellExecRequest(BaseModel):
@@ -85,6 +95,9 @@ class ShellExecRequest(BaseModel):
     command: str
     timeout: int = Field(default=30, ge=1, le=300)
     cwd: str | None = None  # Relative to /workspace, validated
+    include_code: bool = False
+    description: str | None = None
+    tags: str | None = None
 
     @field_validator("cwd")
     @classmethod
@@ -100,6 +113,9 @@ class ShellExecResponse(BaseModel):
     output: str
     error: str | None = None
     exit_code: int | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    command: str | None = None
 
 
 class FileReadRequest(BaseModel):
@@ -153,6 +169,8 @@ async def exec_python(
     request: PythonExecRequest,
     sandbox: PythonCapabilityDep,  # Validates python capability at profile level
     sandbox_mgr: SandboxManagerDep,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
 ) -> PythonExecResponse:
     """Execute Python code in sandbox.
 
@@ -164,10 +182,27 @@ async def exec_python(
     """
     capability_router = CapabilityRouter(sandbox_mgr)
 
+    start = time.perf_counter()
     result = await capability_router.exec_python(
         sandbox=sandbox,
         code=request.code,
         timeout=request.timeout,
+    )
+    execution_time_ms = int((time.perf_counter() - start) * 1000)
+    current_session = await sandbox_mgr.get_current_session(sandbox)
+
+    execution_entry = await skill_svc.create_execution(
+        owner=owner,
+        sandbox_id=sandbox.id,
+        session_id=current_session.id if current_session else None,
+        exec_type=ExecutionType.PYTHON,
+        code=request.code,
+        success=result.success,
+        execution_time_ms=execution_time_ms,
+        output=result.output,
+        error=result.error,
+        description=request.description,
+        tags=request.tags,
     )
 
     return PythonExecResponse(
@@ -175,6 +210,9 @@ async def exec_python(
         output=result.output,
         error=result.error,
         data=result.data,
+        execution_id=execution_entry.id,
+        execution_time_ms=execution_time_ms,
+        code=request.code if request.include_code else None,
     )
 
 
@@ -183,15 +221,34 @@ async def exec_shell(
     request: ShellExecRequest,
     sandbox: ShellCapabilityDep,  # Validates shell capability at profile level
     sandbox_mgr: SandboxManagerDep,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
 ) -> ShellExecResponse:
     """Execute shell command in sandbox."""
     capability_router = CapabilityRouter(sandbox_mgr)
 
+    start = time.perf_counter()
     result = await capability_router.exec_shell(
         sandbox=sandbox,
         command=request.command,
         timeout=request.timeout,
         cwd=request.cwd,
+    )
+    execution_time_ms = int((time.perf_counter() - start) * 1000)
+    current_session = await sandbox_mgr.get_current_session(sandbox)
+
+    execution_entry = await skill_svc.create_execution(
+        owner=owner,
+        sandbox_id=sandbox.id,
+        session_id=current_session.id if current_session else None,
+        exec_type=ExecutionType.SHELL,
+        code=request.command,
+        success=result.success,
+        execution_time_ms=execution_time_ms,
+        output=result.output,
+        error=result.error,
+        description=request.description,
+        tags=request.tags,
     )
 
     return ShellExecResponse(
@@ -199,6 +256,9 @@ async def exec_shell(
         output=result.output,
         error=result.error,
         exit_code=result.exit_code,
+        execution_id=execution_entry.id,
+        execution_time_ms=execution_time_ms,
+        command=request.command if request.include_code else None,
     )
 
 

@@ -5,13 +5,14 @@ Handles connection pooling, error mapping, and request/response serialization.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import TracebackType
 from typing import Any
 
 import httpx
 
-from shipyard_neo.errors import BayError, raise_for_error_response
+from shipyard_neo.errors import raise_for_error_response
 
 logger = logging.getLogger("shipyard_neo")
 
@@ -47,7 +48,46 @@ class HTTPClient:
         self._max_retries = max_retries
         self._client: httpx.AsyncClient | None = None
 
-    async def __aenter__(self) -> "HTTPClient":
+    @staticmethod
+    def _is_retryable_method(method: str, *, has_idempotency_key: bool) -> bool:
+        method_upper = method.upper()
+        if method_upper in {"GET", "PUT", "DELETE"}:
+            return True
+        return method_upper == "POST" and has_idempotency_key
+
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code == 429 or 500 <= status_code <= 599
+
+    @staticmethod
+    def _retry_delay_seconds(attempt: int) -> float:
+        # attempt is zero-based retry attempt index
+        return min(0.2 * (2**attempt), 1.5)
+
+    @staticmethod
+    def _parse_json_or_error_payload(response: httpx.Response) -> dict[str, Any]:
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                return payload
+            return {"data": payload}
+        except Exception:
+            if response.status_code >= 400:
+                raw_text = response.text or ""
+                snippet_limit = 500
+                snippet = raw_text[:snippet_limit]
+                return {
+                    "error": {
+                        "message": f"HTTP {response.status_code} returned non-JSON error response",
+                        "details": {
+                            "raw_response_snippet": snippet,
+                            "raw_response_truncated": len(raw_text) > snippet_limit,
+                        },
+                    }
+                }
+            return {}
+
+    async def __aenter__(self) -> HTTPClient:
         """Enter async context, creating HTTP client."""
         # Don't set Content-Type here; set it per-request
         # This allows multipart uploads to set their own content type
@@ -118,32 +158,50 @@ class HTTPClient:
 
         logger.debug("Request: %s %s", method, path)
 
-        response = await self.client.request(
+        has_idempotency_key = idempotency_key is not None
+        retryable_method = self._is_retryable_method(
             method,
-            path,
-            json=json,
-            params=params,
-            headers=headers if headers else None,
-            timeout=timeout,
+            has_idempotency_key=has_idempotency_key,
         )
+        max_attempts = self._max_retries + 1 if retryable_method else 1
 
-        logger.debug("Response: %s %s", response.status_code, path)
+        for attempt in range(max_attempts):
+            try:
+                response = await self.client.request(
+                    method,
+                    path,
+                    json=json,
+                    params=params,
+                    headers=headers if headers else None,
+                    timeout=timeout,
+                )
+            except (httpx.TimeoutException, httpx.TransportError):
+                if retryable_method and attempt < max_attempts - 1:
+                    await asyncio.sleep(self._retry_delay_seconds(attempt))
+                    continue
+                raise
 
-        # Handle empty responses (204 No Content)
-        if response.status_code == 204:
-            return {}
+            logger.debug("Response: %s %s", response.status_code, path)
 
-        # Parse response body
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
+            if response.status_code == 204:
+                return {}
 
-        # Check for errors
-        if response.status_code >= 400:
-            raise_for_error_response(response.status_code, body)
+            # Retry on transient HTTP status for retryable methods.
+            if (
+                retryable_method
+                and attempt < max_attempts - 1
+                and self._is_retryable_status(response.status_code)
+            ):
+                await asyncio.sleep(self._retry_delay_seconds(attempt))
+                continue
 
-        return body
+            body = self._parse_json_or_error_payload(response)
+            if response.status_code >= 400:
+                raise_for_error_response(response.status_code, body)
+            return body
+
+        # Defensive fallback, loop should always return/raise.
+        raise RuntimeError("HTTP request attempt loop exhausted unexpectedly")
 
     async def get(
         self,
@@ -222,14 +280,10 @@ class HTTPClient:
             timeout=timeout,
         )
 
+        body = self._parse_json_or_error_payload(response)
         if response.status_code >= 400:
-            try:
-                body = response.json()
-            except Exception:
-                body = {}
             raise_for_error_response(response.status_code, body)
-
-        return response.json()
+        return body
 
     async def download(
         self,
@@ -251,17 +305,34 @@ class HTTPClient:
         if params:
             params = {k: v for k, v in params.items() if v is not None}
 
-        response = await self.client.get(
-            path,
-            params=params,
-            timeout=timeout,
-        )
+        retryable_method = self._is_retryable_method("GET", has_idempotency_key=False)
+        max_attempts = self._max_retries + 1 if retryable_method else 1
 
-        if response.status_code >= 400:
+        for attempt in range(max_attempts):
             try:
-                body = response.json()
-            except Exception:
-                body = {}
-            raise_for_error_response(response.status_code, body)
+                response = await self.client.get(
+                    path,
+                    params=params,
+                    timeout=timeout,
+                )
+            except (httpx.TimeoutException, httpx.TransportError):
+                if retryable_method and attempt < max_attempts - 1:
+                    await asyncio.sleep(self._retry_delay_seconds(attempt))
+                    continue
+                raise
 
-        return response.content
+            if (
+                retryable_method
+                and attempt < max_attempts - 1
+                and self._is_retryable_status(response.status_code)
+            ):
+                await asyncio.sleep(self._retry_delay_seconds(attempt))
+                continue
+
+            if response.status_code >= 400:
+                body = self._parse_json_or_error_payload(response)
+                raise_for_error_response(response.status_code, body)
+
+            return response.content
+
+        raise RuntimeError("HTTP download attempt loop exhausted unexpectedly")

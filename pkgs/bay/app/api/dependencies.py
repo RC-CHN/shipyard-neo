@@ -27,6 +27,7 @@ from app.managers.cargo import CargoManager
 from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox
 from app.services.idempotency import IdempotencyService
+from app.services.skills import SkillLifecycleService
 
 
 @lru_cache
@@ -69,6 +70,13 @@ async def get_idempotency_service(
         db_session=session,
         config=settings.idempotency,
     )
+
+
+async def get_skill_lifecycle_service(
+    session: Annotated[AsyncSession, Depends(get_session_dependency)],
+) -> SkillLifecycleService:
+    """Get SkillLifecycleService with injected dependencies."""
+    return SkillLifecycleService(db_session=session)
 
 
 def authenticate(request: Request) -> str:
@@ -124,6 +132,9 @@ SessionDep = Annotated[AsyncSession, Depends(get_session_dependency)]
 SandboxManagerDep = Annotated[SandboxManager, Depends(get_sandbox_manager)]
 CargoManagerDep = Annotated[CargoManager, Depends(get_cargo_manager)]
 IdempotencyServiceDep = Annotated[IdempotencyService, Depends(get_idempotency_service)]
+SkillLifecycleServiceDep = Annotated[
+    SkillLifecycleService, Depends(get_skill_lifecycle_service)
+]
 AuthDep = Annotated[str, Depends(authenticate)]
 
 

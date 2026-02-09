@@ -174,6 +174,20 @@ ERROR_CODE_MAP: dict[str, type[BayError]] = {
     "file_not_found": CargoFileNotFoundError,
 }
 
+# HTTP status fallback mapping for non-standard/non-JSON error payloads
+STATUS_CODE_MAP: dict[int, type[BayError]] = {
+    400: ValidationError,
+    401: UnauthorizedError,
+    403: ForbiddenError,
+    404: NotFoundError,
+    409: ConflictError,
+    429: QuotaExceededError,
+    500: BayError,
+    502: ShipError,
+    503: SessionNotReadyError,
+    504: RequestTimeoutError,
+}
+
 
 def raise_for_error_response(
     status_code: int,
@@ -189,9 +203,13 @@ def raise_for_error_response(
         BayError: Appropriate subclass based on error code
     """
     error_data = response_body.get("error", {})
-    code = error_data.get("code", "internal_error")
+    code = error_data.get("code")
     message = error_data.get("message")
     details = error_data.get("details", {})
 
-    error_class = ERROR_CODE_MAP.get(code, BayError)
+    if code:
+        error_class = ERROR_CODE_MAP.get(code, BayError)
+    else:
+        error_class = STATUS_CODE_MAP.get(status_code, BayError)
+
     raise error_class(message=message, details=details)

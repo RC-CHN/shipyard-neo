@@ -8,7 +8,12 @@ from typing import TYPE_CHECKING
 from shipyard_neo.capabilities.filesystem import FilesystemCapability
 from shipyard_neo.capabilities.python import PythonCapability
 from shipyard_neo.capabilities.shell import ShellCapability
-from shipyard_neo.types import SandboxInfo, SandboxStatus
+from shipyard_neo.types import (
+    ExecutionHistoryEntry,
+    ExecutionHistoryList,
+    SandboxInfo,
+    SandboxStatus,
+)
 
 if TYPE_CHECKING:
     from shipyard_neo._http import HTTPClient
@@ -140,3 +145,66 @@ class Sandbox:
         Does NOT start a session if none exists.
         """
         await self._http.post(f"/v1/sandboxes/{self.id}/keepalive")
+
+    # Execution history methods
+
+    async def get_execution_history(
+        self,
+        *,
+        exec_type: str | None = None,
+        success_only: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+        tags: str | None = None,
+        has_notes: bool = False,
+        has_description: bool = False,
+    ) -> ExecutionHistoryList:
+        """Get execution history for this sandbox."""
+        response = await self._http.get(
+            f"/v1/sandboxes/{self.id}/history",
+            params={
+                "exec_type": exec_type,
+                "success_only": success_only,
+                "limit": limit,
+                "offset": offset,
+                "tags": tags,
+                "has_notes": has_notes,
+                "has_description": has_description,
+            },
+        )
+        return ExecutionHistoryList.model_validate(response)
+
+    async def get_execution(self, execution_id: str) -> ExecutionHistoryEntry:
+        """Get one execution history record by ID."""
+        response = await self._http.get(
+            f"/v1/sandboxes/{self.id}/history/{execution_id}"
+        )
+        return ExecutionHistoryEntry.model_validate(response)
+
+    async def get_last_execution(self, *, exec_type: str | None = None) -> ExecutionHistoryEntry:
+        """Get the latest execution history record."""
+        response = await self._http.get(
+            f"/v1/sandboxes/{self.id}/history/last",
+            params={"exec_type": exec_type},
+        )
+        return ExecutionHistoryEntry.model_validate(response)
+
+    async def annotate_execution(
+        self,
+        execution_id: str,
+        *,
+        description: str | None = None,
+        tags: str | None = None,
+        notes: str | None = None,
+    ) -> ExecutionHistoryEntry:
+        """Annotate one execution history record."""
+        response = await self._http.request(
+            "PATCH",
+            f"/v1/sandboxes/{self.id}/history/{execution_id}",
+            json={
+                "description": description,
+                "tags": tags,
+                "notes": notes,
+            },
+        )
+        return ExecutionHistoryEntry.model_validate(response)

@@ -4,6 +4,15 @@ from app.models.cargo import Cargo
 from app.models.idempotency import IdempotencyKey
 from app.models.sandbox import Sandbox
 from app.models.session import Session, SessionStatus
+from app.models.skill import (
+    ExecutionHistory,
+    ExecutionType,
+    SkillCandidate,
+    SkillCandidateStatus,
+    SkillEvaluation,
+    SkillRelease,
+    SkillReleaseStage,
+)
 
 # Rebuild models to resolve forward references
 # This is required because models use `from __future__ import annotations`
@@ -18,4 +27,11 @@ __all__ = [
     "Session",
     "SessionStatus",
     "Cargo",
+    "ExecutionHistory",
+    "ExecutionType",
+    "SkillCandidate",
+    "SkillCandidateStatus",
+    "SkillEvaluation",
+    "SkillRelease",
+    "SkillReleaseStage",
 ]

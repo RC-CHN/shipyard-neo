@@ -18,12 +18,18 @@ class PythonCapability(BaseCapability):
         code: str,
         *,
         timeout: int = 30,
+        include_code: bool = False,
+        description: str | None = None,
+        tags: str | None = None,
     ) -> PythonExecResult:
         """Execute Python code in the sandbox.
 
         Args:
             code: Python code to execute
             timeout: Execution timeout in seconds (1-300)
+            include_code: Include executed code in response payload
+            description: Optional execution description to store in history
+            tags: Optional comma-separated tags to store in history
 
         Returns:
             PythonExecResult with output, error, and rich data
@@ -38,6 +44,9 @@ class PythonCapability(BaseCapability):
             json={
                 "code": code,
                 "timeout": timeout,
+                "include_code": include_code,
+                "description": description,
+                "tags": tags,
             },
             timeout=float(timeout) + 10,  # Add buffer for network overhead
         )
