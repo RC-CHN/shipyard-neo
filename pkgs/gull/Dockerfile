@@ -1,16 +1,13 @@
 # Gull runtime container
 # - Python + FastAPI wrapper
 # - agent-browser CLI (Node.js)
-# - Playwright Chromium + Linux deps via `agent-browser install --with-deps`
+# - Playwright Chromium + Linux deps
 
 FROM ghcr.io/astral-sh/uv:0.5.30-python3.11-bookworm-slim
 
 WORKDIR /app
 
-# --- System deps + Node.js + agent-browser ---
-# Notes:
-# - agent-browser is distributed via npm
-# - `agent-browser install --with-deps` downloads Chromium and installs required Linux deps
+# --- System deps + Node.js ---
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -18,10 +15,19 @@ RUN apt-get update \
     gnupg \
   && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
-  && npm install -g agent-browser \
-  && agent-browser install --with-deps \
-  && apt-get purge -y --auto-remove curl gnupg \
   && rm -rf /var/lib/apt/lists/*
+
+# --- agent-browser + Playwright Chromium ---
+# 1. Install agent-browser globally
+# 2. Install Playwright as a local project dependency so `npx playwright` works
+# 3. Install Chromium browser + system deps
+# We keep PLAYWRIGHT_BROWSERS_PATH at default (/root/.cache/ms-playwright) so
+# agent-browser can find the Chromium binary at runtime.
+RUN npm install -g agent-browser \
+  && npm init -y \
+  && npm install playwright \
+  && npx playwright install --with-deps chromium \
+  && rm -rf /tmp/* /var/lib/apt/lists/*
 
 # --- Python deps (uv) ---
 COPY pyproject.toml uv.lock README.md ./
@@ -34,5 +40,10 @@ ENV BAY_WORKSPACE_PATH=/workspace
 
 EXPOSE 8080
 
-# Use uv to run within the synced environment
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Use uv to run within the synced environment.
+# --loop asyncio: Force standard asyncio event loop instead of uvloop.
+# uvloop (installed via uvicorn[standard]) has compatibility issues with
+# Node.js child processes (agent-browser): pipe management differs from
+# standard asyncio, causing process.communicate() to hang waiting for EOF,
+# which manifests as command timeouts.
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--loop", "asyncio"]
