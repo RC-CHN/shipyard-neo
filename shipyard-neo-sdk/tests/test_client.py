@@ -327,3 +327,108 @@ class TestBayClient:
             release = await client.skills.promote_candidate("sc-1")
             assert release.version == 1
             assert release.stage.value == "canary"
+
+    @pytest.mark.asyncio
+    async def test_browser_exec(self, httpx_mock, mock_sandbox_response):
+        """Browser exec should return BrowserExecResult."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/sandboxes",
+            json=mock_sandbox_response,
+            status_code=201,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/sandboxes/sbx_123/browser/exec",
+            json={
+                "success": True,
+                "output": "Page loaded: https://example.com",
+                "error": None,
+                "exit_code": 0,
+            },
+            status_code=200,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            sandbox = await client.create_sandbox()
+            result = await sandbox.browser.exec("goto https://example.com")
+            assert result.success is True
+            assert result.output == "Page loaded: https://example.com"
+            assert result.exit_code == 0
+            assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_browser_exec_with_timeout(self, httpx_mock, mock_sandbox_response):
+        """Browser exec should support custom timeout."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/sandboxes",
+            json=mock_sandbox_response,
+            status_code=201,
+        )
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/sandboxes/sbx_123/browser/exec",
+            json={
+                "success": False,
+                "output": "",
+                "error": "Navigation timeout exceeded",
+                "exit_code": 1,
+            },
+            status_code=200,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            sandbox = await client.create_sandbox()
+            result = await sandbox.browser.exec(
+                "goto https://slow-site.example.com",
+                timeout=60,
+            )
+            assert result.success is False
+            assert result.error == "Navigation timeout exceeded"
+
+    @pytest.mark.asyncio
+    async def test_list_profiles(self, httpx_mock):
+        """list_profiles should return ProfileList."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/profiles",
+            json={
+                "items": [
+                    {
+                        "id": "python-default",
+                        "image": "shipyard/python:3.12",
+                        "resources": {"cpus": 1.0, "memory": "512m"},
+                        "capabilities": ["python", "shell", "filesystem"],
+                        "idle_timeout": 300,
+                    },
+                    {
+                        "id": "browser-enabled",
+                        "image": "shipyard/browser:latest",
+                        "resources": {"cpus": 2.0, "memory": "2048m"},
+                        "capabilities": ["python", "shell", "filesystem", "browser"],
+                        "idle_timeout": 600,
+                    },
+                ]
+            },
+            status_code=200,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            profiles = await client.list_profiles()
+            assert len(profiles.items) == 2
+            assert profiles.items[0].id == "python-default"
+            assert profiles.items[0].capabilities == ["python", "shell", "filesystem"]
+            assert profiles.items[0].idle_timeout == 300
+            assert profiles.items[0].resources == {"cpus": 1.0, "memory": "512m"}
+            assert profiles.items[1].id == "browser-enabled"
+            assert "browser" in profiles.items[1].capabilities

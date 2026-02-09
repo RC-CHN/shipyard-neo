@@ -2,17 +2,18 @@
 # Start Bay dev server for debugging
 #
 # Container NOT deleted after sandbox deletion (for log inspection)
-# Always rebuilds ship image to ensure latest code
+# Always rebuilds ship and gull images to ensure latest code
 #
 # Usage:
-#   ./start.sh              # Rebuild ship image and start Bay dev server
-#   ./start.sh --no-build   # Skip ship image rebuild
+#   ./start.sh              # Rebuild ship & gull images and start Bay dev server
+#   ./start.sh --no-build   # Skip image rebuilds
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BAY_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 SHIP_DIR="$(cd "${BAY_DIR}/../ship" && pwd)"
+GULL_DIR="$(cd "${BAY_DIR}/../gull" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/config.yaml"
 BAY_PORT=8002
 
@@ -41,6 +42,19 @@ build_ship_image() {
     log_info "✓ Ship image built successfully"
 }
 
+build_gull_image() {
+    if [ -d "$GULL_DIR" ]; then
+        log_info "Building gull:latest image..."
+        cd "$GULL_DIR"
+        docker build -t gull:latest .
+        cd "$BAY_DIR"
+        log_info "✓ Gull image built successfully"
+    else
+        log_warn "Gull directory not found at $GULL_DIR, skipping gull image build"
+        log_warn "Browser capability will not be available"
+    fi
+}
+
 # Parse arguments - default is to build
 SKIP_BUILD=false
 while [[ $# -gt 0 ]]; do
@@ -60,11 +74,15 @@ check_prerequisites
 
 if [ "$SKIP_BUILD" = false ]; then
     build_ship_image
+    build_gull_image
 else
-    log_info "Skipping ship image build (--no-build)"
+    log_info "Skipping image builds (--no-build)"
     if ! docker image inspect ship:latest >/dev/null 2>&1; then
         log_error "ship:latest image not found! Remove --no-build to build it."
         exit 1
+    fi
+    if ! docker image inspect gull:latest >/dev/null 2>&1; then
+        log_warn "gull:latest image not found. Browser capability will not be available."
     fi
 fi
 

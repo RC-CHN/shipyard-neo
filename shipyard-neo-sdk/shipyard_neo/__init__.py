@@ -23,11 +23,14 @@ from shipyard_neo.errors import (
 )
 from shipyard_neo.skills import SkillManager
 from shipyard_neo.types import (
+    BrowserExecResult,
     CargoInfo,
     CargoList,
     ExecutionHistoryEntry,
     ExecutionHistoryList,
     FileInfo,
+    ProfileInfo,
+    ProfileList,
     PythonExecResult,
     SandboxInfo,
     SandboxList,
@@ -55,8 +58,11 @@ __all__ = [
     "ExecutionHistoryEntry",
     "ExecutionHistoryList",
     "FileInfo",
+    "ProfileInfo",
+    "ProfileList",
     "PythonExecResult",
     "ShellExecResult",
+    "BrowserExecResult",
     "SkillCandidateStatus",
     "SkillReleaseStage",
     "SkillCandidateInfo",

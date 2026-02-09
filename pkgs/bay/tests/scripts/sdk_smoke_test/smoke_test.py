@@ -12,11 +12,12 @@ Prerequisites:
        python pkgs/bay/tests/scripts/sdk_smoke_test/smoke_test.py
 
 This test verifies ALL SDK functionality:
-- BayClient: create_sandbox, get_sandbox, list_sandboxes
+- BayClient: create_sandbox, get_sandbox, list_sandboxes, list_profiles
 - Sandbox: stop, delete, extend_ttl, keepalive, refresh
 - PythonCapability: exec
 - ShellCapability: exec (with cwd)
 - FilesystemCapability: read_file, write_file, list_dir, delete, upload, download
+- BrowserCapability: exec (conditional, requires browser-python profile)
 - CargoManager: create, get, list, delete
 - Error handling: NotFoundError
 - Idempotency: create_sandbox with idempotency_key
@@ -376,6 +377,81 @@ async def test_error_handling(client: BayClient):
         print(f"  ✓ Got NotFoundError: {e.message}")
 
 
+async def test_list_profiles(client: BayClient):
+    """Test listing available profiles."""
+    print("\n" + "=" * 60)
+    print("PROFILES API TESTS")
+    print("=" * 60)
+
+    print("\n[1] Listing available profiles...")
+    profiles = await client.list_profiles()
+    print(f"  ✓ Found {len(profiles.items)} profile(s)")
+    assert len(profiles.items) > 0, "Should have at least one profile"
+
+    for p in profiles.items:
+        print(f"    - {p.id}: image={p.image}, capabilities={p.capabilities}, "
+              f"idle_timeout={p.idle_timeout}s, resources={p.resources}")
+
+    # Verify python-default profile exists
+    print("\n[2] Verifying python-default profile...")
+    names = [p.id for p in profiles.items]
+    assert "python-default" in names, "python-default profile should exist"
+    print("  ✓ python-default profile found")
+
+    return profiles
+
+
+async def test_browser_capability(client: BayClient) -> str | None:
+    """Test Browser automation capability.
+
+    Requires the 'browser-python' profile with gull:latest image.
+    If the profile is not available or sandbox creation fails, the test is skipped.
+    """
+    print("\n" + "=" * 60)
+    print("BROWSER CAPABILITY TESTS")
+    print("=" * 60)
+
+    # 1. Check if browser-python profile is available
+    print("\n[1] Checking for browser-python profile...")
+    profiles = await client.list_profiles()
+    profile_ids = [p.id for p in profiles.items]
+    if "browser-python" not in profile_ids:
+        print("  ⚠ browser-python profile not available, skipping browser tests")
+        return None
+
+    browser_profile = next(p for p in profiles.items if p.id == "browser-python")
+    print(f"  ✓ Found browser-python profile: capabilities={browser_profile.capabilities}")
+
+    # 2. Create sandbox with browser profile
+    print("\n[2] Creating sandbox with browser-python profile...")
+    try:
+        sandbox = await client.create_sandbox(
+            profile="browser-python",
+            ttl=120,
+        )
+    except Exception as e:
+        print(f"  ⚠ Failed to create browser sandbox (gull image may not exist): {e}")
+        print("  ⚠ Skipping browser tests")
+        return None
+
+    print(f"  ✓ Created browser sandbox: {sandbox.id}")
+    print(f"    Capabilities: {sandbox.capabilities}")
+
+    # 3. Execute browser command
+    print("\n[3] Executing browser command...")
+    try:
+        result = await sandbox.browser.exec("goto https://example.com", timeout=30)
+        print(f"  ✓ Success: {result.success}")
+        print(f"    Output: {result.output[:200] if result.output else '(empty)'}")
+        if result.error:
+            print(f"    Error: {result.error}")
+        print(f"    Exit code: {result.exit_code}")
+    except Exception as e:
+        print(f"  ⚠ Browser exec failed (expected if gull is not fully set up): {e}")
+
+    return sandbox.id
+
+
 async def cleanup(client: BayClient, sandbox_ids: list[str]):
     """Clean up test resources."""
     print("\n" + "=" * 60)
@@ -422,6 +498,11 @@ async def main():
             sandbox_ids_to_cleanup.append(idem_sandbox_id)
             
             await test_error_handling(client)
+            await test_list_profiles(client)
+
+            browser_sandbox_id = await test_browser_capability(client)
+            if browser_sandbox_id:
+                sandbox_ids_to_cleanup.append(browser_sandbox_id)
             
             # Cleanup
             await cleanup(client, sandbox_ids_to_cleanup)

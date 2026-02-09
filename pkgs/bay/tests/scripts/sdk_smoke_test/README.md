@@ -15,11 +15,12 @@
 
 | 模块 | 测试内容 |
 |:--|:--|
-| **BayClient** | `create_sandbox`, `get_sandbox`, `list_sandboxes` (分页/过滤) |
+| **BayClient** | `create_sandbox`, `get_sandbox`, `list_sandboxes` (分页/过滤), `list_profiles` |
 | **Sandbox** | `stop`, `delete`, `extend_ttl`, `keepalive`, `refresh` |
 | **PythonCapability** | `exec` (print, expression, multi-line, error, variable persistence) |
 | **ShellCapability** | `exec` (simple, pipe, cwd) |
 | **FilesystemCapability** | `read_file`, `write_file`, `list_dir`, `delete`, `upload`, `download` |
+| **BrowserCapability** | `exec` (conditional, requires browser-python profile + gull image) |
 | **CargoManager** | `create`, `get`, `list`, `delete`, cargo 持久化验证 |
 | **Error handling** | `NotFoundError` |
 | **Idempotency** | `create_sandbox` 幂等键 |

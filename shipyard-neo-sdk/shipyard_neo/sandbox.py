@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from shipyard_neo.capabilities.browser import BrowserCapability
 from shipyard_neo.capabilities.filesystem import FilesystemCapability
 from shipyard_neo.capabilities.python import PythonCapability
 from shipyard_neo.capabilities.shell import ShellCapability
@@ -45,6 +46,7 @@ class Sandbox:
         self.python = PythonCapability(http, info.id)
         self.shell = ShellCapability(http, info.id)
         self.filesystem = FilesystemCapability(http, info.id)
+        self.browser = BrowserCapability(http, info.id)
 
     # Properties from SandboxInfo
 

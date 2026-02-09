@@ -121,6 +121,31 @@ class ShellExecResult(BaseModel):
     command: str | None = None
 
 
+class BrowserExecResult(BaseModel):
+    """Browser automation execution result."""
+
+    success: bool
+    output: str
+    error: str | None = None
+    exit_code: int | None = None
+
+
+class ProfileInfo(BaseModel):
+    """Profile information."""
+
+    id: str
+    image: str
+    resources: dict[str, Any]
+    capabilities: list[str]
+    idle_timeout: int
+
+
+class ProfileList(BaseModel):
+    """Profile list response."""
+
+    items: list[ProfileInfo]
+
+
 class ExecutionHistoryEntry(BaseModel):
     """Execution history entry."""
 

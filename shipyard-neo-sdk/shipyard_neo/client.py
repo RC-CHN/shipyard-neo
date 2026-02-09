@@ -9,7 +9,7 @@ from shipyard_neo._http import HTTPClient
 from shipyard_neo.cargo import CargoManager
 from shipyard_neo.sandbox import Sandbox
 from shipyard_neo.skills import SkillManager
-from shipyard_neo.types import SandboxInfo, SandboxList, SandboxStatus
+from shipyard_neo.types import SandboxInfo, SandboxList, SandboxStatus, ProfileList
 
 
 class BayClient:
@@ -198,3 +198,17 @@ class BayClient:
             },
         )
         return SandboxList.model_validate(response)
+
+    # Profile operations
+
+    async def list_profiles(self) -> ProfileList:
+        """List available sandbox profiles.
+
+        Returns a list of runtime profiles with their resource specs,
+        capabilities, and idle timeout configuration.
+
+        Returns:
+            ProfileList with available profiles
+        """
+        response = await self.http.get("/v1/profiles")
+        return ProfileList.model_validate(response)
