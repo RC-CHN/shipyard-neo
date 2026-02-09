@@ -180,7 +180,8 @@ async def test_browser_screenshot_download_and_python_parse_png_dimensions():
 import struct
 with open('browser_e2e.png','rb') as f:
     data = f.read(24)
-assert data[:8] == b"\x89PNG\r\n\x1a\n"
+# PNG magic header
+assert data[:8] == b"\\x89PNG\\r\\n\\x1a\\n"
 w, h = struct.unpack('>II', data[16:24])
 print(f"png_size={w}x{h}")
 """,
