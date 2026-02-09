@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from app.adapters.base import BaseAdapter, ExecutionResult
+from app.adapters.gull import GullAdapter
 from app.adapters.ship import ShipAdapter
 from app.errors import CapabilityNotSupportedError, SessionNotReadyError
 from app.managers.sandbox import SandboxManager
@@ -69,6 +70,8 @@ class CapabilityRouter:
         def factory() -> BaseAdapter:
             if session.runtime_type == "ship":
                 return ShipAdapter(endpoint)
+            if session.runtime_type == "gull":
+                return GullAdapter(endpoint)
             raise ValueError(f"Unknown runtime type: {session.runtime_type}")
 
         return self._adapter_pool.get_or_create(endpoint, factory)

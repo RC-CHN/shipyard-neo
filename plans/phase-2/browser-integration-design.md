@@ -353,11 +353,11 @@ class CapabilityRouter:
 
 class ContainerInfo(BaseModel):
     """容器运行时信息。"""
-    name: str                    # ship | browser
+    name: str                    # ship | gull
     container_id: str            # Docker 容器 ID
     endpoint: str                # http://host:port
-    runtime_type: str            # ship | browser
-    capabilities: list[str]      # ["python", "shell"] | ["browser", "screenshot"]
+    runtime_type: str            # ship | gull
+    capabilities: list[str]      # ["python", "shell"] | ["browser"]
 
 class Session(SQLModel, table=True):
     """Session - 可包含多个容器。"""

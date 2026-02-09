@@ -64,10 +64,13 @@ class SessionManager:
             profile_id=profile.id,
         )
 
+        primary = profile.get_primary_container()
+        runtime_type = primary.runtime_type if primary else "ship"
+
         session = Session(
             id=session_id,
             sandbox_id=sandbox_id,
-            runtime_type=profile.runtime_type,
+            runtime_type=runtime_type,
             profile_id=profile.id,
             desired_state=SessionStatus.PENDING,
             observed_state=SessionStatus.PENDING,
@@ -166,10 +169,12 @@ class SessionManager:
         # Need to start container
         if session.observed_state != SessionStatus.RUNNING:
             container_id = session.container_id
+            primary = profile.get_primary_container()
+            runtime_port = primary.runtime_port if primary else 8000
             try:
                 endpoint = await self._driver.start(
                     container_id,
-                    runtime_port=int(profile.runtime_port or 8000),
+                    runtime_port=runtime_port,
                 )
 
                 # Wait for Ship runtime to be ready before marking as RUNNING
@@ -343,11 +348,15 @@ class SessionManager:
         if not session.container_id:
             return session
 
+        profile = self._settings.get_profile(session.profile_id)
+        runtime_port = None
+        if profile:
+            primary = profile.get_primary_container()
+            runtime_port = primary.runtime_port if primary else None
+
         info = await self._driver.status(
             session.container_id,
-            runtime_port=int(self._settings.get_profile(session.profile_id).runtime_port or 8000)
-            if self._settings.get_profile(session.profile_id)
-            else None,
+            runtime_port=runtime_port,
         )
 
         # Map container status to session status
@@ -401,10 +410,13 @@ class SessionManager:
         if container_id is None:
             return session
 
+        primary = profile.get_primary_container()
+        runtime_port = primary.runtime_port if primary else 8000
+
         try:
             info = await self._driver.status(
                 container_id,
-                runtime_port=int(profile.runtime_port or 8000),
+                runtime_port=runtime_port,
             )
         except Exception as e:
             # Docker daemon unreachable - degrade to old path (trust DB state)

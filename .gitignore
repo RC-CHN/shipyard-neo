@@ -3,3 +3,4 @@ pkgs/bay/config.yaml
 openspec/
 AGENTS.md
 .kilocode/
+__pycache__/

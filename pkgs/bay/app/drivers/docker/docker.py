@@ -144,10 +144,20 @@ class DockerDriver(Driver):
         *,
         labels: dict[str, str] | None = None,
     ) -> str:
-        """Create a container without starting it."""
+        """Create a container without starting it.
+
+        Phase 2: Uses primary container from profile for backward compatibility.
+        For multi-container support, use create_multi() instead.
+        """
         client = await self._get_client()
 
-        runtime_port = int(profile.runtime_port or 8000)
+        # Phase 2: Get primary container spec
+        primary = profile.get_primary_container()
+        if primary is None:
+            raise ValueError(f"Profile {profile.id} has no containers defined")
+
+        runtime_port = primary.runtime_port
+        image = primary.image
 
         # Get GC instance_id for container labeling
         settings = get_settings()
@@ -169,11 +179,11 @@ class DockerDriver(Driver):
             container_labels.update(labels)
 
         # Parse resource limits
-        mem_limit = _parse_memory(profile.resources.memory)
-        nano_cpus = int(profile.resources.cpus * 1e9)
+        mem_limit = _parse_memory(primary.resources.memory)
+        nano_cpus = int(primary.resources.cpus * 1e9)
 
         # Build environment
-        env = [f"{k}={v}" for k, v in profile.env.items()]
+        env = [f"{k}={v}" for k, v in primary.env.items()]
         env.extend(
             [
                 f"BAY_SESSION_ID={session.id}",
@@ -185,7 +195,7 @@ class DockerDriver(Driver):
         self._log.info(
             "docker.create",
             session_id=session.id,
-            image=profile.image,
+            image=image,
             cargo=cargo.driver_ref,
             runtime_port=runtime_port,
             connect_mode=self._connect_mode,
@@ -233,7 +243,7 @@ class DockerDriver(Driver):
             host_config["NetworkMode"] = network_mode
 
         config: dict[str, Any] = {
-            "Image": profile.image,
+            "Image": image,
             "Env": env,
             "Labels": container_labels,
             "HostConfig": host_config,

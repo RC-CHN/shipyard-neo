@@ -561,21 +561,26 @@ class TestRuntimeTypeFromProfile:
     """Unit tests for runtime_type configuration.
 
     Purpose: Verify runtime_type is correctly read from ProfileConfig.
+    Phase 2: Updated to test via get_primary_container().
     """
 
     async def test_profile_default_runtime_type_is_ship(self):
         """ProfileConfig should default runtime_type to 'ship'."""
         profile = ProfileConfig(id="test-profile")
-        assert profile.runtime_type == "ship"
+        primary = profile.get_primary_container()
+        assert primary is not None
+        assert primary.runtime_type == "ship"
 
     async def test_profile_custom_runtime_type(self):
-        """ProfileConfig should accept custom runtime_type."""
+        """ProfileConfig should accept custom runtime_type via legacy fields."""
         profile = ProfileConfig(
             id="browser-profile",
             runtime_type="browser",
             image="bay-browser:latest",
         )
-        assert profile.runtime_type == "browser"
+        primary = profile.get_primary_container()
+        assert primary is not None
+        assert primary.runtime_type == "browser"
 
 # Note: ensure_running tests require real runtime health checks,
 # so they are in integration tests instead of unit tests.

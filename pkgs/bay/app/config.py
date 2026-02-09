@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -98,8 +98,47 @@ class ResourceSpec(BaseModel):
     memory: str = "1g"
 
 
+class ContainerSpec(BaseModel):
+    """Single container specification within a Profile.
+
+    Defines one container in a multi-container Sandbox, including its image,
+    runtime type, resource limits, capabilities, and environment variables.
+    """
+
+    name: str  # Container name, unique within a Profile (e.g., "ship", "browser")
+    image: str  # Container image (e.g., "ship:latest", "browser-runtime:latest")
+    runtime_type: str = "ship"  # ship | browser | custom
+    runtime_port: int = 8123  # HTTP port inside the container
+
+    resources: ResourceSpec = Field(default_factory=ResourceSpec)
+    capabilities: list[str] = Field(default_factory=list)
+
+    # Primary handler for these capabilities (used for conflict resolution)
+    primary_for: list[str] = Field(default_factory=list)
+
+    # Environment variables, supports ${VAR} placeholders
+    env: dict[str, str] = Field(default_factory=dict)
+
+    # Health check endpoint path
+    health_check_path: str = "/health"
+
+
+class StartupConfig(BaseModel):
+    """Container startup strategy."""
+
+    # Startup order: parallel (all at once) | sequential (in containers array order)
+    order: Literal["parallel", "sequential"] = "parallel"
+
+    # Whether to wait for all containers to be ready before Session is considered Ready
+    wait_for_all: bool = True
+
+
 class ProfileConfig(BaseModel):
-    """Runtime profile configuration.
+    """Runtime profile configuration (supports single and multi-container).
+
+    Phase 2: Extended to support multi-container Sandboxes via `containers` field.
+    Backward compatible - old single-container format (using `image` field) is
+    automatically normalized to a single-element `containers` array.
 
     Note:
     - `runtime_type` 决定使用哪个 Adapter 与运行时通信（如 ship, browser 等）。
@@ -109,22 +148,116 @@ class ProfileConfig(BaseModel):
     """
 
     id: str
-    image: str = "ship:latest"
+    description: str | None = None
+
+    # ========== Phase 1 compatible fields (single-container mode) ==========
+    image: str | None = None
 
     # 运行时类型，决定使用哪个 Adapter（如 ShipAdapter）
     # 支持的类型：ship（默认）、browser（未来）、gpu（未来）
-    runtime_type: str = "ship"
+    runtime_type: str | None = None
 
-    resources: ResourceSpec = Field(default_factory=ResourceSpec)
-    capabilities: list[str] = Field(default_factory=lambda: ["filesystem", "shell", "python"])
-    idle_timeout: int = 1800  # 30 minutes
+    resources: ResourceSpec | None = None
+    capabilities: list[str] | None = None
 
     # 容器内运行时 HTTP 端口（用于 Bay->Runtime 访问）
     # Ship 当前默认监听 8123（见 ship 容器启动日志），因此这里给出默认 8123；
     # 但推荐在 config.yaml 里显式配置。
-    runtime_port: int | None = 8123
+    runtime_port: int | None = None
 
-    env: dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] | None = None
+
+    # ========== Phase 2 new fields (multi-container mode) ==========
+    containers: list[ContainerSpec] | None = None
+    startup: StartupConfig = Field(default_factory=StartupConfig)
+
+    # ========== Shared configuration ==========
+    idle_timeout: int = 1800  # 30 minutes
+
+    def model_post_init(self, __context: Any) -> None:
+        """Normalize single-container format to multi-container format.
+
+        Backward compatibility: if `image` field is set (old format),
+        auto-convert to a single-element `containers` array.
+        """
+        if self.containers is not None:
+            # Already multi-container format - clear legacy fields
+            return
+
+        # Single-container format → convert to multi-container
+        if self.image is not None:
+            container = ContainerSpec(
+                name="primary",
+                image=self.image,
+                runtime_type=self.runtime_type or "ship",
+                runtime_port=self.runtime_port or 8123,
+                resources=self.resources or ResourceSpec(),
+                capabilities=self.capabilities or ["filesystem", "shell", "python"],
+                primary_for=self.capabilities or ["filesystem", "shell", "python"],
+                env=self.env or {},
+            )
+            self.containers = [container]
+        else:
+            # Neither image nor containers specified - use default
+            container = ContainerSpec(
+                name="primary",
+                image="ship:latest",
+                runtime_type="ship",
+                runtime_port=8123,
+                resources=ResourceSpec(),
+                capabilities=["filesystem", "shell", "python"],
+                primary_for=["filesystem", "shell", "python"],
+            )
+            self.containers = [container]
+
+    def get_containers(self) -> list[ContainerSpec]:
+        """Get container list (always returns normalized multi-container format)."""
+        return self.containers or []
+
+    def get_primary_container(self) -> ContainerSpec | None:
+        """Get primary container.
+
+        Priority:
+        1. Container named 'primary' or 'ship'
+        2. First container in the list
+        """
+        containers = self.get_containers()
+        if not containers:
+            return None
+
+        for c in containers:
+            if c.name in ("primary", "ship"):
+                return c
+
+        return containers[0]
+
+    def find_container_for_capability(self, capability: str) -> ContainerSpec | None:
+        """Find the container responsible for a capability.
+
+        Priority:
+        1. Container with `primary_for` containing the capability
+        2. First container with `capabilities` containing the capability
+        """
+        containers = self.get_containers()
+
+        # 1. Check primary_for
+        for c in containers:
+            if capability in c.primary_for:
+                return c
+
+        # 2. Check capabilities
+        for c in containers:
+            if capability in c.capabilities:
+                return c
+
+        return None
+
+    def get_all_capabilities(self) -> set[str]:
+        """Get all capabilities supported by this Profile."""
+        caps: set[str] = set()
+        for c in self.get_containers():
+            caps.update(c.capabilities)
+        return caps
 
 
 class CargoConfig(BaseModel):

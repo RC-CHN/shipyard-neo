@@ -124,7 +124,7 @@ profiles:
       # Sidecar 容器：Browser
       - name: browser
         image: "browser-runtime:latest"
-        runtime_type: browser
+        runtime_type: gull
         runtime_port: 8080
         resources:
           cpus: 1.0
@@ -214,7 +214,7 @@ class ContainerSpec(BaseModel):
     
     name: str                           # 容器名称，在 Profile 内唯一
     image: str                          # 容器镜像
-    runtime_type: str = "ship"          # ship | browser | custom
+    runtime_type: str = "ship"          # ship | gull | custom
     runtime_port: int = 8123            # 容器内 HTTP 端口
     
     resources: ResourceSpec = Field(default_factory=ResourceSpec)
