@@ -78,7 +78,17 @@ def _sandbox_to_response_at_time(
     """Convert Sandbox model to API response using a fixed time reference."""
     settings = get_settings()
     profile = settings.get_profile(sandbox.profile_id)
-    capabilities = profile.capabilities if profile else []
+
+    # Phase 2: multi-container profiles may not set legacy `profile.capabilities`.
+    if profile is None:
+        capabilities: list[str] = []
+    else:
+        capabilities = (
+            list(profile.capabilities)
+            if getattr(profile, "capabilities", None)
+            else sorted(profile.get_all_capabilities())
+        )
+
     computed_status = status or sandbox.compute_status(now=now, current_session=current_session)
 
     return SandboxResponse(

@@ -175,11 +175,19 @@ def require_capability(capability: str):
                 capability=capability,
             )
 
-        if capability not in profile.capabilities:
+        # Phase 2: multi-container profiles may not set legacy `profile.capabilities`.
+        # In that case we derive capability set from container specs.
+        available_caps = (
+            list(profile.capabilities)
+            if getattr(profile, "capabilities", None)
+            else sorted(profile.get_all_capabilities())
+        )
+
+        if capability not in available_caps:
             raise CapabilityNotSupportedError(
                 message=f"Profile '{sandbox.profile_id}' does not support capability: {capability}",
                 capability=capability,
-                available=profile.capabilities,
+                available=available_caps,
             )
 
         return sandbox
@@ -191,3 +199,4 @@ def require_capability(capability: str):
 PythonCapabilityDep = Annotated[Sandbox, Depends(require_capability("python"))]
 ShellCapabilityDep = Annotated[Sandbox, Depends(require_capability("shell"))]
 FilesystemCapabilityDep = Annotated[Sandbox, Depends(require_capability("filesystem"))]
+BrowserCapabilityDep = Annotated[Sandbox, Depends(require_capability("browser"))]

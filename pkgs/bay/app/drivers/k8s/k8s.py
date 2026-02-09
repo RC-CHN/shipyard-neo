@@ -6,6 +6,11 @@ No Service/Ingress needed for individual Ship Pods.
 Architecture:
     Client -> Bay (Ingress/LB exposed) -> Pod IP:runtime_port
 
+Phase 2: Multi-container support via Sidecar pattern.
+    All containers in a session run as sidecars within the same Pod.
+    They share the network namespace (communicate via localhost) and
+    can mount the same Cargo PVC volume.
+
 See: plans/phase-2/k8s-driver-analysis.md
 """
 
@@ -19,10 +24,16 @@ from kubernetes_asyncio import client, config
 from kubernetes_asyncio.client import ApiClient, ApiException
 
 from app.config import get_settings
-from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInstance
+from app.drivers.base import (
+    ContainerInfo,
+    ContainerStatus,
+    Driver,
+    MultiContainerInfo,
+    RuntimeInstance,
+)
 
 if TYPE_CHECKING:
-    from app.config import ProfileConfig
+    from app.config import ContainerSpec, ProfileConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 
@@ -586,3 +597,283 @@ class K8sDriver(Driver):
                 )
             else:
                 raise
+
+    # ================================================================
+    # Phase 2: Multi-container orchestration (Sidecar pattern)
+    #
+    # In K8s, multi-container sessions are implemented as a single Pod
+    # with multiple sidecar containers. They share:
+    # - Network namespace (communicate via localhost)
+    # - Cargo PVC volume (mounted at /workspace in each container)
+    # ================================================================
+
+    async def create_session_network(self, session_id: str) -> str:
+        """No-op for K8s: Pod containers share network namespace.
+
+        Returns a placeholder name for compatibility with the Driver interface.
+        """
+        self._log.debug(
+            "k8s.create_session_network.noop",
+            session_id=session_id,
+        )
+        return f"pod-net-{session_id}"
+
+    async def remove_session_network(self, session_id: str) -> None:
+        """No-op for K8s: network namespace is cleaned up with the Pod."""
+        self._log.debug(
+            "k8s.remove_session_network.noop",
+            session_id=session_id,
+        )
+
+    def _build_k8s_container(
+        self,
+        spec: "ContainerSpec",
+        *,
+        session: "Session",
+    ) -> client.V1Container:
+        """Build a K8s V1Container from a ContainerSpec."""
+        # Environment variables
+        env = [
+            client.V1EnvVar(name=k, value=v)
+            for k, v in spec.env.items()
+        ]
+        env.extend([
+            client.V1EnvVar(name="BAY_SESSION_ID", value=session.id),
+            client.V1EnvVar(name="BAY_SANDBOX_ID", value=session.sandbox_id),
+            client.V1EnvVar(name="BAY_WORKSPACE_PATH", value=WORKSPACE_MOUNT_PATH),
+            client.V1EnvVar(name="BAY_CONTAINER_NAME", value=spec.name),
+        ])
+
+        # Resource requirements
+        memory_k8s = _parse_memory(spec.resources.memory)
+        resources = client.V1ResourceRequirements(
+            limits={
+                "cpu": str(spec.resources.cpus),
+                "memory": memory_k8s,
+            },
+            requests={
+                "cpu": str(spec.resources.cpus / 2),
+                "memory": memory_k8s,
+            },
+        )
+
+        return client.V1Container(
+            name=spec.name,
+            image=spec.image,
+            image_pull_policy="IfNotPresent",
+            ports=[client.V1ContainerPort(container_port=spec.runtime_port)],
+            env=env,
+            volume_mounts=[
+                client.V1VolumeMount(
+                    name="workspace",
+                    mount_path=WORKSPACE_MOUNT_PATH,
+                )
+            ],
+            resources=resources,
+        )
+
+    async def create_multi(
+        self,
+        session: "Session",
+        profile: "ProfileConfig",
+        cargo: "Cargo",
+        *,
+        network_name: str,
+        labels: dict[str, str] | None = None,
+    ) -> list[MultiContainerInfo]:
+        """Create a Pod with multiple sidecar containers.
+
+        All containers in the profile are placed in a single Pod,
+        sharing the network namespace and cargo volume.
+
+        Returns:
+            List of MultiContainerInfo (one per container spec).
+            All share the same Pod name as container_id.
+        """
+        api_client = await self._get_api_client()
+        v1 = client.CoreV1Api(api_client)
+
+        containers_specs = profile.get_containers()
+        pod_name = f"bay-session-{session.id}"
+
+        # Use the primary container's port for pod-level labels
+        primary = profile.get_primary_container()
+        primary_port = primary.runtime_port if primary else 8123
+
+        # Build labels
+        pod_labels = self._build_labels(
+            session=session,
+            cargo=cargo,
+            profile_id=profile.id,
+            runtime_port=primary_port,
+            extra=labels,
+        )
+
+        # Build K8s containers from all specs
+        k8s_containers = [
+            self._build_k8s_container(spec, session=session)
+            for spec in containers_specs
+        ]
+
+        # Volume: mount Cargo PVC
+        volumes = [
+            client.V1Volume(
+                name="workspace",
+                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                    claim_name=cargo.driver_ref,
+                ),
+            )
+        ]
+
+        # Image pull secrets
+        image_pull_secrets = None
+        if self._image_pull_secrets:
+            image_pull_secrets = [
+                client.V1LocalObjectReference(name=secret)
+                for secret in self._image_pull_secrets
+            ]
+
+        # Build Pod
+        pod = client.V1Pod(
+            metadata=client.V1ObjectMeta(
+                name=pod_name,
+                namespace=self._namespace,
+                labels=pod_labels,
+            ),
+            spec=client.V1PodSpec(
+                containers=k8s_containers,
+                volumes=volumes,
+                image_pull_secrets=image_pull_secrets,
+                restart_policy="Never",
+            ),
+        )
+
+        self._log.info(
+            "k8s.create_multi",
+            pod_name=pod_name,
+            session_id=session.id,
+            containers=[s.name for s in containers_specs],
+        )
+
+        try:
+            await v1.create_namespaced_pod(namespace=self._namespace, body=pod)
+        except ApiException as e:
+            if e.status == 409:
+                self._log.warning("k8s.create_multi.already_exists", pod_name=pod_name)
+            else:
+                raise
+
+        # Build result: all containers share the same pod_name as container_id
+        results = [
+            MultiContainerInfo(
+                name=spec.name,
+                container_id=pod_name,  # All share the same Pod
+                runtime_type=spec.runtime_type,
+                capabilities=list(spec.capabilities),
+                status=ContainerStatus.CREATED,
+            )
+            for spec in containers_specs
+        ]
+
+        return results
+
+    async def start_multi(
+        self,
+        containers: list[MultiContainerInfo],
+    ) -> list[MultiContainerInfo]:
+        """Wait for the Pod to be Running and resolve endpoints.
+
+        In K8s sidecar mode, all containers are in one Pod.
+        Each container's endpoint is Pod IP + its runtime_port.
+        Containers can also reach each other via localhost.
+        """
+        if not containers:
+            return containers
+
+        # All containers share the same Pod name
+        pod_name = containers[0].container_id
+        api_client = await self._get_api_client()
+        v1 = client.CoreV1Api(api_client)
+
+        self._log.info(
+            "k8s.start_multi",
+            pod_name=pod_name,
+            containers=[c.name for c in containers],
+        )
+
+        # Wait for Pod to be Running
+        pod_ip: str | None = None
+        for i in range(self._pod_startup_timeout):
+            try:
+                pod = await v1.read_namespaced_pod(
+                    name=pod_name,
+                    namespace=self._namespace,
+                )
+
+                phase = pod.status.phase
+                pod_ip = pod.status.pod_ip
+
+                if phase == "Running" and pod_ip:
+                    break
+
+                if phase in ("Failed", "Succeeded"):
+                    raise RuntimeError(
+                        f"Pod {pod_name} terminated with phase: {phase}"
+                    )
+
+            except ApiException as e:
+                if e.status == 404:
+                    raise RuntimeError(f"Pod {pod_name} not found")
+                raise
+
+            await asyncio.sleep(1)
+        else:
+            raise RuntimeError(
+                f"Pod {pod_name} failed to start within {self._pod_startup_timeout}s"
+            )
+
+        # Resolve endpoints: each container gets Pod IP + its port
+        # We need to look up the port from the Pod's container specs
+        pod = await v1.read_namespaced_pod(
+            name=pod_name,
+            namespace=self._namespace,
+        )
+
+        container_ports: dict[str, int] = {}
+        if pod.spec and pod.spec.containers:
+            for k8s_container in pod.spec.containers:
+                if k8s_container.ports:
+                    container_ports[k8s_container.name] = (
+                        k8s_container.ports[0].container_port
+                    )
+
+        for c in containers:
+            port = container_ports.get(c.name, 8123)
+            c.endpoint = f"http://{pod_ip}:{port}"
+            c.status = ContainerStatus.RUNNING
+
+        self._log.info(
+            "k8s.start_multi.ready",
+            pod_name=pod_name,
+            pod_ip=pod_ip,
+            endpoints={c.name: c.endpoint for c in containers},
+        )
+
+        return containers
+
+    async def stop_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Stop the Pod (delete it, since K8s has no stop concept)."""
+        if not containers:
+            return
+
+        # All containers share the same Pod; delete it once
+        pod_name = containers[0].container_id
+        await self.destroy(pod_name)
+
+    async def destroy_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Destroy the Pod."""
+        if not containers:
+            return
+
+        pod_name = containers[0].container_id
+        await self.destroy(pod_name)

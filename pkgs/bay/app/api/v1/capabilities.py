@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.api.dependencies import (
     AuthDep,
+    BrowserCapabilityDep,
     FilesystemCapabilityDep,
     PythonCapabilityDep,
     SandboxManagerDep,
@@ -164,6 +165,22 @@ class FileDeleteRequest(BaseModel):
 # Endpoints
 
 
+class BrowserExecRequest(BaseModel):
+    """Request to execute browser automation command."""
+
+    cmd: str
+    timeout: int = Field(default=30, ge=1, le=300)
+
+
+class BrowserExecResponse(BaseModel):
+    """Browser execution response (CLI passthrough)."""
+
+    success: bool
+    output: str
+    error: str | None = None
+    exit_code: int | None = None
+
+
 @router.post("/{sandbox_id}/python/exec", response_model=PythonExecResponse)
 async def exec_python(
     request: PythonExecRequest,
@@ -259,6 +276,32 @@ async def exec_shell(
         execution_id=execution_entry.id,
         execution_time_ms=execution_time_ms,
         command=request.command if request.include_code else None,
+    )
+
+
+@router.post("/{sandbox_id}/browser/exec", response_model=BrowserExecResponse)
+async def exec_browser(
+    request: BrowserExecRequest,
+    sandbox: BrowserCapabilityDep,  # Validates browser capability at profile level
+    sandbox_mgr: SandboxManagerDep,
+) -> BrowserExecResponse:
+    """Execute browser automation command in sandbox.
+
+    Phase 2: Routes to Gull runtime via [`CapabilityRouter.exec_browser()`](pkgs/bay/app/router/capability/capability.py:213).
+    """
+    capability_router = CapabilityRouter(sandbox_mgr)
+
+    result = await capability_router.exec_browser(
+        sandbox=sandbox,
+        cmd=request.cmd,
+        timeout=request.timeout,
+    )
+
+    return BrowserExecResponse(
+        success=result.success,
+        output=result.output,
+        error=result.error,
+        exit_code=result.exit_code,
     )
 
 

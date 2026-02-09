@@ -12,18 +12,22 @@ Endpoint 解析注意：
 - Bay 可能运行在宿主机，也可能运行在容器内（挂载 docker.sock）。
 - 因此 Driver 需要支持：容器网络直连（container IP + runtime_port）以及宿主机端口映射（host port）。
 
+Phase 2: Multi-container support
+- create_session_network / remove_session_network: Session-scoped Docker network
+- create_multi / start_multi / stop_multi / destroy_multi: Multi-container orchestration
+
 See: plans/bay-design.md section 3.1
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.config import ProfileConfig
+    from app.config import ContainerSpec, ProfileConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 
@@ -46,6 +50,32 @@ class ContainerInfo:
     status: ContainerStatus
     endpoint: str | None = None  # Ship REST API endpoint
     exit_code: int | None = None
+
+
+@dataclass
+class MultiContainerInfo:
+    """Information about a single container within a multi-container session.
+
+    Phase 2: Used by multi-container orchestration methods.
+    """
+
+    name: str  # Container name from ContainerSpec (e.g., "ship", "gull")
+    container_id: str  # Docker container ID
+    endpoint: str | None = None  # HTTP endpoint (e.g., "http://host:port")
+    status: ContainerStatus = ContainerStatus.CREATED
+    runtime_type: str = "ship"  # ship | gull | custom
+    capabilities: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        """Convert to dict for Session.containers JSON storage."""
+        return {
+            "name": self.name,
+            "container_id": self.container_id,
+            "endpoint": self.endpoint,
+            "status": self.status.value,
+            "runtime_type": self.runtime_type,
+            "capabilities": self.capabilities,
+        }
 
 
 @dataclass
@@ -223,3 +253,88 @@ class Driver(ABC):
             instance_id: Instance ID (container ID / Pod name)
         """
         ...
+
+    # Phase 2: Multi-container orchestration
+
+    async def create_session_network(self, session_id: str) -> str:
+        """Create a session-scoped network for multi-container communication.
+
+        Args:
+            session_id: Session ID (used to generate unique network name)
+
+        Returns:
+            Network name/ID
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")
+
+    async def remove_session_network(self, session_id: str) -> None:
+        """Remove a session-scoped network.
+
+        Best-effort: logs warning if network not found.
+
+        Args:
+            session_id: Session ID
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")
+
+    async def create_multi(
+        self,
+        session: "Session",
+        profile: "ProfileConfig",
+        cargo: "Cargo",
+        *,
+        network_name: str,
+        labels: dict[str, str] | None = None,
+    ) -> list["MultiContainerInfo"]:
+        """Create multiple containers for a session (without starting them).
+
+        Phase 2: Creates one container per ContainerSpec in the profile,
+        all attached to the session network and sharing the cargo volume.
+
+        Args:
+            session: Session model
+            profile: Profile configuration (with multiple containers)
+            cargo: Cargo to mount
+            network_name: Session network name (from create_session_network)
+            labels: Additional labels for all containers
+
+        Returns:
+            List of MultiContainerInfo (one per container)
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")
+
+    async def start_multi(
+        self,
+        containers: list["MultiContainerInfo"],
+    ) -> list["MultiContainerInfo"]:
+        """Start multiple containers and resolve their endpoints.
+
+        Phase 2: Starts all containers in parallel, waits for all to be running.
+
+        Args:
+            containers: List of MultiContainerInfo from create_multi
+
+        Returns:
+            Updated list with endpoints resolved
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")
+
+    async def stop_multi(self, containers: list["MultiContainerInfo"]) -> None:
+        """Stop multiple containers.
+
+        Phase 2: Stops all containers, best-effort (logs warnings on failures).
+
+        Args:
+            containers: List of MultiContainerInfo to stop
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")
+
+    async def destroy_multi(self, containers: list["MultiContainerInfo"]) -> None:
+        """Destroy (remove) multiple containers.
+
+        Phase 2: Force-removes all containers, best-effort.
+
+        Args:
+            containers: List of MultiContainerInfo to destroy
+        """
+        raise NotImplementedError("Multi-container not supported by this driver")

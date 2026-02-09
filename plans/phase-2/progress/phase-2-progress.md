@@ -33,12 +33,12 @@
 - 让 `SessionManager` 不再依赖 legacy `profile.runtime_port/runtime_type` 直接字段，而是基于 `profile.get_primary_container()`。
   - 代码：[`pkgs/bay/app/managers/session/session.py`](pkgs/bay/app/managers/session/session.py:1)
 
-### 1.4 DockerDriver（阶段性兼容改造）
+### 1.4 DockerDriver（多容器编排 + 向后兼容）
 
-- `DockerDriver.create()` 改为使用 `profile.get_primary_container()`（仅主容器）以保持 Phase 1/2 兼容。
+- `DockerDriver.create()` 继续基于 `profile.get_primary_container()`，保持 Phase 1/2 兼容。
+- 新增 Phase 2 多容器编排：Session-scoped network + 多容器 create/start/stop/destroy（失败全部回滚）。
   - 代码：[`pkgs/bay/app/drivers/docker/docker.py`](pkgs/bay/app/drivers/docker/docker.py:1)
-
-> 注：真正的多容器创建（每个 Session 创建独立 network + 并行启动 N 个容器）尚未实现，见“待完成”。
+  - 相关模型：[`pkgs/bay/app/drivers/base.py`](pkgs/bay/app/drivers/base.py:1)
 
 ### 1.5 Gull（浏览器运行时）包与镜像骨架
 
@@ -73,32 +73,14 @@
 
 ### 1.8 测试现状
 
-- Bay unit tests：`281 passed`（最新已跑通）
+- Bay unit tests：`298 passed`（最新已跑通，新增多容器 SessionManager 单测）
 - Gull unit tests：`3 passed`（已跑通）
 
 ---
 
 ## 2. 进行中（In Progress）
 
-### 2.1 阶段 2.2：DockerDriver 多容器编排
-
-目标：为每个 Session
-- 创建独立 Docker network（如 `bay_net_{session_id}`）
-- 启动多个容器（Ship + Gull），挂载同一个 Cargo Volume
-- 容器 hostname 直接使用容器名（`ship`、`gull`），支持容器间互访
-- 任一容器启动失败则全部回滚（已在 decision-points 定义）
-
-涉及文件（待改）：
-- [`pkgs/bay/app/drivers/docker/docker.py`](pkgs/bay/app/drivers/docker/docker.py:1)
-- [`pkgs/bay/app/managers/session/session.py`](pkgs/bay/app/managers/session/session.py:1)
-- [`pkgs/bay/app/models/session.py`](pkgs/bay/app/models/session.py:1)
-
-### 2.2 阶段 2.3：能力路由（capability → container）
-
-目标：CapabilityRouter 能按 capability 选择容器（primary_for 优先，随后按 containers 顺序第一匹配）。
-
-涉及文件（待改）：
-- [`pkgs/bay/app/router/capability/capability.py`](pkgs/bay/app/router/capability/capability.py:1)
+（本阶段核心能力已完成：多容器编排 + 能力路由 + browser exec API；后续聚焦 E2E 与 SDK/MCP。）
 
 ---
 
@@ -106,20 +88,21 @@
 
 ### 3.1 数据面：Session.containers 真正落库
 
-- Session 创建/启动时写入：
-  - `[{name, container_id, endpoint, status, runtime_type, capabilities}, ...]`
-- 主容器的 `container_id/endpoint` 继续用于向后兼容（指向 primary container）。
+✅ 已实现：Session 启动时写入 `containers` JSON（并保持 primary container 的 `container_id/endpoint` 向后兼容）。
+- 代码：[`pkgs/bay/app/managers/session/session.py`](pkgs/bay/app/managers/session/session.py:1)
 
 ### 3.2 生命周期与异常策略（按 decision-points）
 
-- 多容器创建失败：全部回滚
-- 运行中某容器挂掉：Session 标记 `DEGRADED`，对应能力 503
-- idle 回收：全活跃计数（Session 级 last_activity）
+- 多容器创建失败：全部回滚（✅ 已在启动逻辑实现）
+- 运行中某容器挂掉：Session 标记 `DEGRADED`，对应能力 503（待补：`refresh_status()` 多容器版 + GC/路由层对 DEGRADED 返回 503）
+- idle 回收：全活跃计数（Session 级 last_activity）（已存在，但需要确认 browser exec 触发 touch）
 
 ### 3.3 API：Bay 对外暴露 browser exec
 
-- 新增端点：`POST /sandboxes/{id}/browser/exec`（内部路由到 GullAdapter.exec_browser）
-- SDK/MCP 后续：提供 `browser_exec` tool（或 client.browser.exec）
+✅ 已实现 browser exec：
+- 新增端点：`POST /v1/capabilities/{id}/browser/exec`
+  - 代码：[`pkgs/bay/app/api/v1/capabilities.py`](pkgs/bay/app/api/v1/capabilities.py:1)
+  - 依赖：[`pkgs/bay/app/api/dependencies.py`](pkgs/bay/app/api/dependencies.py:1)
 
 ### 3.4 集成测试 / E2E
 

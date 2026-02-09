@@ -54,27 +54,100 @@ class CapabilityRouter:
         """
         return await self._sandbox_mgr.ensure_running(sandbox)
 
-    def _get_adapter(self, session: Session) -> BaseAdapter:
+    def _get_adapter(self, session: Session, *, capability: str | None = None) -> BaseAdapter:
         """Get or create adapter for session.
 
+        Phase 2:
+        - If capability is specified and session is multi-container, route to the
+          correct container endpoint.
+        - Routing priority follows ProfileConfig rules when profile is available:
+          [`ProfileConfig.find_container_for_capability()`](pkgs/bay/app/config.py:234)
+          (primary_for wins, then first capabilities match).
+        - If profile is missing, falls back to first matching container in
+          [`Session.containers`](pkgs/bay/app/models/session.py:76).
+
+        Otherwise falls back to the primary container (backward compatible).
+
         Caches adapters by endpoint to avoid creating new instances.
+
+        Args:
+            session: Session to get adapter for
+            capability: Optional capability to route to the correct container
         """
-        if session.endpoint is None:
+        endpoint: str | None = None
+        runtime_type: str = session.runtime_type
+
+        # Phase 2: Multi-container routing
+        if capability and session.is_multi_container and session.containers:
+            # Prefer routing via profile (supports primary_for semantics)
+            profile = None
+            try:
+                # Local import to avoid creating a hard dependency at module import time
+                from app.config import get_settings
+
+                profile = get_settings().get_profile(session.profile_id)
+            except Exception:
+                profile = None
+
+            target_name: str | None = None
+            if profile is not None:
+                spec = profile.find_container_for_capability(capability)
+                if spec is not None:
+                    target_name = spec.name
+
+            container_dict = None
+            if target_name is not None:
+                for c in session.containers:
+                    if c.get("name") == target_name:
+                        container_dict = c
+                        break
+
+            # Fallback: first container that declares capability (order preserved)
+            if container_dict is None:
+                container_dict = session.get_container_for_capability(capability)
+
+            if container_dict:
+                endpoint = container_dict.get("endpoint")
+                runtime_type = container_dict.get("runtime_type", "ship")
+            else:
+                # Capability not found in any container
+                raise CapabilityNotSupportedError(
+                    message=f"No container provides capability: {capability}",
+                    capability=capability,
+                    available=self._get_all_session_capabilities(session),
+                )
+
+        # Fallback to primary container endpoint
+        if endpoint is None:
+            endpoint = session.endpoint
+
+        if endpoint is None:
             raise SessionNotReadyError(
                 message="Session has no endpoint",
                 sandbox_id=session.sandbox_id,
             )
 
-        endpoint = session.endpoint
+        final_endpoint = endpoint
+        final_runtime_type = runtime_type
 
         def factory() -> BaseAdapter:
-            if session.runtime_type == "ship":
-                return ShipAdapter(endpoint)
-            if session.runtime_type == "gull":
-                return GullAdapter(endpoint)
-            raise ValueError(f"Unknown runtime type: {session.runtime_type}")
+            if final_runtime_type == "ship":
+                return ShipAdapter(final_endpoint)
+            if final_runtime_type == "gull":
+                return GullAdapter(final_endpoint)
+            raise ValueError(f"Unknown runtime type: {final_runtime_type}")
 
-        return self._adapter_pool.get_or_create(endpoint, factory)
+        return self._adapter_pool.get_or_create(final_endpoint, factory)
+
+    @staticmethod
+    def _get_all_session_capabilities(session: Session) -> list[str]:
+        """Get all capabilities from all containers in a session."""
+        if not session.containers:
+            return []
+        caps: set[str] = set()
+        for c in session.containers:
+            caps.update(c.get("capabilities", []))
+        return sorted(caps)
 
     async def _require_capability(self, adapter: BaseAdapter, capability: str) -> None:
         """Fail-fast if runtime does not declare the requested capability.
@@ -109,7 +182,7 @@ class CapabilityRouter:
             Execution result
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="python")
         await self._require_capability(adapter, "python")
 
         self._log.info(
@@ -143,7 +216,7 @@ class CapabilityRouter:
             Execution result
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="shell")
         await self._require_capability(adapter, "shell")
 
         self._log.info(
@@ -154,6 +227,40 @@ class CapabilityRouter:
         )
 
         return await adapter.exec_shell(command, timeout=timeout, cwd=cwd)
+
+    # -- Browser capability (Phase 2) --
+
+    async def exec_browser(
+        self,
+        sandbox: Sandbox,
+        cmd: str,
+        *,
+        timeout: int = 30,
+    ) -> ExecutionResult:
+        """Execute browser automation command in sandbox.
+
+        Phase 2: Routes to the Gull container via CLI passthrough.
+
+        Args:
+            sandbox: Target sandbox
+            cmd: agent-browser command (without prefix)
+            timeout: Execution timeout in seconds
+
+        Returns:
+            Execution result
+        """
+        session = await self.ensure_session(sandbox)
+        adapter = self._get_adapter(session, capability="browser")
+        await self._require_capability(adapter, "browser")
+
+        self._log.info(
+            "capability.browser.exec",
+            sandbox_id=sandbox.id,
+            session_id=session.id,
+            cmd=cmd[:100],
+        )
+
+        return await adapter.exec_browser(cmd, timeout=timeout)
 
     # -- Filesystem capability --
 
@@ -172,7 +279,7 @@ class CapabilityRouter:
             File content
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(
@@ -197,7 +304,7 @@ class CapabilityRouter:
             content: File content
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(
@@ -224,7 +331,7 @@ class CapabilityRouter:
             List of file entries
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(
@@ -247,7 +354,7 @@ class CapabilityRouter:
             path: File/directory path (relative to /workspace)
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(
@@ -274,7 +381,7 @@ class CapabilityRouter:
             content: File content as bytes
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(
@@ -301,7 +408,7 @@ class CapabilityRouter:
             File content as bytes
         """
         session = await self.ensure_session(sandbox)
-        adapter = self._get_adapter(session)
+        adapter = self._get_adapter(session, capability="filesystem")
         await self._require_capability(adapter, "filesystem")
 
         self._log.info(

@@ -9,11 +9,17 @@ This is necessary because Bay may run:
 - on the host (typical): cannot directly reach container IP on a user-defined bridge
 - inside a container (docker.sock mounted): can reach other containers via shared network
 
+Phase 2: Multi-container orchestration
+- Session-scoped networks (bay_net_{session_id})
+- Parallel container creation/startup
+- Shared Cargo Volume across all containers
+
 Note: runtime_port is provided by ProfileConfig (do not hardcode Ship port here).
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 import aiodocker
@@ -21,10 +27,16 @@ import structlog
 from aiodocker.exceptions import DockerError
 
 from app.config import get_settings
-from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInstance
+from app.drivers.base import (
+    ContainerInfo,
+    ContainerStatus,
+    Driver,
+    MultiContainerInfo,
+    RuntimeInstance,
+)
 
 if TYPE_CHECKING:
-    from app.config import ProfileConfig
+    from app.config import ContainerSpec, ProfileConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 
@@ -516,3 +528,428 @@ class DockerDriver(Driver):
                 )
             else:
                 raise
+
+    # ================================================================
+    # Phase 2: Multi-container orchestration
+    # ================================================================
+
+    def _session_network_name(self, session_id: str) -> str:
+        """Generate network name for a session."""
+        return f"bay_net_{session_id}"
+
+    async def create_session_network(self, session_id: str) -> str:
+        """Create a session-scoped Docker bridge network.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            Network name
+        """
+        client = await self._get_client()
+        network_name = self._session_network_name(session_id)
+
+        self._log.info(
+            "docker.create_session_network",
+            session_id=session_id,
+            network_name=network_name,
+        )
+
+        settings = get_settings()
+        gc_instance_id = settings.gc.get_instance_id()
+
+        await client.networks.create(
+            {
+                "Name": network_name,
+                "Driver": "bridge",
+                "Labels": {
+                    "bay.managed": "true",
+                    "bay.session_id": session_id,
+                    "bay.instance_id": gc_instance_id,
+                },
+            }
+        )
+
+        self._log.info("docker.session_network_created", network_name=network_name)
+        return network_name
+
+    async def remove_session_network(self, session_id: str) -> None:
+        """Remove a session-scoped Docker network.
+
+        Best-effort: logs warning if network not found.
+
+        Args:
+            session_id: Session ID
+        """
+        client = await self._get_client()
+        network_name = self._session_network_name(session_id)
+
+        self._log.info(
+            "docker.remove_session_network",
+            session_id=session_id,
+            network_name=network_name,
+        )
+
+        try:
+            network = await client.networks.get(network_name)
+            await network.delete()
+            self._log.info("docker.session_network_removed", network_name=network_name)
+        except DockerError as e:
+            if e.status == 404:
+                self._log.warning(
+                    "docker.session_network_not_found",
+                    network_name=network_name,
+                )
+            else:
+                self._log.error(
+                    "docker.session_network_remove_failed",
+                    network_name=network_name,
+                    error=str(e),
+                )
+                raise
+
+    def _build_container_config(
+        self,
+        spec: "ContainerSpec",
+        *,
+        session: "Session",
+        cargo: "Cargo",
+        network_name: str,
+        extra_labels: dict[str, str] | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        """Build Docker container config for a single ContainerSpec.
+
+        Returns:
+            Tuple of (docker_config, container_name)
+        """
+        settings = get_settings()
+        gc_instance_id = settings.gc.get_instance_id()
+
+        # Container name: bay-{session_id}-{spec.name}
+        container_name = f"bay-{session.id}-{spec.name}"
+
+        # Labels
+        container_labels = {
+            "bay.owner": "default",
+            "bay.sandbox_id": session.sandbox_id,
+            "bay.session_id": session.id,
+            "bay.cargo_id": cargo.id,
+            "bay.profile_id": session.profile_id,
+            "bay.runtime_port": str(spec.runtime_port),
+            "bay.container_name": spec.name,
+            "bay.runtime_type": spec.runtime_type,
+            "bay.instance_id": gc_instance_id,
+            "bay.managed": "true",
+        }
+        if extra_labels:
+            container_labels.update(extra_labels)
+
+        # Resource limits
+        mem_limit = _parse_memory(spec.resources.memory)
+        nano_cpus = int(spec.resources.cpus * 1e9)
+
+        # Environment variables
+        env = [f"{k}={v}" for k, v in spec.env.items()]
+        env.extend(
+            [
+                f"BAY_SESSION_ID={session.id}",
+                f"BAY_SANDBOX_ID={session.sandbox_id}",
+                f"BAY_WORKSPACE_PATH={WORKSPACE_MOUNT_PATH}",
+                f"BAY_CONTAINER_NAME={spec.name}",
+            ]
+        )
+
+        # Host config
+        host_config: dict[str, Any] = {
+            "Binds": [f"{cargo.driver_ref}:{WORKSPACE_MOUNT_PATH}:rw"],
+            "Memory": mem_limit,
+            "NanoCpus": nano_cpus,
+            "PidsLimit": 256,
+            "NetworkMode": network_name,
+        }
+
+        # Port publishing for Bay -> container access
+        expose_key = f"{spec.runtime_port}/tcp"
+        exposed_ports: dict[str, dict[str, Any]] = {expose_key: {}}
+
+        publish = bool(self._publish_ports) and self._connect_mode in ("host_port", "auto")
+        if publish:
+            # Use ephemeral port (0) for multi-container to avoid conflicts
+            port_bindings = {
+                expose_key: [
+                    {
+                        "HostIp": "0.0.0.0",
+                        "HostPort": "",  # Let Docker assign random port
+                    }
+                ]
+            }
+            host_config["PortBindings"] = port_bindings
+
+        # Networking config with alias = container spec name
+        networking_config = {
+            "EndpointsConfig": {
+                network_name: {
+                    "Aliases": [spec.name],
+                }
+            }
+        }
+
+        config: dict[str, Any] = {
+            "Image": spec.image,
+            "Env": env,
+            "Labels": container_labels,
+            "HostConfig": host_config,
+            "ExposedPorts": exposed_ports,
+            "Hostname": spec.name,
+            "NetworkingConfig": networking_config,
+        }
+
+        return config, container_name
+
+    async def create_multi(
+        self,
+        session: "Session",
+        profile: "ProfileConfig",
+        cargo: "Cargo",
+        *,
+        network_name: str,
+        labels: dict[str, str] | None = None,
+    ) -> list[MultiContainerInfo]:
+        """Create multiple containers for a session.
+
+        Phase 2: Creates one container per ContainerSpec, all on the same
+        network and sharing the same cargo volume.
+
+        Args:
+            session: Session model
+            profile: Profile configuration
+            cargo: Cargo to mount
+            network_name: Session network name
+            labels: Additional labels
+
+        Returns:
+            List of MultiContainerInfo (containers created but NOT started)
+        """
+        client = await self._get_client()
+        containers_specs = profile.get_containers()
+
+        self._log.info(
+            "docker.create_multi",
+            session_id=session.id,
+            container_count=len(containers_specs),
+            network=network_name,
+        )
+
+        results: list[MultiContainerInfo] = []
+
+        for spec in containers_specs:
+            config, container_name = self._build_container_config(
+                spec,
+                session=session,
+                cargo=cargo,
+                network_name=network_name,
+                extra_labels=labels,
+            )
+
+            self._log.info(
+                "docker.create_multi.container",
+                session_id=session.id,
+                container_name=container_name,
+                image=spec.image,
+                runtime_type=spec.runtime_type,
+            )
+
+            try:
+                container = await client.containers.create(
+                    config=config,
+                    name=container_name,
+                )
+                results.append(
+                    MultiContainerInfo(
+                        name=spec.name,
+                        container_id=container.id,
+                        runtime_type=spec.runtime_type,
+                        capabilities=list(spec.capabilities),
+                        status=ContainerStatus.CREATED,
+                    )
+                )
+            except Exception as e:
+                self._log.error(
+                    "docker.create_multi.container_failed",
+                    session_id=session.id,
+                    container_name=container_name,
+                    error=str(e),
+                )
+                # Rollback: destroy all already-created containers
+                for created in results:
+                    try:
+                        await self.destroy(created.container_id)
+                    except Exception as cleanup_err:
+                        self._log.warning(
+                            "docker.create_multi.rollback_failed",
+                            container_id=created.container_id,
+                            error=str(cleanup_err),
+                        )
+                raise
+
+        self._log.info(
+            "docker.create_multi.done",
+            session_id=session.id,
+            created=[c.name for c in results],
+        )
+
+        return results
+
+    async def _start_single_container(
+        self,
+        info: MultiContainerInfo,
+    ) -> MultiContainerInfo:
+        """Start a single container and resolve its endpoint.
+
+        Internal helper for start_multi.
+        """
+        client = await self._get_client()
+
+        container = client.containers.container(info.container_id)
+        await container.start()
+
+        docker_info = await container.show()
+        runtime_port = int(
+            docker_info.get("Config", {}).get("Labels", {}).get("bay.runtime_port", "8123")
+        )
+
+        # Resolve endpoint (same logic as start())
+        endpoint: str | None = None
+
+        if self._connect_mode in ("container_network", "auto"):
+            ip = self._resolve_container_ip(docker_info)
+            if ip:
+                endpoint = self._endpoint_from_container_ip(ip, runtime_port)
+
+        if endpoint is None and self._connect_mode in ("host_port", "auto"):
+            hp = self._resolve_host_port(docker_info, runtime_port=runtime_port)
+            if hp:
+                host, port = hp
+                endpoint = self._endpoint_from_hostport(host, port)
+
+        if endpoint is None:
+            # Last resort: container hostname
+            name = docker_info.get("Name", "").lstrip("/")
+            endpoint = f"http://{name}:{runtime_port}"
+            self._log.warning("docker.start_multi.fallback_name", endpoint=endpoint)
+
+        info.endpoint = endpoint
+        info.status = ContainerStatus.RUNNING
+
+        self._log.info(
+            "docker.start_multi.container_started",
+            container_name=info.name,
+            container_id=info.container_id,
+            endpoint=endpoint,
+        )
+
+        return info
+
+    async def start_multi(
+        self,
+        containers: list[MultiContainerInfo],
+    ) -> list[MultiContainerInfo]:
+        """Start multiple containers in parallel.
+
+        Phase 2: Uses asyncio.gather for parallel startup.
+
+        Args:
+            containers: List of MultiContainerInfo from create_multi
+
+        Returns:
+            Updated list with endpoints and RUNNING status
+        """
+        self._log.info(
+            "docker.start_multi",
+            container_names=[c.name for c in containers],
+        )
+
+        tasks = [self._start_single_container(c) for c in containers]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Check for failures
+        started: list[MultiContainerInfo] = []
+        errors: list[tuple[str, Exception]] = []
+
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                errors.append((containers[i].name, result))
+            else:
+                started.append(result)
+
+        if errors:
+            error_names = [name for name, _ in errors]
+            self._log.error(
+                "docker.start_multi.partial_failure",
+                failed=error_names,
+                started=[c.name for c in started],
+            )
+            # Per decision: all-or-nothing rollback
+            # Stop/destroy all started containers
+            for c in started:
+                try:
+                    await self.destroy(c.container_id)
+                except Exception as cleanup_err:
+                    self._log.warning(
+                        "docker.start_multi.rollback_failed",
+                        container_id=c.container_id,
+                        error=str(cleanup_err),
+                    )
+            # Re-raise the first error
+            raise errors[0][1]
+
+        self._log.info(
+            "docker.start_multi.done",
+            started=[c.name for c in started],
+        )
+
+        return started
+
+    async def stop_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Stop multiple containers, best-effort.
+
+        Args:
+            containers: List of MultiContainerInfo to stop
+        """
+        self._log.info(
+            "docker.stop_multi",
+            container_names=[c.name for c in containers],
+        )
+
+        for c in containers:
+            try:
+                await self.stop(c.container_id)
+            except Exception as e:
+                self._log.warning(
+                    "docker.stop_multi.container_failed",
+                    container_name=c.name,
+                    container_id=c.container_id,
+                    error=str(e),
+                )
+
+    async def destroy_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Destroy (remove) multiple containers, best-effort.
+
+        Args:
+            containers: List of MultiContainerInfo to destroy
+        """
+        self._log.info(
+            "docker.destroy_multi",
+            container_names=[c.name for c in containers],
+        )
+
+        for c in containers:
+            try:
+                await self.destroy(c.container_id)
+            except Exception as e:
+                self._log.warning(
+                    "docker.destroy_multi.container_failed",
+                    container_name=c.name,
+                    container_id=c.container_id,
+                    error=str(e),
+                )

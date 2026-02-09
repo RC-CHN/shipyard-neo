@@ -8,7 +8,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from app.drivers.base import ContainerInfo, ContainerStatus, Driver, RuntimeInstance
+from app.drivers.base import (
+    ContainerInfo,
+    ContainerStatus,
+    Driver,
+    MultiContainerInfo,
+    RuntimeInstance,
+)
 
 if TYPE_CHECKING:
     from app.config import ProfileConfig
@@ -237,3 +243,129 @@ class FakeDriver(Driver):
         """Force destroy a fake runtime instance."""
         if instance_id in self._containers:
             del self._containers[instance_id]
+
+    # Phase 2: Multi-container support
+
+    def __init_multi(self) -> None:
+        """Lazy init for multi-container tracking fields."""
+        if not hasattr(self, "_networks"):
+            self._networks: dict[str, str] = {}  # session_id -> network_name
+            self.create_network_calls: list[str] = []
+            self.remove_network_calls: list[str] = []
+            self.create_multi_calls: list[dict[str, Any]] = []
+            self.start_multi_calls: list[list[str]] = []
+            self.stop_multi_calls: list[list[str]] = []
+            self.destroy_multi_calls: list[list[str]] = []
+            # Error injection for multi-container testing
+            self._create_multi_fail_on: str | None = None  # container name to fail on
+
+    def set_create_multi_fail_on(self, container_name: str | None) -> None:
+        """Set a container name that should fail during create_multi."""
+        self.__init_multi()
+        self._create_multi_fail_on = container_name
+
+    async def create_session_network(self, session_id: str) -> str:
+        """Create a fake session network."""
+        self.__init_multi()
+        network_name = f"bay_net_{session_id}"
+        self._networks[session_id] = network_name
+        self.create_network_calls.append(session_id)
+        return network_name
+
+    async def remove_session_network(self, session_id: str) -> None:
+        """Remove a fake session network."""
+        self.__init_multi()
+        self.remove_network_calls.append(session_id)
+        self._networks.pop(session_id, None)
+
+    async def create_multi(
+        self,
+        session: "Session",
+        profile: "ProfileConfig",
+        cargo: "Cargo",
+        *,
+        network_name: str,
+        labels: dict[str, str] | None = None,
+    ) -> list[MultiContainerInfo]:
+        """Create multiple fake containers."""
+        self.__init_multi()
+
+        self.create_multi_calls.append({
+            "session_id": session.id,
+            "profile_id": profile.id,
+            "cargo_id": cargo.id,
+            "network_name": network_name,
+        })
+
+        results: list[MultiContainerInfo] = []
+        for spec in profile.get_containers():
+            # Check if this container should fail
+            if self._create_multi_fail_on and spec.name == self._create_multi_fail_on:
+                # Rollback already-created
+                for created in results:
+                    if created.container_id in self._containers:
+                        del self._containers[created.container_id]
+                raise RuntimeError(
+                    f"Fake: create_multi failed on container '{spec.name}'"
+                )
+
+            container_id = f"fake-container-{self._next_container_id}"
+            self._next_container_id += 1
+
+            self._containers[container_id] = FakeContainerState(
+                container_id=container_id,
+                session_id=session.id,
+                profile_id=profile.id,
+                cargo_id=cargo.id,
+                status=ContainerStatus.CREATED,
+            )
+
+            results.append(
+                MultiContainerInfo(
+                    name=spec.name,
+                    container_id=container_id,
+                    runtime_type=spec.runtime_type,
+                    capabilities=list(spec.capabilities),
+                    status=ContainerStatus.CREATED,
+                )
+            )
+
+        return results
+
+    async def start_multi(
+        self,
+        containers: list[MultiContainerInfo],
+    ) -> list[MultiContainerInfo]:
+        """Start multiple fake containers."""
+        self.__init_multi()
+        self.start_multi_calls.append([c.name for c in containers])
+
+        for c in containers:
+            if c.container_id in self._containers:
+                state = self._containers[c.container_id]
+                runtime_port = 8123  # default
+                state.status = ContainerStatus.RUNNING
+                state.endpoint = f"http://fake-{c.name}:{runtime_port}"
+                c.endpoint = state.endpoint
+                c.status = ContainerStatus.RUNNING
+
+        return containers
+
+    async def stop_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Stop multiple fake containers."""
+        self.__init_multi()
+        self.stop_multi_calls.append([c.name for c in containers])
+
+        for c in containers:
+            if c.container_id in self._containers:
+                self._containers[c.container_id].status = ContainerStatus.EXITED
+                self._containers[c.container_id].endpoint = None
+
+    async def destroy_multi(self, containers: list[MultiContainerInfo]) -> None:
+        """Destroy multiple fake containers."""
+        self.__init_multi()
+        self.destroy_multi_calls.append([c.name for c in containers])
+
+        for c in containers:
+            if c.container_id in self._containers:
+                del self._containers[c.container_id]

@@ -2,6 +2,11 @@
 
 Key responsibility: ensure_running - idempotent session startup.
 
+Phase 2: Multi-container support.
+- Single-container profiles (Phase 1 path) use create/start for backward compatibility.
+- Multi-container profiles use create_multi/start_multi for parallel container orchestration.
+- Session.containers JSON field tracks per-container state (name, container_id, endpoint, status).
+
 See: plans/bay-design.md section 3.2
 """
 
@@ -17,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.config import ProfileConfig, get_settings
-from app.drivers.base import ContainerStatus, Driver
+from app.drivers.base import ContainerStatus, Driver, MultiContainerInfo
 from app.errors import SessionNotReadyError
 from app.models.cargo import Cargo
 from app.models.session import Session, SessionStatus
@@ -99,6 +104,7 @@ class SessionManager:
 
         This is the core idempotent startup logic.
 
+        Phase 2: Routes to multi-container path if profile has >1 container.
         Phase 1.5: Adds proactive health probing to detect dead containers
         before they cause runtime errors.
 
@@ -117,8 +123,26 @@ class SessionManager:
             "session.ensure_running",
             session_id=session.id,
             observed_state=session.observed_state,
+            container_count=len(profile.get_containers()),
         )
 
+        # Phase 2: Multi-container path
+        if len(profile.get_containers()) > 1:
+            return await self._ensure_running_multi(session, cargo, profile)
+
+        # Phase 1 path: single container (backward compatible)
+        return await self._ensure_running_single(session, cargo, profile)
+
+    async def _ensure_running_single(
+        self,
+        session: Session,
+        cargo: Cargo,
+        profile: ProfileConfig,
+    ) -> Session:
+        """Single-container ensure_running (Phase 1 path).
+
+        Backward compatible with existing single-container profiles.
+        """
         # Phase 1.5: Proactive health probing
         # If DB says RUNNING but container might be dead, probe before trusting
         if (
@@ -217,6 +241,206 @@ class SessionManager:
 
         return session
 
+    async def _ensure_running_multi(
+        self,
+        session: Session,
+        cargo: Cargo,
+        profile: ProfileConfig,
+    ) -> Session:
+        """Multi-container ensure_running (Phase 2 path).
+
+        Creates a session-scoped network, then creates and starts all
+        containers in parallel. If any container fails, all are rolled back.
+
+        The session's `containers` JSON field tracks per-container state.
+        The legacy `container_id` and `endpoint` fields point to the primary container.
+        """
+        # Already running and ready
+        if session.is_ready:
+            return session
+
+        # Currently starting - tell client to retry
+        if session.observed_state == SessionStatus.STARTING:
+            raise SessionNotReadyError(
+                message="Session is starting (multi-container)",
+                sandbox_id=session.sandbox_id,
+                retry_after_ms=1500,
+            )
+
+        # Need to create and start containers
+        if session.container_id is None:
+            session.desired_state = SessionStatus.RUNNING
+            session.observed_state = SessionStatus.STARTING
+            await self._db.commit()
+
+            network_name: str | None = None
+            container_infos: list[MultiContainerInfo] = []
+
+            try:
+                # 1. Create session network
+                network_name = await self._driver.create_session_network(session.id)
+
+                # 2. Create all containers (on the session network)
+                container_infos = await self._driver.create_multi(
+                    session=session,
+                    profile=profile,
+                    cargo=cargo,
+                    network_name=network_name,
+                )
+
+                # 3. Start all containers in parallel
+                container_infos = await self._driver.start_multi(container_infos)
+
+                # 4. Wait for all containers to be ready (health check)
+                await self._wait_for_multi_ready(
+                    container_infos,
+                    session_id=session.id,
+                    sandbox_id=session.sandbox_id,
+                )
+
+                # 5. Resolve primary container for backward compatibility
+                primary_spec = profile.get_primary_container()
+                primary_name = primary_spec.name if primary_spec else container_infos[0].name
+
+                primary_info: MultiContainerInfo | None = None
+                for ci in container_infos:
+                    if ci.name == primary_name:
+                        primary_info = ci
+                        break
+
+                if primary_info is None:
+                    primary_info = container_infos[0]
+
+                # 6. Persist to session
+                session.container_id = primary_info.container_id
+                session.endpoint = primary_info.endpoint
+                session.containers = [ci.to_dict() for ci in container_infos]
+                session.observed_state = SessionStatus.RUNNING
+                session.last_observed_at = datetime.utcnow()
+                await self._db.commit()
+
+                self._log.info(
+                    "session.multi_container_started",
+                    session_id=session.id,
+                    containers=[ci.name for ci in container_infos],
+                    primary=primary_info.name,
+                )
+
+            except Exception as e:
+                self._log.error(
+                    "session.multi_container_failed",
+                    session_id=session.id,
+                    error=str(e),
+                )
+
+                # Rollback: destroy all containers + network
+                if container_infos:
+                    try:
+                        await self._driver.destroy_multi(container_infos)
+                    except Exception as cleanup_err:
+                        self._log.warning(
+                            "session.multi_container_rollback.destroy_failed",
+                            error=str(cleanup_err),
+                        )
+
+                if network_name:
+                    try:
+                        await self._driver.remove_session_network(session.id)
+                    except Exception as cleanup_err:
+                        self._log.warning(
+                            "session.multi_container_rollback.network_failed",
+                            error=str(cleanup_err),
+                        )
+
+                session.container_id = None
+                session.endpoint = None
+                session.containers = None
+                session.observed_state = SessionStatus.FAILED
+                session.last_observed_at = datetime.utcnow()
+                await self._db.commit()
+                raise
+
+        return session
+
+    async def _wait_for_multi_ready(
+        self,
+        container_infos: list[MultiContainerInfo],
+        *,
+        session_id: str,
+        sandbox_id: str,
+        max_wait_seconds: float = 120.0,
+        initial_interval: float = 0.5,
+        max_interval: float = 1.0,
+        backoff_factor: float = 2.0,
+    ) -> None:
+        """Wait for all containers in a multi-container session to be ready.
+
+        Polls each container's health endpoint until all respond successfully.
+        """
+        pending = {ci.name: ci for ci in container_infos}
+
+        start_time = asyncio.get_event_loop().time()
+        interval = initial_interval
+        attempt = 0
+
+        try:
+            client = http_client_manager.client
+        except RuntimeError:
+            client = None
+
+        while pending:
+            attempt += 1
+            newly_ready: list[str] = []
+
+            for name, ci in pending.items():
+                if ci.endpoint is None:
+                    continue
+
+                url = f"{ci.endpoint.rstrip('/')}/health"
+                try:
+                    if client is not None:
+                        response = await client.get(url, timeout=2.0)
+                    else:
+                        async with httpx.AsyncClient(trust_env=False) as temp_client:
+                            response = await temp_client.get(url, timeout=2.0)
+
+                    if response.status_code == 200:
+                        newly_ready.append(name)
+                except (httpx.RequestError, httpx.TimeoutException):
+                    pass
+
+            for name in newly_ready:
+                del pending[name]
+
+            if not pending:
+                elapsed = asyncio.get_event_loop().time() - start_time
+                self._log.info(
+                    "session.multi_container_all_ready",
+                    session_id=session_id,
+                    attempts=attempt,
+                    elapsed_ms=int(elapsed * 1000),
+                )
+                return
+
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed >= max_wait_seconds:
+                break
+
+            await asyncio.sleep(min(interval, max_wait_seconds - elapsed))
+            interval = min(interval * backoff_factor, max_interval)
+
+        self._log.error(
+            "session.multi_container_not_ready",
+            session_id=session_id,
+            pending=list(pending.keys()),
+            attempts=attempt,
+        )
+        raise SessionNotReadyError(
+            message=f"Containers not ready: {list(pending.keys())}",
+            sandbox_id=sandbox_id,
+            retry_after_ms=1000,
+        )
+
     async def _wait_for_ready(
         self,
         endpoint: str,
@@ -305,32 +529,89 @@ class SessionManager:
     async def stop(self, session: Session) -> None:
         """Stop a session (reclaim compute).
 
+        Phase 2: If multi-container, stops all containers + removes network.
+
         Args:
             session: Session to stop
         """
-        self._log.info("session.stop", session_id=session.id)
+        self._log.info(
+            "session.stop",
+            session_id=session.id,
+            is_multi=session.is_multi_container,
+        )
 
         session.desired_state = SessionStatus.STOPPED
         session.observed_state = SessionStatus.STOPPING
         await self._db.commit()
 
-        if session.container_id:
+        if session.is_multi_container and session.containers:
+            # Phase 2: Stop all containers
+            container_infos = [
+                MultiContainerInfo(
+                    name=c["name"],
+                    container_id=c["container_id"],
+                    runtime_type=c.get("runtime_type", "ship"),
+                    capabilities=c.get("capabilities", []),
+                )
+                for c in session.containers
+            ]
+            await self._driver.stop_multi(container_infos)
+            # Remove session network
+            try:
+                await self._driver.remove_session_network(session.id)
+            except Exception as e:
+                self._log.warning(
+                    "session.stop.network_remove_failed",
+                    session_id=session.id,
+                    error=str(e),
+                )
+        elif session.container_id:
+            # Phase 1: Stop single container
             await self._driver.stop(session.container_id)
 
         session.observed_state = SessionStatus.STOPPED
         session.endpoint = None
+        session.containers = None
         session.last_observed_at = datetime.utcnow()
         await self._db.commit()
 
     async def destroy(self, session: Session) -> None:
         """Destroy a session completely.
 
+        Phase 2: If multi-container, destroys all containers + removes network.
+
         Args:
             session: Session to destroy
         """
-        self._log.info("session.destroy", session_id=session.id)
+        self._log.info(
+            "session.destroy",
+            session_id=session.id,
+            is_multi=session.is_multi_container,
+        )
 
-        if session.container_id:
+        if session.is_multi_container and session.containers:
+            # Phase 2: Destroy all containers
+            container_infos = [
+                MultiContainerInfo(
+                    name=c["name"],
+                    container_id=c["container_id"],
+                    runtime_type=c.get("runtime_type", "ship"),
+                    capabilities=c.get("capabilities", []),
+                )
+                for c in session.containers
+            ]
+            await self._driver.destroy_multi(container_infos)
+            # Remove session network
+            try:
+                await self._driver.remove_session_network(session.id)
+            except Exception as e:
+                self._log.warning(
+                    "session.destroy.network_remove_failed",
+                    session_id=session.id,
+                    error=str(e),
+                )
+        elif session.container_id:
+            # Phase 1: Destroy single container
             await self._driver.destroy(session.container_id)
 
         await self._db.delete(session)
