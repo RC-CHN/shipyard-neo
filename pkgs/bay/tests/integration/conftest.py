@@ -92,9 +92,10 @@ SERIAL_GROUPS = {
         r"test_project_init\.py::",
         r"test_serverless_execution\.py::",
     ],
-    # Resilience tests - Phase 1.5: GC race condition tests need serial execution
-    # to avoid interference with other tests that might trigger GC
+    # Resilience tests - Phase 1.5: Container crash and GC race condition tests
+    # need serial execution to avoid interference with other tests
     "resilience": [
+        r"resilience/test_container_crash\.py::",
         r"resilience/test_gc_race_condition\.py::",
     ],
 }
@@ -347,18 +348,38 @@ def get_runtime_id_by_sandbox(sandbox_id: str) -> str | None:
 def kill_runtime(runtime_id: str) -> bool:
     """Force kill a container (Docker) or delete a Pod (K8s).
     
-    Returns True if succeeded.
+    Returns True if the runtime was killed or is already dead/gone.
+    In parallel test environments, the container may have already been
+    removed by another test's cleanup or by Bay's health probing before
+    we get to kill it — that still counts as "killed" for our purposes.
     """
     if E2E_DRIVER_TYPE == "k8s":
         return k8s_delete_pod(runtime_id, force=True)
     else:
         # Docker mode
         try:
-            return subprocess.run(
+            result = subprocess.run(
                 ["docker", "kill", runtime_id],
                 capture_output=True,
                 timeout=10,
-            ).returncode == 0
+            )
+            if result.returncode == 0:
+                return True
+            # docker kill failed — container may already be dead or removed.
+            # Check if the container still exists but is not running (already exited).
+            inspect = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", runtime_id],
+                capture_output=True,
+                timeout=5,
+                text=True,
+            )
+            if inspect.returncode != 0:
+                # Container doesn't exist at all — already removed, treat as killed
+                return True
+            if inspect.stdout.strip() == "false":
+                # Container exists but is stopped — already dead, treat as killed
+                return True
+            return False
         except Exception:
             return False
 
