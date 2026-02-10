@@ -127,3 +127,45 @@ async def test_timeout_maps_to_request_timeout(monkeypatch: pytest.MonkeyPatch):
     adapter = GullAdapter("http://gull")
     with pytest.raises(RequestTimeoutError):
         await adapter.get_meta()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_value", "expected"),
+    [
+        ("healthy", True),
+        ("degraded", True),
+        ("unhealthy", False),
+        ("unknown", False),
+    ],
+)
+async def test_health_maps_payload_status(
+    monkeypatch: pytest.MonkeyPatch, status_value: str, expected: bool
+):
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": status_value, "browser_active": False, "session": "s"},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gull")
+    monkeypatch.setattr(gull_mod, "_get_shared_client", lambda: client)
+
+    adapter = GullAdapter("http://gull")
+    assert await adapter.health() is expected
+
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_health_returns_false_on_malformed_payload(monkeypatch: pytest.MonkeyPatch):
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"not-json")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://gull")
+    monkeypatch.setattr(gull_mod, "_get_shared_client", lambda: client)
+
+    adapter = GullAdapter("http://gull")
+    assert await adapter.health() is False
+
+    await client.aclose()

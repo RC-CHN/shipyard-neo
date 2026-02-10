@@ -155,7 +155,16 @@ class GullAdapter(BaseAdapter):
                         f"{self._base_url}/health",
                         timeout=5.0,
                     )
-            return response.status_code == 200
+            if response.status_code != 200:
+                return False
+
+            try:
+                payload = response.json()
+            except Exception:
+                return False
+
+            status = payload.get("status") if isinstance(payload, dict) else None
+            return status in {"healthy", "degraded"}
         except Exception:
             return False
 
