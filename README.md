@@ -1,264 +1,143 @@
 # Shipyard Neo
 
-> **The Secure, Persistent Execution Platform for AI Agents**
+> 面向 AI Agents 的安全、可持久化沙箱执行平台（Secure, Persistent Execution Platform for AI Agents）
 
-Shipyard Neo 是一个专为 AI Agents 设计的安全代码执行基础设施。它提供了一个隔离的、可持久化的沙箱环境，让 Agent 能够像人类工程师一样安全地执行代码、操作文件系统、使用浏览器自动化工具和管理开发工作区。
+Shipyard Neo 提供“计算与存储分离”的沙箱基础设施：Agent 在隔离容器中执行 Python / Shell、读写工作区文件，并可通过独立浏览器运行时进行网页自动化。
 
-## 🌟 核心定位
+---
 
-在 LLM 应用中，直接在宿主机执行生成代码极度危险且难以管理状态。Shipyard Neo 通过**计算与存储分离**的架构解决了这个问题：
+## 1. 系统组成与数据流
 
-*   **🛡️ 安全沙箱**：所有代码在隔离容器中运行，对宿主机零威胁。
-*   **💾 持久化状态**：Cargo（数据卷）独立于计算实例，容器销毁后文件依然保留（容器内固定挂载到 `/workspace`）。
-*   **⚡ 弹性计算**：按需启动计算会话（Session），空闲自动回收，高效利用资源。
-*   **🌐 浏览器自动化**：内置 headless 浏览器运行时，支持 Agent 进行网页操作、截图和数据提取。
+Shipyard Neo 由控制面 **Bay** 与数据面运行时 **Ship** / **Gull** 组成：
 
-## 🏗️ 架构设计
+- **Bay**：对外暴露 REST API，负责编排沙箱生命周期、鉴权、能力路由、幂等与 GC。
+- **Ship**：代码运行时（Python / Shell / Filesystem / Terminal），工作目录固定为 `/workspace`。
+- **Gull**：浏览器运行时，以“CLI 透传”方式执行 `agent-browser` 命令（HTTP 封装）。
+- **Cargo**：持久化存储卷（Docker Volume / K8s PVC），挂载到 `/workspace`，在 Ship 与 Gull 之间共享。
 
-Shipyard Neo 由控制面 **Bay** 和数据面 **Ship** / **Gull** 组成，通过标准 HTTP 协议通信。
+整体视角参考：[`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:1) 与 [`doc/ship_architecture.md`](doc/ship_architecture.md:1)。
 
-```mermaid
-flowchart LR
-    Client[AI Agent / SDK] --> Bay[Bay - Orchestrator]
+---
 
-    subgraph Infrastructure
-        Bay --> Driver[Driver Layer]
-        Driver --> Ship[Ship Container - Code Runtime]
-        Driver --> Gull[Gull Container - Browser Runtime]
-        Driver --> Cargo[(Cargo Volume)]
-    end
+## 2. 核心概念（Domain Model）
 
-    Ship --> Cargo
-    Gull --> Cargo
+### 2.1 Sandbox / Session / Cargo
 
-    style Bay fill:#2563eb,stroke:#fff,color:#fff
-    style Ship fill:#16a34a,stroke:#fff,color:#fff
-    style Gull fill:#06b6d4,stroke:#fff,color:#fff
-    style Cargo fill:#d97706,stroke:#fff,color:#fff
-```
+- **Sandbox（稳定 ID）**：对外唯一计算资源单元，聚合 Profile、Cargo 与当前 Session；支持 TTL。状态由当前 Session 计算得出。详见 [`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:9)。
+- **Session（临时会话）**：代表一组运行中的容器实例，可能被系统按策略回收/重建，但对 Sandbox 客户端透明。详见 [`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:18)。
+- **Cargo（持久化工作区）**：存储卷，固定挂载到 `/workspace`，用于跨 Session/容器共享与持久化数据。详见 [`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:27)。
 
-### 核心组件
+### 2.2 Profile / Capability Router
 
-| 组件 | 角色 | 职责 |
-| :--- | :--- | :--- |
-| **Bay** | 🧠 大脑 (编排层) | 负责 Sandbox 生命周期管理、鉴权、路由、资源调度。它是外部世界的唯一入口。 |
-| **Ship** | 🦾 左手 (代码运行时) | 运行在隔离容器内的 Agent，提供 Python/Shell 执行、IPython 内核交互、文件系统操作和 Terminal PTY 能力。 |
-| **Gull** | 🦅 右手 (浏览器运行时) | 运行 `agent-browser` 的 headless 浏览器容器，提供网页打开、点击、输入、截图等自动化能力。 |
-| **Cargo** | 🗄️ 记忆 (数据层) | 持久化的 Docker Volume 或 K8s PVC，作为多容器间的共享存储，确保项目文件和浏览器状态（Cookies/Storage）持久化。 |
+- **Profile**：定义容器拓扑、资源限制、能力集合（python/shell/filesystem/browser）与空闲回收策略。详见 [`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:51)。
+- **Capability Router**：按能力类型将请求路由到提供该能力的容器与适配器（ShipAdapter / GullAdapter）。详见 [`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:82)。
 
-## ✨ 关键特性
+---
 
-*   **全功能 Python 环境**：内置 IPython 内核，支持变量保持、图表生成和交互式执行。
-*   **真实 Shell 访问**：支持执行标准 Linux 命令，安装依赖，运行脚本。
-*   **浏览器自动化**：通过 `gull` 运行时提供完整的浏览器控制能力（Playwright core），支持截图、PDF 导出、页面交互。
-*   **文件系统控制**：完整的上传、下载、读写、列表和删除操作，支持多容器共享。
-*   **多容器编排**：支持在一个 Session 中同时运行代码运行时（Ship）和浏览器运行时（Gull），通过共享 Cargo 协作。
-*   **执行历史记录 (Execution History)**：自动记录 Python/Shell/Browser 执行证据，可按 `type/success/tags` 查询并打注释。
-*   **技能生命周期 (Skill Lifecycle)**：支持 Candidate 创建、评测、发布（Canary/Stable）、回滚。
-*   **多租户隔离**：基于 Sandbox ID 的强逻辑隔离。
-*   **多驱动支持**：同时支持 Docker 和 Kubernetes 容器编排后端。
-*   **Python SDK**：类型安全的异步客户端库（`shipyard-neo-sdk`），开箱即用。
-*   **MCP 协议接入**：通过 MCP Server（`shipyard-neo-mcp`）让 AI Agent 原生调用沙箱能力（含浏览器工具）。
-*   **容器健康探测**：主动检测死容器，避免请求挂起。
-*   **资源生命周期**：
-    *   `TTL`：Sandbox 的存活周期。
-    *   `Idle Timeout`：计算资源的空闲回收时间（省钱）。
+## 3. API 入口（Bay API v1）
 
-## 📊 项目状态
+Bay API v1 是控制面 REST API，覆盖：
 
-> **当前阶段**：Phase 2 核心功能已完成（截至 2026-02-10）
+- Sandboxes：创建/查询/延长 TTL/保活/停止/删除
+- Capabilities：Python 执行、Shell 执行、Filesystem 读写、Browser 透传执行
+- History：执行历史查询与标注
+- Skills：Candidate → Evaluate → Promote → Release → Rollback
 
-### ✅ 已完成
+完整参考：[`doc/bay_api_v1.md`](doc/bay_api_v1.md:1)
 
-| 模块 | 状态 | 说明 |
-| :--- | :--- | :--- |
-| Bay 核心骨架 | ✅ 100% | Models, Managers, Drivers, REST API |
-| Ship 运行时 | ✅ 100% | IPython, Shell, Filesystem, Terminal |
-| **Gull 运行时** | ✅ 100% | Browser Automation (agent-browser wrapper), REST API |
-| 最小 E2E 链路 | ✅ 100% | create → exec → stop → delete |
-| 鉴权 | ✅ 100% | API Key 认证 + Owner 隔离 |
-| 幂等 | ✅ 100% | Idempotency-Key 支持 |
-| Profile 能力检查 | ✅ 100% | 前置能力拦截 |
-| GC 机制 | ✅ 100% | Idle Session / Expired Sandbox / Orphan Cargo / Orphan Container |
-| 路径安全校验 | ✅ 100% | Bay 侧路径校验 + Ship 双层防护 |
-| 容器健康探测 | ✅ 100% | 主动检测死容器，避免请求挂起 |
-| **多容器支持** | ✅ 100% | Profile V2, Session 多容器模型, CapabilityRouter 智能路由 |
-| **K8s Driver** | ✅ 100% | Kubernetes 容器编排驱动（Pod + PVC + Pod IP 直连） |
-| **Python SDK** | ✅ 100% | `shipyard-neo-sdk`，完整 Sandbox/Cargo/Capability API (含 Browser) |
-| **MCP Server** | ✅ 100% | `shipyard-neo-mcp`，支持 Python/Shell/File/Browser 工具 |
-| **Execution History API** | ✅ 100% | 执行记录查询、单条读取、最近一条、注释更新，支持 Browser 类型 |
-| **Skill Lifecycle API** | ✅ 100% | 候选创建、评测、发布、版本列表与回滚 |
+错误语义与错误码：[`doc/bay_error_codes.md`](doc/bay_error_codes.md:1)
 
-> 详细进度请参考 [`TODO.md`](TODO.md) 和 [`plans/phase-2/progress/phase-2-progress.md`](plans/phase-2/progress/phase-2-progress.md)
+---
 
-## 📂 项目结构
+## 4. 浏览器自动化（Gull 透传 agent-browser）
 
-| 目录 | 说明 |
-| :--- | :--- |
-| **[`pkgs/bay`](pkgs/bay/README.md)** | **Bay 服务端**。基于 FastAPI 的编排服务，对外提供 REST API。支持 Docker 和 K8s 双驱动。 |
-| **[`pkgs/ship`](pkgs/ship/README.md)** | **Ship 运行时**。代码执行环境，构建为 Docker 镜像。 |
-| **[`pkgs/gull`](pkgs/gull/README.md)** | **Gull 运行时**。浏览器自动化环境，构建为 Docker 镜像。 |
-| **[`shipyard-neo-sdk`](shipyard-neo-sdk/README.md)** | **Python SDK**。类型安全的异步客户端库（`pip install shipyard-neo-sdk`）。 |
-| **[`shipyard-neo-mcp`](shipyard-neo-mcp/README.md)** | **MCP Server**。MCP 协议接入层，让 AI Agent 原生调用沙箱能力。 |
-| **[`deploy`](deploy/README.md)** | **部署配置**。Docker Compose 和 Kubernetes 部署清单。 |
-| **[`plans`](plans/)** | **设计文档**。包含架构决策、API 契约和演进路线图。 |
-| **[`skills`](skills/)** | **技能定义**。AI Agent 技能描述文件（SKILL.md）。 |
+浏览器能力由 Gull 运行时提供，使用“CLI 透传”将 `agent-browser` 子命令暴露为 HTTP API。架构与实现细节见：[`doc/gull_browser_runtime.md`](doc/gull_browser_runtime.md:1)
 
-## 🔁 Skills Self-Update 基建
+### 4.1 最关键约定（避免 80% 的失败）
 
-当前仓库已提供可组合的“技能自迭代”基础能力：
+1. **传给 Gull 的 `cmd` 不需要也不应该带 `agent-browser` 前缀**。
+2. Gull 会自动注入 `--session` 与 `--profile`，因此 **不要在 `cmd` 里再写** `--session` / `--profile`。
+3. `cmd` **不是 shell**：不要使用 `>`, `|`, `&&`, `;` 等 shell 语法；需要落盘时，应先拿到 stdout，再通过 filesystem 写文件。
+4. **ref（`@e1/@e2/...`）在页面变化后会失效**：导航/提交表单/明显 DOM 变化后必须重新 `snapshot -i`。
 
-1. **Evidence 采集**：`/v1/sandboxes/{id}/(python|shell|browser)/exec` 自动回传 `execution_id` 并持久化执行证据。
-2. **Evidence 管理**：`/v1/sandboxes/{id}/history` 提供检索、过滤、注释（`description/tags/notes`）。
-3. **Candidate 生命周期**：`/v1/skills/candidates` → `evaluate` → `promote`。
-4. **Release 运营**：`/v1/skills/releases` 支持活动版本查询与 `rollback`。
+面向工程实践的操作指南：[`doc/agent_browser_guide.md`](doc/agent_browser_guide.md:1)
 
-对应调用入口：
+---
 
-- SDK：`sandbox.get_execution_history(...)`、`client.skills.*`
-- MCP：`get_execution_history`、`create_skill_candidate`、`promote_skill_candidate` 等工具
+## 5. Ship 运行时与安全模型
 
-示例流水图（从尝试到发布）：
+Ship 运行时提供：Filesystem CRUD、IPython 执行、Shell 执行、WebSocket 终端等能力。组件与接口梳理见：[`doc/ship_architecture.md`](doc/ship_architecture.md:1)
 
-```mermaid
-flowchart TD
-    A[Agent 执行任务<br/>python/shell/browser exec] --> B[Bay 自动记录执行证据<br/>execution_id output success time]
-    B --> C[Agent 标注证据<br/>description tags notes]
-    C --> D[创建 Skill Candidate<br/>source_execution_ids]
-    D --> E[评测 Candidate<br/>passed score report]
-    E --> F{是否通过评测}
-    F -- 否 --> G[继续迭代<br/>补充新证据]
-    G --> A
-    F -- 是 --> H[Promote 发布<br/>canary 或 stable]
-    H --> I[线上观察与指标监控]
-    I --> J{效果是否达标}
-    J -- 是 --> K[保持当前版本<br/>持续学习]
-    J -- 否 --> L[Rollback 到上一版本]
-    L --> G
-```
+安全要点（摘要）：
 
-## 📚 深度文档
+- 固定工作区根目录 `/workspace`，对路径做遍历防护（禁止逃逸）。
+- 容器内采用 root + shipyard 双用户模型：root 运行服务，实际执行用户代码时降权到 `shipyard`。
 
-### 设计与架构
+---
 
-*   [架构设计 (Bay Design)](plans/bay-design.md) - 深入了解系统内部原理
-*   [API 契约 (Bay API)](plans/bay-api.md) - HTTP 接口定义
-*   [概念模型 (Concepts)](plans/bay-concepts.md) - Sandbox, Session, Cargo 的关系
+## 6. Skills Self-Update（技能自迭代基建）
 
-### 演进规划与进度
+Shipyard Neo 提供的是 self-update 的“基础设施”，而不是固定训练框架：
 
-*   [Phase 1 进度](plans/phase-1/phase-1.md) - 核心功能完成情况
-*   [Phase 2 规划](plans/phase-2/phase-2.md) - 多容器与能力路由
-*   [Phase 2 进度](plans/phase-2/progress/phase-2-progress.md) - 浏览器集成与多容器落地详情
+- **执行证据层**：Python/Shell/Browser 执行自动生成并持久化 `execution_id`。
+- **技能控制面**：Candidate → Evaluation → Release（canary/stable）→ Rollback。
+- **多入口**：REST API / Python SDK / MCP Tools。
 
-### 专题指南
+工程化落地指南：[`doc/skills_self_update_guide_zh.md`](doc/skills_self_update_guide_zh.md:1)
 
-*   [Skills Self-Update 落地指南](doc/skills_self_update_guide_zh.md) - 执行历史与技能生命周期的工程化接入方案
-*   [浏览器集成设计](plans/phase-2/browser-integration-design.md) - Gull 运行时与 Bay 的交互设计
-*   [GC 机制设计](plans/phase-1/gc-design.md) - 资源回收策略
-*   [K8s Driver 分析](plans/phase-2/k8s-driver-analysis.md) - Kubernetes 驱动设计与实现
+---
 
-## 🚀 快速开始
+## 7. 部署方案
 
-### 启动 Bay 服务
+### 7.1 Docker Compose（单机生产）
 
-```bash
-cd pkgs/bay
-uv sync
-uv run python -m app.main
-```
+面向单机生产环境的自包含部署方案，强调安全与隔离。
 
-### 构建运行时镜像
+- **网络架构**：采用 `container_network` 驱动模式。Bay 与动态创建的 Ship/Gull 容器运行在同一 Docker Bridge 网络中，通过容器 IP 直接通信。Sandbox 容器不向宿主机暴露任何端口，极大减少了攻击面。
+- **配置要点**：在 `config.yaml` 中设置 `driver.type: container_network`，并确保 `network_name` 与 Compose 网络一致。
+- **快速开始**：
+  ```bash
+  cd deploy/docker
+  docker compose up -d
+  ```
+- **详见**：[`deploy/docker/README.md`](deploy/docker/README.md)
 
-```bash
-# 构建 Ship (代码运行时)
-cd pkgs/ship
-docker build -t ship:latest .
+### 7.2 Kubernetes（集群生产）
 
-# 构建 Gull (浏览器运行时)
-cd pkgs/gull
-docker build -t gull:latest .
-```
+面向大规模集群的云原生部署方案，充分利用 K8s 的调度与存储能力。
 
-### 使用 Python SDK
+- **资源调度**：Bay 作为 Operator 角色，通过 K8s API 动态管理 Sandbox Pod（计算）和 PersistentVolumeClaim（存储）。支持 Pod 亲和性调度与资源配额限制。
+- **网络模型**：采用 Pod IP 直连模式。Bay 通过集群内 DNS 或 Pod IP 直接访问 Sandbox 实例，无缝集成 K8s 网络策略。
+- **服务暴露**：Bay 服务通过 LoadBalancer 或 Ingress 暴露，支持 TLS 终结与七层路由。
+- **配置要点**：在 `02-configmap.yaml` 中配置 `driver.type: k8s`，并指定用于 Cargo 动态供给的 `storage_class`。
+- **快速开始**：
+  ```bash
+  cd deploy/k8s
+  kubectl apply -f .
+  ```
+- **详见**：[`deploy/k8s/README.md`](deploy/k8s/README.md)
 
-```bash
-pip install shipyard-neo-sdk
-```
+---
 
-```bash
-# 若尚未发布到你可访问的索引，可从源码安装
-cd shipyard-neo-sdk
-pip install -e .
-```
+## 8. 仓库结构（高层视图）
 
-```python
-import asyncio
-from shipyard_neo import BayClient
+- `pkgs/bay/`：Bay 控制面服务（REST API）
+- `pkgs/ship/`：Ship 代码运行时
+- `pkgs/gull/`：Gull 浏览器运行时（agent-browser passthrough）
+- `shipyard-neo-sdk/`：Python SDK
+- `shipyard-neo-mcp/`：MCP Server（面向 Agent 的工具入口）
+- `deploy/`：Docker Compose / Kubernetes 部署清单
+- `doc/`：本项目权威概念与专题文档
+- `skills/`：Agent 技能文档（SKILL.md + references）
 
-async def main():
-    async with BayClient(
-        endpoint_url="http://localhost:8000",
-        access_token="your-token",
-    ) as client:
-        # 创建一个带有浏览器能力的沙箱
-        # 默认 profile 'python-default' 可能不包含浏览器，请确认 profile 配置
-        sandbox = await client.create_sandbox(profile="full-stack", ttl=600)
-        
-        # 执行 Python
-        result = await sandbox.python.exec("print('Hello from Ship!')")
-        print(f"Python: {result.output}")
-        
-        # 执行浏览器操作
-        # 注意：无需加 'agent-browser' 前缀
-        browser_res = await sandbox.browser.exec("open https://example.com")
-        print(f"Browser: {browser_res.output}")
-        
-        await sandbox.delete()
+---
 
-asyncio.run(main())
-```
+## 9. 推荐阅读路径（从 0 到能用）
 
-### 使用 MCP Server
-
-```json
-{
-  "mcpServers": {
-    "shipyard-neo": {
-      "command": "shipyard-mcp",
-      "env": {
-        "SHIPYARD_ENDPOINT_URL": "http://localhost:8000",
-        "SHIPYARD_ACCESS_TOKEN": "your-access-token"
-      }
-    }
-  }
-}
-```
-
-```bash
-# 本地源码方式启动
-cd shipyard-neo-mcp
-pip install -e .
-shipyard-mcp
-```
-
-### 运行测试
-
-```bash
-# Bay 单元测试
-cd pkgs/bay && uv run pytest tests/unit -v
-
-# Gull 单元测试
-cd pkgs/gull && uv run pytest tests/unit -v
-
-# SDK 测试
-cd shipyard-neo-sdk && uv sync --extra dev && uv run pytest -v
-
-# MCP 测试
-cd shipyard-neo-mcp && uv sync --extra dev && uv run pytest -v
-
-# Bay E2E 测试 (Docker, docker-host 模式)
-cd pkgs/bay && ./tests/scripts/docker-host/run.sh
-```
-
-请参考 [Bay README](pkgs/bay/README.md)、[Ship README](pkgs/ship/README.md) 和 [Gull README](pkgs/gull/README.md) 了解更多细节。
+1. 概念与实体关系：[`doc/bay_abstract_entities.md`](doc/bay_abstract_entities.md:1)
+2. API 总览与细节：[`doc/bay_api_v1.md`](doc/bay_api_v1.md:1)
+3. 错误码与排障：[`doc/bay_error_codes.md`](doc/bay_error_codes.md:1)
+4. 浏览器运行时（实现与部署）：[`doc/gull_browser_runtime.md`](doc/gull_browser_runtime.md:1)
+5. 浏览器操作规范（透传约束与工作流）：[`doc/agent_browser_guide.md`](doc/agent_browser_guide.md:1)
+6. Ship 运行时与安全模型：[`doc/ship_architecture.md`](doc/ship_architecture.md:1)
+7. self-update 闭环落地：[`doc/skills_self_update_guide_zh.md`](doc/skills_self_update_guide_zh.md:1)
