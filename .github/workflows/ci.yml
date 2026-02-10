@@ -1,0 +1,123 @@
+# CI - 单元测试
+# 在 PR 和 push 到 main 时运行所有包的单元测试
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Bay 单元测试 ──────────────────────────────────────────
+  test-bay:
+    name: "Bay Unit Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkgs/bay
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pkgs/bay/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check app tests
+
+      - name: Unit tests
+        run: uv run pytest tests/unit -v --tb=short
+
+  # ── Gull 单元测试 ─────────────────────────────────────────
+  test-gull:
+    name: "Gull Unit Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkgs/gull
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pkgs/gull/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Unit tests
+        run: uv run pytest tests/unit -v --tb=short
+
+  # ── Ship 单元测试 ─────────────────────────────────────────
+  test-ship:
+    name: "Ship Unit Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pkgs/ship
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pkgs/ship/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra test
+
+      - name: Unit tests
+        run: uv run pytest tests/unit -v --tb=short -m unit
+
+  # ── SDK 测试 ──────────────────────────────────────────────
+  test-sdk:
+    name: "SDK Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shipyard-neo-sdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "shipyard-neo-sdk/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Unit tests
+        run: uv run pytest tests -v --tb=short
+
+  # ── MCP 测试 ──────────────────────────────────────────────
+  test-mcp:
+    name: "MCP Tests"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shipyard-neo-mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "shipyard-neo-mcp/uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Unit tests
+        run: uv run pytest tests -v --tb=short

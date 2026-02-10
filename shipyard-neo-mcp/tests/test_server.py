@@ -305,18 +305,22 @@ class FakeClient:
     async def get_sandbox(self, sandbox_id: str):
         return mcp_server._sandboxes[sandbox_id]
 
-    async def list_profiles(self):
+    async def list_profiles(self, **kwargs):
         return SimpleNamespace(
             items=[
                 SimpleNamespace(
                     id="python-default",
+                    description="Default Python sandbox",
                     capabilities=["python", "shell", "filesystem"],
                     idle_timeout=300,
+                    containers=None,
                 ),
                 SimpleNamespace(
                     id="browser-default",
+                    description="Browser-enabled sandbox",
                     capabilities=["python", "shell", "filesystem", "browser"],
                     idle_timeout=600,
+                    containers=None,
                 ),
             ]
         )
@@ -748,7 +752,7 @@ async def test_list_profiles_formats_output():
 @pytest.mark.asyncio
 async def test_list_profiles_empty():
     class EmptyProfileClient(FakeClient):
-        async def list_profiles(self):
+        async def list_profiles(self, **kwargs):
             return SimpleNamespace(items=[])
 
     mcp_server._client = EmptyProfileClient()
