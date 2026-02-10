@@ -151,6 +151,15 @@ class BrowserBatchExecResult(BaseModel):
     duration_ms: int = 0
 
 
+class ContainerInfo(BaseModel):
+    """Container information within a profile."""
+
+    name: str
+    runtime_type: str
+    capabilities: list[str]
+    resources: dict[str, Any]
+
+
 class ProfileInfo(BaseModel):
     """Profile information."""
 
@@ -159,6 +168,8 @@ class ProfileInfo(BaseModel):
     resources: dict[str, Any]
     capabilities: list[str]
     idle_timeout: int
+    description: str | None = None
+    containers: list[ContainerInfo] | None = None
 
 
 class ProfileList(BaseModel):

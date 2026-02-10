@@ -1175,7 +1175,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             return [TextContent(type="text", text="\n".join(lines))]
 
         elif name == "list_profiles":
-            profiles = await _client.list_profiles()
+            profiles = await _client.list_profiles(detail=True)
 
             if not profiles.items:
                 return [TextContent(type="text", text="No profiles available.")]
@@ -1183,10 +1183,17 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
             lines = [f"**Available Profiles** ({len(profiles.items)})\n"]
             for p in profiles.items:
                 caps = ", ".join(p.capabilities) if p.capabilities else "none"
+                desc = f" — {p.description}" if p.description else ""
                 lines.append(
-                    f"- **{p.id}**: capabilities=[{caps}], "
+                    f"- **{p.id}**{desc}: capabilities=[{caps}], "
                     f"idle_timeout={p.idle_timeout}s"
                 )
+                if p.containers:
+                    for c in p.containers:
+                        c_caps = ", ".join(c.capabilities) if c.capabilities else "none"
+                        lines.append(
+                            f"    └ {c.name} ({c.runtime_type}): [{c_caps}]"
+                        )
 
             return [TextContent(type="text", text="\n".join(lines))]
 

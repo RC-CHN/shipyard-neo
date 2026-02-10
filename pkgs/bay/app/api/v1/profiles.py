@@ -5,7 +5,7 @@ GET /v1/profiles - List available profiles
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from app.config import ProfileConfig, get_settings
@@ -20,6 +20,15 @@ class ResourceSpecResponse(BaseModel):
     memory: str
 
 
+class ContainerInfoResponse(BaseModel):
+    """Container information within a profile (detail mode)."""
+
+    name: str
+    runtime_type: str
+    capabilities: list[str]
+    resources: ResourceSpecResponse
+
+
 class ProfileResponse(BaseModel):
     """Profile response model."""
 
@@ -28,6 +37,8 @@ class ProfileResponse(BaseModel):
     resources: ResourceSpecResponse
     capabilities: list[str]
     idle_timeout: int
+    description: str | None = None
+    containers: list[ContainerInfoResponse] | None = None
 
 
 class ProfileListResponse(BaseModel):
@@ -36,8 +47,17 @@ class ProfileListResponse(BaseModel):
     items: list[ProfileResponse]
 
 
-def _profile_to_response(p: ProfileConfig) -> ProfileResponse:
-    """Convert ProfileConfig to API response, handling multi-container profiles."""
+def _profile_to_response(
+    p: ProfileConfig,
+    *,
+    detail: bool = False,
+) -> ProfileResponse:
+    """Convert ProfileConfig to API response, handling multi-container profiles.
+
+    Args:
+        p: Profile configuration.
+        detail: If True, include containers topology and description.
+    """
     primary = p.get_primary_container()
 
     # Image: use legacy field or primary container image
@@ -57,18 +77,36 @@ def _profile_to_response(p: ProfileConfig) -> ProfileResponse:
     else:
         capabilities = sorted(p.get_all_capabilities())
 
+    # Detail mode: include containers topology and description
+    containers_info: list[ContainerInfoResponse] | None = None
+    if detail:
+        raw_containers = p.get_containers()
+        containers_info = [
+            ContainerInfoResponse(
+                name=c.name,
+                runtime_type=c.runtime_type,
+                capabilities=sorted(c.capabilities),
+                resources=ResourceSpecResponse(cpus=c.resources.cpus, memory=c.resources.memory),
+            )
+            for c in raw_containers
+        ]
+
     return ProfileResponse(
         id=p.id,
         image=image,
         resources=resources,
         capabilities=capabilities,
         idle_timeout=p.idle_timeout,
+        description=p.description if detail else None,
+        containers=containers_info,
     )
 
 
 @router.get("", response_model=ProfileListResponse)
-async def list_profiles() -> ProfileListResponse:
+async def list_profiles(
+    detail: bool = Query(False, description="Include container topology and description"),
+) -> ProfileListResponse:
     """List available profiles."""
     settings = get_settings()
-    items = [_profile_to_response(p) for p in settings.profiles]
+    items = [_profile_to_response(p, detail=detail) for p in settings.profiles]
     return ProfileListResponse(items=items)

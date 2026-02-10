@@ -201,14 +201,20 @@ class BayClient:
 
     # Profile operations
 
-    async def list_profiles(self) -> ProfileList:
+    async def list_profiles(self, *, detail: bool = False) -> ProfileList:
         """List available sandbox profiles.
 
         Returns a list of runtime profiles with their resource specs,
         capabilities, and idle timeout configuration.
 
+        Args:
+            detail: If True, include per-container topology and description.
+
         Returns:
             ProfileList with available profiles
         """
-        response = await self.http.get("/v1/profiles")
+        params: dict[str, str] = {}
+        if detail:
+            params["detail"] = "true"
+        response = await self.http.get("/v1/profiles", params=params)
         return ProfileList.model_validate(response)
