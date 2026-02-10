@@ -123,3 +123,62 @@ async def test_run_agent_browser_timeout_kills_process(monkeypatch: pytest.Monke
     assert stdout == ""
     assert "timed out" in stderr
     assert code == -1
+
+
+@pytest.mark.asyncio
+async def test_exec_batch_stops_when_budget_exhausted_before_next_step(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured_timeouts: list[float] = []
+
+    async def fake_run(_cmd: str, **kwargs):
+        captured_timeouts.append(kwargs["timeout"])
+        return "ok", "", 0
+
+    perf_values = iter([0.0, 0.0, 0.0, 1.3, 2.2, 2.2])
+    monkeypatch.setattr(gull_main.time, "perf_counter", lambda: next(perf_values))
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    response = await gull_main.exec_batch(
+        gull_main.BatchExecRequest(
+            commands=["open https://example.com", "snapshot -i", "get title"],
+            timeout=2,
+            stop_on_error=False,
+        )
+    )
+
+    assert captured_timeouts == [2.0]
+    assert response.total_steps == 3
+    assert response.completed_steps == 1
+    assert response.success is False
+    assert len(response.results) == 1
+
+
+@pytest.mark.asyncio
+async def test_exec_batch_uses_remaining_budget_without_forced_minimum(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured_timeouts: list[float] = []
+
+    async def fake_run(_cmd: str, **kwargs):
+        captured_timeouts.append(kwargs["timeout"])
+        return "ok", "", 0
+
+    perf_values = iter([0.0, 1.7, 1.7, 1.95, 2.0])
+    monkeypatch.setattr(gull_main.time, "perf_counter", lambda: next(perf_values))
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    response = await gull_main.exec_batch(
+        gull_main.BatchExecRequest(
+            commands=["snapshot -i"],
+            timeout=2,
+            stop_on_error=True,
+        )
+    )
+
+    assert response.completed_steps == 1
+    assert response.success is True
+    assert len(captured_timeouts) == 1
+    assert 0 < captured_timeouts[0] <= 0.3 + 1e-9
+    assert captured_timeouts[0] < 1.0
+

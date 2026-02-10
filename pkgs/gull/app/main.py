@@ -106,7 +106,7 @@ class MetaResponse(BaseModel):
 async def _run_agent_browser(
     cmd: str,
     *,
-    timeout: int = 30,
+    timeout: float = 30.0,
     session: str | None = None,
     profile: str | None = None,
     cwd: str = WORKSPACE_PATH,
@@ -262,7 +262,9 @@ async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
     for i, cmd in enumerate(request.commands):
         # Calculate remaining timeout budget
         elapsed = time.perf_counter() - batch_start
-        remaining_timeout = max(1, int(request.timeout - elapsed))
+        remaining_timeout = request.timeout - elapsed
+        if remaining_timeout <= 0:
+            break
 
         step_start = time.perf_counter()
         stdout, stderr, exit_code = await _run_agent_browser(
@@ -293,7 +295,7 @@ async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
         results=results,
         total_steps=len(request.commands),
         completed_steps=len(results),
-        success=all(r.exit_code == 0 for r in results),
+        success=(len(results) == len(request.commands) and all(r.exit_code == 0 for r in results)),
         duration_ms=total_duration_ms,
     )
 
