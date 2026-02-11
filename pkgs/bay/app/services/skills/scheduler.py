@@ -272,9 +272,7 @@ class BrowserLearningProcessor:
 
         if isinstance(trace_payload, dict):
             if isinstance(trace_payload.get("steps"), list):
-                raw_steps = [
-                    step for step in trace_payload["steps"] if isinstance(step, dict)
-                ]
+                raw_steps = [step for step in trace_payload["steps"] if isinstance(step, dict)]
             elif "cmd" in trace_payload:
                 raw_steps = [trace_payload]
         elif isinstance(trace_payload, list):

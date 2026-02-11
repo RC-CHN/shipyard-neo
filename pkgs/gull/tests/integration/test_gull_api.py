@@ -160,7 +160,9 @@ class TestBatchExec:
         )
         assert resp.status_code == 422
 
-    def test_exec_batch_stop_on_error_true_stops_after_failure(self, gull_container: str):
+    def test_exec_batch_stop_on_error_true_stops_after_failure(
+        self, gull_container: str
+    ):
         data = _exec_batch(
             gull_container,
             commands=["open about:blank", "nonexistent-subcommand", "get title"],
@@ -175,7 +177,9 @@ class TestBatchExec:
         assert data["results"][-1]["cmd"] == "nonexistent-subcommand"
         assert data["results"][-1]["exit_code"] != 0
 
-    def test_exec_batch_stop_on_error_false_continues_after_failure(self, gull_container: str):
+    def test_exec_batch_stop_on_error_false_continues_after_failure(
+        self, gull_container: str
+    ):
         data = _exec_batch(
             gull_container,
             commands=["open about:blank", "nonexistent-subcommand", "get title"],

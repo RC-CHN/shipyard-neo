@@ -174,9 +174,7 @@ class SkillRelease(SQLModel, table=True):
     version: int = Field(index=True)
     stage: SkillReleaseStage = Field(default=SkillReleaseStage.CANARY, index=True)
     is_active: bool = Field(default=True, index=True)
-    release_mode: SkillReleaseMode = Field(
-        default=SkillReleaseMode.MANUAL, index=True
-    )
+    release_mode: SkillReleaseMode = Field(default=SkillReleaseMode.MANUAL, index=True)
 
     promoted_by: str | None = Field(default=None)
     promoted_at: datetime = Field(default_factory=datetime.utcnow, index=True)

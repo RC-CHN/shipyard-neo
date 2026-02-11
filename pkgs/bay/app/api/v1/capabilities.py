@@ -665,9 +665,7 @@ async def run_browser_skill(
         success=success,
         execution_time_ms=execution_time_ms,
         output="\n".join(item.stdout.strip() for item in results if item.stdout.strip()),
-        error=(
-            "\n".join(item.stderr.strip() for item in results if item.stderr.strip()) or None
-        ),
+        error=("\n".join(item.stderr.strip() for item in results if item.stderr.strip()) or None),
         payload_ref=trace_ref,
         description=request.description,
         tags=merged_tags,

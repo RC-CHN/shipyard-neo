@@ -182,6 +182,7 @@ async def test_exec_batch_uses_remaining_budget_without_forced_minimum(
     assert 0 < captured_timeouts[0] <= 0.3 + 1e-9
     assert captured_timeouts[0] < 1.0
 
+
 @pytest.mark.asyncio
 async def test_exec_batch_stop_on_error_true_stops_at_first_failure(
     monkeypatch: pytest.MonkeyPatch,
@@ -256,7 +257,9 @@ async def test_exec_batch_stop_on_error_false_continues_but_stays_unsuccessful(
 
 
 @pytest.mark.asyncio
-async def test_health_unhealthy_when_agent_browser_missing(monkeypatch: pytest.MonkeyPatch):
+async def test_health_unhealthy_when_agent_browser_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
     monkeypatch.setattr(gull_main.shutil, "which", lambda _name: None)
 
     response = await gull_main.health()
@@ -286,7 +289,9 @@ async def test_health_healthy_when_probe_succeeds(monkeypatch: pytest.MonkeyPatc
 async def test_health_healthy_when_probe_succeeds_without_active_session(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(gull_main.shutil, "which", lambda _name: "/usr/bin/agent-browser")
+    monkeypatch.setattr(
+        gull_main.shutil, "which", lambda _name: "/usr/bin/agent-browser"
+    )
 
     async def fake_run(_cmd: str, **_kwargs):
         return "other-session", "", 0

@@ -448,7 +448,9 @@ class TestBayClient:
         assert body["include_trace"] is True
 
     @pytest.mark.asyncio
-    async def test_browser_exec_sends_default_learning_flags(self, httpx_mock, mock_sandbox_response):
+    async def test_browser_exec_sends_default_learning_flags(
+        self, httpx_mock, mock_sandbox_response
+    ):
         """Browser exec should keep explicit default flags in request body."""
         httpx_mock.add_response(
             method="POST",
