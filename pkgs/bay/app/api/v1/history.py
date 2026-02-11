@@ -27,9 +27,14 @@ class ExecutionHistoryEntryResponse(BaseModel):
     execution_time_ms: int
     output: str | None = None
     error: str | None = None
+    payload_ref: str | None = None
     description: str | None = None
     tags: str | None = None
     notes: str | None = None
+    learn_enabled: bool = False
+    learn_status: str | None = None
+    learn_error: str | None = None
+    learn_processed_at: datetime | None = None
     created_at: datetime
 
 
@@ -58,9 +63,14 @@ def _to_entry_response(entry) -> ExecutionHistoryEntryResponse:
         execution_time_ms=entry.execution_time_ms,
         output=entry.output,
         error=entry.error,
+        payload_ref=entry.payload_ref,
         description=entry.description,
         tags=entry.tags,
         notes=entry.notes,
+        learn_enabled=entry.learn_enabled,
+        learn_status=entry.learn_status.value if entry.learn_status else None,
+        learn_error=entry.learn_error,
+        learn_processed_at=entry.learn_processed_at,
         created_at=entry.created_at,
     )
 

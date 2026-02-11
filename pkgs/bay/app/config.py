@@ -321,6 +321,25 @@ class GCConfig(BaseModel):
         return os.environ.get("HOSTNAME", "bay")
 
 
+class BrowserLearningConfig(BaseModel):
+    """Browser skill learning and auto-release configuration."""
+
+    enabled: bool = True
+    run_on_startup: bool = True
+    interval_seconds: int = 300
+    batch_size: int = 20
+
+    # Auto-evaluation threshold policy
+    score_threshold: float = 0.85
+    replay_success_threshold: float = 0.95
+    min_samples: int = 30
+
+    # Auto-release policy
+    canary_window_hours: int = 24
+    success_drop_threshold: float = 0.03
+    error_rate_multiplier_threshold: float = 2.0
+
+
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
@@ -360,6 +379,8 @@ class Settings(BaseSettings):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     idempotency: IdempotencyConfig = Field(default_factory=IdempotencyConfig)
     gc: GCConfig = Field(default_factory=GCConfig)
+    browser_learning: BrowserLearningConfig = Field(default_factory=BrowserLearningConfig)
+    browser_auto_release_enabled: bool = True
 
     # Default profiles
     profiles: list[ProfileConfig] = Field(

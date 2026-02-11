@@ -14,6 +14,10 @@ from app.db import close_db, init_db
 from app.errors import BayError
 from app.services.gc.lifecycle import init_gc_scheduler, shutdown_gc_scheduler
 from app.services.http import http_client_manager
+from app.services.skills.lifecycle import (
+    init_browser_learning_scheduler,
+    shutdown_browser_learning_scheduler,
+)
 
 logger = structlog.get_logger()
 
@@ -30,6 +34,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize and start GC scheduler
     await init_gc_scheduler()
+    await init_browser_learning_scheduler()
 
     yield
 
@@ -38,6 +43,7 @@ async def lifespan(app: FastAPI):
 
     # Stop GC scheduler
     await shutdown_gc_scheduler()
+    await shutdown_browser_learning_scheduler()
 
     # Close HTTP client
     await http_client_manager.shutdown()

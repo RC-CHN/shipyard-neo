@@ -23,7 +23,8 @@ from app.api.dependencies import (
     ShellCapabilityDep,
     SkillLifecycleServiceDep,
 )
-from app.models.skill import ExecutionType
+from app.errors import NotFoundError, ValidationError
+from app.models.skill import ExecutionType, LearnStatus
 from app.router.capability import CapabilityRouter
 from app.validators.path import (
     validate_optional_relative_path,
@@ -170,6 +171,10 @@ class BrowserExecRequest(BaseModel):
 
     cmd: str
     timeout: int = Field(default=30, ge=1, le=300)
+    description: str | None = None
+    tags: str | None = None
+    learn: bool = False
+    include_trace: bool = False
 
 
 class BrowserExecResponse(BaseModel):
@@ -179,6 +184,9 @@ class BrowserExecResponse(BaseModel):
     output: str
     error: str | None = None
     exit_code: int | None = None
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    trace_ref: str | None = None
 
 
 class BrowserBatchExecRequest(BaseModel):
@@ -187,6 +195,10 @@ class BrowserBatchExecRequest(BaseModel):
     commands: list[str] = Field(..., min_length=1)
     timeout: int = Field(default=60, ge=1, le=600)
     stop_on_error: bool = Field(default=True, description="Stop if a command fails")
+    description: str | None = None
+    tags: str | None = None
+    learn: bool = False
+    include_trace: bool = False
 
 
 class BrowserBatchStepResult(BaseModel):
@@ -208,6 +220,100 @@ class BrowserBatchExecResponse(BaseModel):
     completed_steps: int
     success: bool
     duration_ms: int = 0
+    execution_id: str | None = None
+    execution_time_ms: int | None = None
+    trace_ref: str | None = None
+
+
+class BrowserSkillRunRequest(BaseModel):
+    """Replay an active browser skill release."""
+
+    timeout: int = Field(default=60, ge=1, le=600)
+    stop_on_error: bool = Field(default=True)
+    include_trace: bool = False
+    description: str | None = None
+    tags: str | None = None
+
+
+class BrowserSkillRunResponse(BaseModel):
+    """Browser skill replay response."""
+
+    skill_key: str
+    release_id: str
+    execution_id: str
+    execution_time_ms: int
+    trace_ref: str | None = None
+    results: list[BrowserBatchStepResult]
+    total_steps: int
+    completed_steps: int
+    success: bool
+    duration_ms: int = 0
+
+
+class BrowserTraceResponse(BaseModel):
+    """Trace payload lookup response."""
+
+    trace_ref: str
+    trace: dict[str, Any] | list[Any]
+
+
+def _build_browser_exec_trace_payload(
+    *,
+    cmd: str,
+    result_output: str,
+    result_error: str | None,
+    exit_code: int | None,
+) -> dict[str, Any]:
+    return {
+        "kind": "browser_exec_trace",
+        "steps": [
+            {
+                "kind": "individual_action",
+                "cmd": cmd,
+                "stdout": result_output,
+                "stderr": result_error or "",
+                "exit_code": int(exit_code if exit_code is not None else -1),
+                "step_index": 0,
+            }
+        ],
+    }
+
+
+def _build_browser_batch_trace_payload(
+    *,
+    request_commands: list[str],
+    raw_result: dict[str, Any],
+) -> dict[str, Any]:
+    raw_steps = raw_result.get("results", [])
+    steps: list[dict[str, Any]] = []
+    for idx, item in enumerate(raw_steps):
+        if not isinstance(item, dict):
+            continue
+        default_cmd = request_commands[idx] if idx < len(request_commands) else ""
+        exit_code = item.get("exit_code", -1)
+        try:
+            exit_code_int = int(exit_code)
+        except Exception:
+            exit_code_int = -1
+        steps.append(
+            {
+                "kind": "individual_action",
+                "cmd": item.get("cmd", default_cmd),
+                "stdout": item.get("stdout", ""),
+                "stderr": item.get("stderr", ""),
+                "exit_code": exit_code_int,
+                "step_index": int(item.get("step_index", idx)),
+                "duration_ms": int(item.get("duration_ms", 0)),
+            }
+        )
+    return {
+        "kind": "browser_batch_trace",
+        "steps": steps,
+        "total_steps": int(raw_result.get("total_steps", len(request_commands))),
+        "completed_steps": int(raw_result.get("completed_steps", len(steps))),
+        "success": bool(raw_result.get("success", False)),
+        "duration_ms": int(raw_result.get("duration_ms", 0)),
+    }
 
 
 @router.post("/{sandbox_id}/python/exec", response_model=PythonExecResponse)
@@ -313,17 +419,57 @@ async def exec_browser(
     request: BrowserExecRequest,
     sandbox: BrowserCapabilityDep,  # Validates browser capability at profile level
     sandbox_mgr: SandboxManagerDep,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
 ) -> BrowserExecResponse:
     """Execute browser automation command in sandbox.
 
-    Phase 2: Routes to Gull runtime via [`CapabilityRouter.exec_browser()`](pkgs/bay/app/router/capability/capability.py:213).
+    Routes to Gull runtime through CapabilityRouter.
     """
     capability_router = CapabilityRouter(sandbox_mgr)
 
+    start = time.perf_counter()
     result = await capability_router.exec_browser(
         sandbox=sandbox,
         cmd=request.cmd,
         timeout=request.timeout,
+    )
+    execution_time_ms = int((time.perf_counter() - start) * 1000)
+
+    stored_trace_ref: str | None = None
+    trace_ref: str | None = None
+    if request.include_trace or request.learn:
+        trace_payload = _build_browser_exec_trace_payload(
+            cmd=request.cmd,
+            result_output=result.output,
+            result_error=result.error,
+            exit_code=result.exit_code,
+        )
+        trace_blob = await skill_svc.create_artifact_blob(
+            owner=owner,
+            kind="browser_trace",
+            payload=trace_payload,
+        )
+        stored_trace_ref = skill_svc.make_blob_ref(trace_blob.id)
+        if request.include_trace:
+            trace_ref = stored_trace_ref
+
+    current_session = await sandbox_mgr.get_current_session(sandbox)
+    execution_entry = await skill_svc.create_execution(
+        owner=owner,
+        sandbox_id=sandbox.id,
+        session_id=current_session.id if current_session else None,
+        exec_type=ExecutionType.BROWSER,
+        code=request.cmd,
+        success=result.success,
+        execution_time_ms=execution_time_ms,
+        output=result.output,
+        error=result.error,
+        payload_ref=stored_trace_ref,
+        description=request.description,
+        tags=request.tags,
+        learn_enabled=request.learn,
+        learn_status=LearnStatus.PENDING if request.learn else LearnStatus.SKIPPED,
     )
 
     return BrowserExecResponse(
@@ -331,6 +477,9 @@ async def exec_browser(
         output=result.output,
         error=result.error,
         exit_code=result.exit_code,
+        execution_id=execution_entry.id,
+        execution_time_ms=execution_time_ms,
+        trace_ref=trace_ref,
     )
 
 
@@ -376,13 +525,29 @@ async def exec_browser_batch(
     success = raw_result.get("success", False)
     batch_duration_ms = raw_result.get("duration_ms", execution_time_ms)
 
+    stored_trace_ref: str | None = None
+    trace_ref: str | None = None
+    if request.include_trace or request.learn:
+        trace_payload = _build_browser_batch_trace_payload(
+            request_commands=request.commands,
+            raw_result=raw_result,
+        )
+        trace_blob = await skill_svc.create_artifact_blob(
+            owner=owner,
+            kind="browser_trace",
+            payload=trace_payload,
+        )
+        stored_trace_ref = skill_svc.make_blob_ref(trace_blob.id)
+        if request.include_trace:
+            trace_ref = stored_trace_ref
+
     # Record as single execution history entry
     combined_code = "\n".join(request.commands)
     combined_output = "\n".join(r.stdout.strip() for r in results if r.stdout.strip())
     combined_error = "\n".join(r.stderr.strip() for r in results if r.stderr.strip()) or None
 
     current_session = await sandbox_mgr.get_current_session(sandbox)
-    await skill_svc.create_execution(
+    execution_entry = await skill_svc.create_execution(
         owner=owner,
         sandbox_id=sandbox.id,
         session_id=current_session.id if current_session else None,
@@ -392,6 +557,11 @@ async def exec_browser_batch(
         execution_time_ms=execution_time_ms,
         output=combined_output,
         error=combined_error,
+        payload_ref=stored_trace_ref,
+        description=request.description,
+        tags=request.tags,
+        learn_enabled=request.learn,
+        learn_status=LearnStatus.PENDING if request.learn else LearnStatus.SKIPPED,
     )
 
     return BrowserBatchExecResponse(
@@ -400,7 +570,143 @@ async def exec_browser_batch(
         completed_steps=completed_steps,
         success=success,
         duration_ms=batch_duration_ms,
+        execution_id=execution_entry.id,
+        execution_time_ms=execution_time_ms,
+        trace_ref=trace_ref,
     )
+
+
+@router.post(
+    "/{sandbox_id}/browser/skills/{skill_key}/run",
+    response_model=BrowserSkillRunResponse,
+)
+async def run_browser_skill(
+    sandbox_id: str,
+    skill_key: str,
+    request: BrowserSkillRunRequest,
+    sandbox: BrowserCapabilityDep,
+    sandbox_mgr: SandboxManagerDep,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> BrowserSkillRunResponse:
+    """Replay active browser skill payload in sandbox."""
+    _ = sandbox_id  # validated by BrowserCapabilityDep
+    capability_router = CapabilityRouter(sandbox_mgr)
+
+    release = await skill_svc.get_active_release(owner=owner, skill_key=skill_key)
+    if release is None:
+        raise NotFoundError(f"No active release found for skill_key: {skill_key}")
+
+    candidate = await skill_svc.get_candidate(owner=owner, candidate_id=release.candidate_id)
+    payload = await skill_svc.get_payload_by_ref(
+        owner=owner,
+        payload_ref=candidate.payload_ref,
+    )
+    if not isinstance(payload, dict):
+        raise ValidationError("Candidate payload must be a JSON object")
+    commands_raw = payload.get("commands")
+    if not isinstance(commands_raw, list):
+        raise ValidationError("Candidate payload missing 'commands' array")
+    commands = [str(cmd) for cmd in commands_raw if str(cmd).strip()]
+    if not commands:
+        raise ValidationError("Candidate payload commands must not be empty")
+
+    start = time.perf_counter()
+    raw_result = await capability_router.exec_browser_batch(
+        sandbox=sandbox,
+        commands=commands,
+        timeout=request.timeout,
+        stop_on_error=request.stop_on_error,
+    )
+    execution_time_ms = int((time.perf_counter() - start) * 1000)
+
+    results = [
+        BrowserBatchStepResult(
+            cmd=item.get("cmd", ""),
+            stdout=item.get("stdout", ""),
+            stderr=item.get("stderr", ""),
+            exit_code=item.get("exit_code", -1),
+            step_index=item.get("step_index", idx),
+            duration_ms=item.get("duration_ms", 0),
+        )
+        for idx, item in enumerate(raw_result.get("results", []))
+        if isinstance(item, dict)
+    ]
+    total_steps = int(raw_result.get("total_steps", len(commands)))
+    completed_steps = int(raw_result.get("completed_steps", len(results)))
+    success = bool(raw_result.get("success", False))
+    duration_ms = int(raw_result.get("duration_ms", execution_time_ms))
+
+    trace_ref: str | None = None
+    if request.include_trace:
+        trace_blob = await skill_svc.create_artifact_blob(
+            owner=owner,
+            kind="browser_trace",
+            payload=_build_browser_batch_trace_payload(
+                request_commands=commands,
+                raw_result=raw_result,
+            ),
+        )
+        trace_ref = skill_svc.make_blob_ref(trace_blob.id)
+
+    merged_tags = skill_svc.merge_tags(
+        request.tags,
+        f"skill:{skill_key}",
+        f"release:{release.id}",
+        f"stage:{release.stage.value}",
+    )
+    current_session = await sandbox_mgr.get_current_session(sandbox)
+    execution = await skill_svc.create_execution(
+        owner=owner,
+        sandbox_id=sandbox.id,
+        session_id=current_session.id if current_session else None,
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="\n".join(commands),
+        success=success,
+        execution_time_ms=execution_time_ms,
+        output="\n".join(item.stdout.strip() for item in results if item.stdout.strip()),
+        error=(
+            "\n".join(item.stderr.strip() for item in results if item.stderr.strip()) or None
+        ),
+        payload_ref=trace_ref,
+        description=request.description,
+        tags=merged_tags,
+        learn_enabled=False,
+        learn_status=LearnStatus.SKIPPED,
+    )
+
+    return BrowserSkillRunResponse(
+        skill_key=skill_key,
+        release_id=release.id,
+        execution_id=execution.id,
+        execution_time_ms=execution_time_ms,
+        trace_ref=trace_ref,
+        results=results,
+        total_steps=total_steps,
+        completed_steps=completed_steps,
+        success=success,
+        duration_ms=duration_ms,
+    )
+
+
+@router.get(
+    "/{sandbox_id}/browser/traces/{trace_ref}",
+    response_model=BrowserTraceResponse,
+)
+async def get_browser_trace(
+    sandbox_id: str,
+    trace_ref: str,
+    sandbox: BrowserCapabilityDep,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> BrowserTraceResponse:
+    """Get browser trace payload by trace reference."""
+    _ = sandbox_id
+    _ = sandbox  # ensure caller has browser capability and sandbox ownership
+    trace = await skill_svc.get_payload_by_ref(owner=owner, payload_ref=trace_ref)
+    if trace is None:
+        raise NotFoundError(f"Trace payload not found: {trace_ref}")
+    return BrowserTraceResponse(trace_ref=trace_ref, trace=trace)
 
 
 @router.get("/{sandbox_id}/filesystem/files", response_model=FileReadResponse)

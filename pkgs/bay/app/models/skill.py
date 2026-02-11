@@ -30,6 +30,8 @@ class SkillCandidateStatus(str, Enum):
     DRAFT = "draft"
     EVALUATING = "evaluating"
     PROMOTED = "promoted"
+    PROMOTED_CANARY = "promoted_canary"
+    PROMOTED_STABLE = "promoted_stable"
     REJECTED = "rejected"
     ROLLED_BACK = "rolled_back"
 
@@ -39,6 +41,30 @@ class SkillReleaseStage(str, Enum):
 
     CANARY = "canary"
     STABLE = "stable"
+
+
+class SkillType(str, Enum):
+    """Skill classification."""
+
+    CODE = "code"
+    BROWSER = "browser"
+
+
+class SkillReleaseMode(str, Enum):
+    """How a release was promoted."""
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
+class LearnStatus(str, Enum):
+    """Learning pipeline status for an execution."""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    SKIPPED = "skipped"
+    ERROR = "error"
 
 
 class ExecutionHistory(SQLModel, table=True):
@@ -58,12 +84,29 @@ class ExecutionHistory(SQLModel, table=True):
 
     output: str | None = Field(default=None)
     error: str | None = Field(default=None)
+    payload_ref: str | None = Field(default=None, index=True)
 
     # Learning metadata (agent annotations)
     description: str | None = Field(default=None)
     tags: str | None = Field(default=None)
     notes: str | None = Field(default=None)
+    learn_enabled: bool = Field(default=False, index=True)
+    learn_status: LearnStatus | None = Field(default=None, index=True)
+    learn_error: str | None = Field(default=None)
+    learn_processed_at: datetime | None = Field(default=None, index=True)
 
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class ArtifactBlob(SQLModel, table=True):
+    """Externalized payload storage for larger JSON evidence."""
+
+    __tablename__ = "artifact_blobs"
+
+    id: str = Field(primary_key=True)
+    owner: str = Field(index=True)
+    kind: str = Field(default="generic", index=True)
+    payload_json: str
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
@@ -78,6 +121,9 @@ class SkillCandidate(SQLModel, table=True):
     skill_key: str = Field(index=True)
     scenario_key: str | None = Field(default=None, index=True)
     payload_ref: str | None = Field(default=None)
+    skill_type: SkillType = Field(default=SkillType.CODE, index=True)
+    auto_release_eligible: bool = Field(default=False, index=True)
+    auto_release_reason: str | None = Field(default=None)
 
     # Comma-separated execution IDs used as source evidence.
     source_execution_ids: str = Field(default="")
@@ -128,8 +174,13 @@ class SkillRelease(SQLModel, table=True):
     version: int = Field(index=True)
     stage: SkillReleaseStage = Field(default=SkillReleaseStage.CANARY, index=True)
     is_active: bool = Field(default=True, index=True)
+    release_mode: SkillReleaseMode = Field(
+        default=SkillReleaseMode.MANUAL, index=True
+    )
 
     promoted_by: str | None = Field(default=None)
     promoted_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
     rollback_of: str | None = Field(default=None, index=True)
+    auto_promoted_from: str | None = Field(default=None, index=True)
+    health_window_end_at: datetime | None = Field(default=None, index=True)

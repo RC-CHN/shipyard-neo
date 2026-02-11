@@ -30,6 +30,9 @@ class SkillCandidateResponse(BaseModel):
     skill_key: str
     scenario_key: str | None
     payload_ref: str | None
+    skill_type: str
+    auto_release_eligible: bool
+    auto_release_reason: str | None
     source_execution_ids: list[str]
     status: str
     latest_score: float | None
@@ -85,9 +88,36 @@ class SkillReleaseResponse(BaseModel):
     version: int
     stage: str
     is_active: bool
+    release_mode: str
     promoted_by: str | None
     promoted_at: datetime
     rollback_of: str | None
+    auto_promoted_from: str | None
+    health_window_end_at: datetime | None
+
+
+class SkillReleaseHealthResponse(BaseModel):
+    """Release health response."""
+
+    release_id: str
+    skill_key: str
+    stage: str
+    window_start_at: datetime
+    window_end_at: datetime
+    window_complete: bool
+    samples: int
+    success_rate: float
+    error_rate: float
+    p95_duration: int
+    baseline_success_rate: float
+    baseline_error_rate: float
+    baseline_samples: int
+    success_drop: float
+    error_rate_multiplier: float
+    healthy: bool
+    should_rollback: bool
+    rollback_reasons: list[str]
+    thresholds: dict[str, float]
 
 
 class SkillReleaseListResponse(BaseModel):
@@ -104,6 +134,9 @@ def _candidate_to_response(candidate) -> SkillCandidateResponse:
         skill_key=candidate.skill_key,
         scenario_key=candidate.scenario_key,
         payload_ref=candidate.payload_ref,
+        skill_type=candidate.skill_type.value,
+        auto_release_eligible=candidate.auto_release_eligible,
+        auto_release_reason=candidate.auto_release_reason,
         source_execution_ids=source_execution_ids,
         status=candidate.status.value,
         latest_score=candidate.latest_score,
@@ -137,9 +170,12 @@ def _release_to_response(release) -> SkillReleaseResponse:
         version=release.version,
         stage=release.stage.value,
         is_active=release.is_active,
+        release_mode=release.release_mode.value,
         promoted_by=release.promoted_by,
         promoted_at=release.promoted_at,
         rollback_of=release.rollback_of,
+        auto_promoted_from=release.auto_promoted_from,
+        health_window_end_at=release.health_window_end_at,
     )
 
 
@@ -267,6 +303,16 @@ async def list_releases(
         items=[_release_to_response(item) for item in items],
         total=total,
     )
+
+
+@router.get("/releases/{release_id}/health", response_model=SkillReleaseHealthResponse)
+async def get_release_health(
+    release_id: str,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillReleaseHealthResponse:
+    health = await skill_svc.get_release_health(owner=owner, release_id=release_id)
+    return SkillReleaseHealthResponse(**health)
 
 
 @router.post("/releases/{release_id}/rollback", response_model=SkillReleaseResponse)

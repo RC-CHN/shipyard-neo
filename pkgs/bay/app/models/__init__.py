@@ -5,13 +5,17 @@ from app.models.idempotency import IdempotencyKey
 from app.models.sandbox import Sandbox
 from app.models.session import Session, SessionStatus
 from app.models.skill import (
+    ArtifactBlob,
     ExecutionHistory,
     ExecutionType,
+    LearnStatus,
     SkillCandidate,
     SkillCandidateStatus,
     SkillEvaluation,
     SkillRelease,
+    SkillReleaseMode,
     SkillReleaseStage,
+    SkillType,
 )
 
 # Rebuild models to resolve forward references
@@ -29,9 +33,13 @@ __all__ = [
     "Cargo",
     "ExecutionHistory",
     "ExecutionType",
+    "LearnStatus",
+    "ArtifactBlob",
     "SkillCandidate",
     "SkillCandidateStatus",
+    "SkillType",
     "SkillEvaluation",
     "SkillRelease",
     "SkillReleaseStage",
+    "SkillReleaseMode",
 ]

@@ -1,16 +1,20 @@
 """Skill lifecycle service.
 
 Provides Bay control-plane operations for:
-- execution history persistence and query
+- execution evidence persistence and query
+- trace payload blob storage
 - candidate lifecycle
-- evaluation records
-- promotion and rollback
+- evaluation and release operations
+- release health aggregation
 """
 
 from __future__ import annotations
 
+import json
+import math
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,18 +22,24 @@ from sqlmodel import select
 
 from app.errors import ConflictError, NotFoundError, ValidationError
 from app.models.skill import (
+    ArtifactBlob,
     ExecutionHistory,
     ExecutionType,
+    LearnStatus,
     SkillCandidate,
     SkillCandidateStatus,
     SkillEvaluation,
     SkillRelease,
+    SkillReleaseMode,
     SkillReleaseStage,
+    SkillType,
 )
 
 
 class SkillLifecycleService:
     """Service for skill learning lifecycle operations."""
+
+    BLOB_REF_PREFIX = "blob:"
 
     def __init__(self, db_session: AsyncSession) -> None:
         self._db = db_session
@@ -41,7 +51,6 @@ class SkillLifecycleService:
         normalized = [t.strip() for t in tags.split(",") if t.strip()]
         if not normalized:
             return None
-        # Stable order for deterministic matching output.
         return ",".join(sorted(set(normalized)))
 
     @staticmethod
@@ -53,6 +62,84 @@ class SkillLifecycleService:
     @staticmethod
     def _join_csv(values: list[str]) -> str:
         return ",".join(values)
+
+    @classmethod
+    def _make_blob_ref(cls, blob_id: str) -> str:
+        return f"{cls.BLOB_REF_PREFIX}{blob_id}"
+
+    @classmethod
+    def make_blob_ref(cls, blob_id: str) -> str:
+        return cls._make_blob_ref(blob_id)
+
+    @classmethod
+    def _parse_blob_ref(cls, payload_ref: str) -> str:
+        if not payload_ref.startswith(cls.BLOB_REF_PREFIX):
+            raise ValidationError(f"Unsupported payload_ref: {payload_ref}")
+        blob_id = payload_ref[len(cls.BLOB_REF_PREFIX) :]
+        if not blob_id:
+            raise ValidationError(f"Invalid payload_ref: {payload_ref}")
+        return blob_id
+
+    @classmethod
+    def merge_tags(cls, *tags: str | None) -> str | None:
+        merged: list[str] = []
+        for raw in tags:
+            if raw is None:
+                continue
+            merged.extend([part.strip() for part in raw.split(",") if part.strip()])
+        if not merged:
+            return None
+        return ",".join(sorted(set(merged)))
+
+    # ---------------------------------------------------------------------
+    # Artifact blob storage
+    # ---------------------------------------------------------------------
+
+    async def create_artifact_blob(
+        self,
+        *,
+        owner: str,
+        payload: dict[str, Any] | list[Any],
+        kind: str = "generic",
+    ) -> ArtifactBlob:
+        blob = ArtifactBlob(
+            id=f"blob-{uuid.uuid4().hex[:12]}",
+            owner=owner,
+            kind=kind,
+            payload_json=json.dumps(payload, ensure_ascii=False),
+            created_at=datetime.utcnow(),
+        )
+        self._db.add(blob)
+        await self._db.commit()
+        await self._db.refresh(blob)
+        return blob
+
+    async def get_artifact_blob(self, *, owner: str, blob_id: str) -> ArtifactBlob:
+        result = await self._db.execute(
+            select(ArtifactBlob).where(
+                ArtifactBlob.id == blob_id,
+                ArtifactBlob.owner == owner,
+            )
+        )
+        blob = result.scalars().first()
+        if blob is None:
+            raise NotFoundError(f"Artifact blob not found: {blob_id}")
+        return blob
+
+    async def get_payload_by_ref(
+        self,
+        *,
+        owner: str,
+        payload_ref: str | None,
+    ) -> dict[str, Any] | list[Any] | None:
+        if payload_ref is None:
+            return None
+        blob_id = self._parse_blob_ref(payload_ref)
+        blob = await self.get_artifact_blob(owner=owner, blob_id=blob_id)
+        try:
+            return json.loads(blob.payload_json)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(f"Invalid payload JSON in blob: {blob_id}") from exc
 
     # ---------------------------------------------------------------------
     # Execution history
@@ -70,9 +157,18 @@ class SkillLifecycleService:
         session_id: str | None = None,
         output: str | None = None,
         error: str | None = None,
+        payload_ref: str | None = None,
         description: str | None = None,
         tags: str | None = None,
+        learn_enabled: bool = False,
+        learn_status: LearnStatus | None = None,
+        learn_error: str | None = None,
+        learn_processed_at: datetime | None = None,
     ) -> ExecutionHistory:
+        normalized_learn_status = learn_status
+        if normalized_learn_status is None and learn_enabled:
+            normalized_learn_status = LearnStatus.PENDING
+
         entry = ExecutionHistory(
             id=f"exec-{uuid.uuid4().hex[:12]}",
             owner=owner,
@@ -84,8 +180,13 @@ class SkillLifecycleService:
             execution_time_ms=max(execution_time_ms, 0),
             output=output,
             error=error,
+            payload_ref=payload_ref,
             description=description,
             tags=self._normalize_tags(tags),
+            learn_enabled=learn_enabled,
+            learn_status=normalized_learn_status,
+            learn_error=learn_error,
+            learn_processed_at=learn_processed_at,
             created_at=datetime.utcnow(),
         )
         self._db.add(entry)
@@ -105,6 +206,23 @@ class SkillLifecycleService:
                 ExecutionHistory.id == execution_id,
                 ExecutionHistory.owner == owner,
                 ExecutionHistory.sandbox_id == sandbox_id,
+            )
+        )
+        entry = result.scalars().first()
+        if entry is None:
+            raise NotFoundError(f"Execution not found: {execution_id}")
+        return entry
+
+    async def get_execution_by_id(
+        self,
+        *,
+        owner: str,
+        execution_id: str,
+    ) -> ExecutionHistory:
+        result = await self._db.execute(
+            select(ExecutionHistory).where(
+                ExecutionHistory.id == execution_id,
+                ExecutionHistory.owner == owner,
             )
         )
         entry = result.scalars().first()
@@ -218,6 +336,53 @@ class SkillLifecycleService:
         await self._db.refresh(entry)
         return entry
 
+    async def set_execution_learning_status(
+        self,
+        *,
+        execution_id: str,
+        status: LearnStatus,
+        error: str | None = None,
+        processed_at: datetime | None = None,
+    ) -> ExecutionHistory:
+        result = await self._db.execute(
+            select(ExecutionHistory).where(ExecutionHistory.id == execution_id)
+        )
+        entry = result.scalars().first()
+        if entry is None:
+            raise NotFoundError(f"Execution not found: {execution_id}")
+
+        entry.learn_status = status
+        entry.learn_error = error
+        entry.learn_processed_at = processed_at
+        await self._db.commit()
+        await self._db.refresh(entry)
+        return entry
+
+    async def list_pending_browser_learning_executions(
+        self,
+        *,
+        limit: int = 50,
+    ) -> list[ExecutionHistory]:
+        if limit <= 0 or limit > 500:
+            raise ValidationError("limit must be between 1 and 500")
+
+        result = await self._db.execute(
+            select(ExecutionHistory)
+            .where(
+                ExecutionHistory.learn_enabled.is_(True),
+                ExecutionHistory.exec_type.in_(
+                    [ExecutionType.BROWSER, ExecutionType.BROWSER_BATCH]
+                ),
+                or_(
+                    ExecutionHistory.learn_status.is_(None),
+                    ExecutionHistory.learn_status == LearnStatus.PENDING,
+                ),
+            )
+            .order_by(ExecutionHistory.created_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
     # ---------------------------------------------------------------------
     # Candidate lifecycle
     # ---------------------------------------------------------------------
@@ -231,6 +396,9 @@ class SkillLifecycleService:
         scenario_key: str | None = None,
         payload_ref: str | None = None,
         created_by: str | None = None,
+        skill_type: SkillType = SkillType.CODE,
+        auto_release_eligible: bool = False,
+        auto_release_reason: str | None = None,
     ) -> SkillCandidate:
         if not skill_key.strip():
             raise ValidationError("skill_key must not be empty")
@@ -247,6 +415,9 @@ class SkillLifecycleService:
             scenario_key=scenario_key,
             payload_ref=payload_ref,
             source_execution_ids=self._join_csv(source_execution_ids),
+            skill_type=skill_type,
+            auto_release_eligible=auto_release_eligible,
+            auto_release_reason=auto_release_reason,
             status=SkillCandidateStatus.DRAFT,
             created_by=created_by,
             created_at=datetime.utcnow(),
@@ -254,6 +425,22 @@ class SkillLifecycleService:
         )
 
         self._db.add(candidate)
+        await self._db.commit()
+        await self._db.refresh(candidate)
+        return candidate
+
+    async def update_candidate_auto_release(
+        self,
+        *,
+        owner: str,
+        candidate_id: str,
+        eligible: bool,
+        reason: str | None = None,
+    ) -> SkillCandidate:
+        candidate = await self.get_candidate(owner=owner, candidate_id=candidate_id)
+        candidate.auto_release_eligible = eligible
+        candidate.auto_release_reason = reason
+        candidate.updated_at = datetime.utcnow()
         await self._db.commit()
         await self._db.refresh(candidate)
         return candidate
@@ -349,6 +536,23 @@ class SkillLifecycleService:
 
         return candidate, evaluation
 
+    async def get_latest_evaluation(
+        self,
+        *,
+        owner: str,
+        candidate_id: str,
+    ) -> SkillEvaluation | None:
+        result = await self._db.execute(
+            select(SkillEvaluation)
+            .where(
+                SkillEvaluation.owner == owner,
+                SkillEvaluation.candidate_id == candidate_id,
+            )
+            .order_by(SkillEvaluation.created_at.desc())
+            .limit(1)
+        )
+        return result.scalars().first()
+
     async def promote_candidate(
         self,
         *,
@@ -356,6 +560,9 @@ class SkillLifecycleService:
         candidate_id: str,
         stage: SkillReleaseStage = SkillReleaseStage.CANARY,
         promoted_by: str | None = None,
+        release_mode: SkillReleaseMode = SkillReleaseMode.MANUAL,
+        auto_promoted_from: str | None = None,
+        health_window_end_at: datetime | None = None,
     ) -> SkillRelease:
         candidate = await self.get_candidate(owner=owner, candidate_id=candidate_id)
 
@@ -374,7 +581,6 @@ class SkillLifecycleService:
         max_version = max_version_result.scalar()
         next_version = int(max_version or 0) + 1
 
-        # Deactivate existing active release for this skill key.
         active_result = await self._db.execute(
             select(SkillRelease).where(
                 SkillRelease.owner == owner,
@@ -393,12 +599,28 @@ class SkillLifecycleService:
             version=next_version,
             stage=stage,
             is_active=True,
+            release_mode=release_mode,
             promoted_by=promoted_by,
             promoted_at=datetime.utcnow(),
+            auto_promoted_from=auto_promoted_from,
+            health_window_end_at=health_window_end_at,
         )
         self._db.add(release)
 
-        candidate.status = SkillCandidateStatus.PROMOTED
+        if (
+            candidate.skill_type == SkillType.BROWSER
+            and release_mode == SkillReleaseMode.AUTO
+            and stage == SkillReleaseStage.CANARY
+        ):
+            candidate.status = SkillCandidateStatus.PROMOTED_CANARY
+        elif (
+            candidate.skill_type == SkillType.BROWSER
+            and release_mode == SkillReleaseMode.AUTO
+            and stage == SkillReleaseStage.STABLE
+        ):
+            candidate.status = SkillCandidateStatus.PROMOTED_STABLE
+        else:
+            candidate.status = SkillCandidateStatus.PROMOTED
         candidate.updated_at = datetime.utcnow()
         candidate.promotion_release_id = release.id
 
@@ -446,12 +668,47 @@ class SkillLifecycleService:
         )
         return list(result.scalars().all()), total
 
+    async def list_active_auto_canary_releases(self, *, limit: int = 200) -> list[SkillRelease]:
+        result = await self._db.execute(
+            select(SkillRelease)
+            .where(
+                SkillRelease.stage == SkillReleaseStage.CANARY,
+                SkillRelease.is_active.is_(True),
+                SkillRelease.release_mode == SkillReleaseMode.AUTO,
+            )
+            .order_by(SkillRelease.promoted_at.asc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def get_release(self, *, owner: str, release_id: str) -> SkillRelease:
+        return await self._get_release(owner=owner, release_id=release_id)
+
+    async def get_active_release(
+        self,
+        *,
+        owner: str,
+        skill_key: str,
+        stage: SkillReleaseStage | None = None,
+    ) -> SkillRelease | None:
+        query = select(SkillRelease).where(
+            SkillRelease.owner == owner,
+            SkillRelease.skill_key == skill_key,
+            SkillRelease.is_active.is_(True),
+        )
+        if stage is not None:
+            query = query.where(SkillRelease.stage == stage)
+        query = query.order_by(SkillRelease.version.desc()).limit(1)
+        result = await self._db.execute(query)
+        return result.scalars().first()
+
     async def rollback_release(
         self,
         *,
         owner: str,
         release_id: str,
         rolled_back_by: str | None = None,
+        release_mode: SkillReleaseMode = SkillReleaseMode.MANUAL,
     ) -> SkillRelease:
         current = await self._get_release(owner=owner, release_id=release_id)
 
@@ -498,9 +755,11 @@ class SkillLifecycleService:
             version=next_version,
             stage=previous.stage,
             is_active=True,
+            release_mode=release_mode,
             promoted_by=rolled_back_by,
             promoted_at=datetime.utcnow(),
             rollback_of=current.id,
+            auto_promoted_from=current.id if release_mode == SkillReleaseMode.AUTO else None,
         )
         self._db.add(rollback_release)
 
@@ -512,6 +771,167 @@ class SkillLifecycleService:
         await self._db.refresh(rollback_release)
         await self._db.refresh(current_candidate)
         return rollback_release
+
+    # ---------------------------------------------------------------------
+    # Release health
+    # ---------------------------------------------------------------------
+
+    async def get_release_health(
+        self,
+        *,
+        owner: str,
+        release_id: str,
+        success_drop_threshold: float = 0.03,
+        error_rate_multiplier_threshold: float = 2.0,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        release = await self._get_release(owner=owner, release_id=release_id)
+
+        now_dt = now or datetime.utcnow()
+        window_end = release.health_window_end_at or (release.promoted_at + timedelta(hours=24))
+        window_now = min(now_dt, window_end)
+        window_complete = now_dt >= window_end
+
+        observed = await self._compute_release_metrics(
+            owner=owner,
+            release_id=release.id,
+            start_at=release.promoted_at,
+            end_at=window_now,
+        )
+
+        baseline = await self._resolve_baseline_metrics(owner=owner, release=release)
+
+        success_drop = baseline["success_rate"] - observed["success_rate"]
+        if baseline["error_rate"] <= 0.0:
+            error_rate_multiplier = 1_000_000.0 if observed["error_rate"] > 0.0 else 1.0
+        else:
+            error_rate_multiplier = observed["error_rate"] / baseline["error_rate"]
+
+        rollback_reasons: list[str] = []
+        if observed["samples"] > 0:
+            if success_drop > success_drop_threshold:
+                rollback_reasons.append("success_rate_drop")
+            if error_rate_multiplier > error_rate_multiplier_threshold:
+                rollback_reasons.append("error_rate_regression")
+
+        healthy = len(rollback_reasons) == 0 and observed["samples"] > 0
+
+        return {
+            "release_id": release.id,
+            "skill_key": release.skill_key,
+            "stage": release.stage.value,
+            "window_start_at": release.promoted_at,
+            "window_end_at": window_end,
+            "window_complete": window_complete,
+            "samples": observed["samples"],
+            "success_rate": observed["success_rate"],
+            "error_rate": observed["error_rate"],
+            "p95_duration": observed["p95_duration"],
+            "baseline_success_rate": baseline["success_rate"],
+            "baseline_error_rate": baseline["error_rate"],
+            "baseline_samples": baseline["samples"],
+            "success_drop": success_drop,
+            "error_rate_multiplier": error_rate_multiplier,
+            "healthy": healthy,
+            "should_rollback": observed["samples"] > 0 and len(rollback_reasons) > 0,
+            "rollback_reasons": rollback_reasons,
+            "thresholds": {
+                "success_drop": success_drop_threshold,
+                "error_rate_multiplier": error_rate_multiplier_threshold,
+            },
+        }
+
+    async def _compute_release_metrics(
+        self,
+        *,
+        owner: str,
+        release_id: str,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> dict[str, Any]:
+        result = await self._db.execute(
+            select(ExecutionHistory).where(
+                ExecutionHistory.owner == owner,
+                ExecutionHistory.created_at >= start_at,
+                ExecutionHistory.created_at <= end_at,
+                ExecutionHistory.tags.ilike(f"%release:{release_id}%"),
+            )
+        )
+        items = list(result.scalars().all())
+        return self._aggregate_execution_metrics(items)
+
+    async def _resolve_baseline_metrics(
+        self,
+        *,
+        owner: str,
+        release: SkillRelease,
+    ) -> dict[str, Any]:
+        previous_result = await self._db.execute(
+            select(SkillRelease)
+            .where(
+                SkillRelease.owner == owner,
+                SkillRelease.skill_key == release.skill_key,
+                SkillRelease.version < release.version,
+            )
+            .order_by(SkillRelease.version.desc())
+            .limit(1)
+        )
+        previous = previous_result.scalars().first()
+        if previous is None:
+            return {"samples": 0, "success_rate": 1.0, "error_rate": 0.0, "p95_duration": 0}
+
+        metrics = await self._compute_release_metrics(
+            owner=owner,
+            release_id=previous.id,
+            start_at=previous.promoted_at,
+            end_at=release.promoted_at,
+        )
+        if metrics["samples"] > 0:
+            return metrics
+
+        latest_eval = await self.get_latest_evaluation(
+            owner=owner,
+            candidate_id=previous.candidate_id,
+        )
+        if latest_eval is None or latest_eval.report is None:
+            return {"samples": 0, "success_rate": 1.0, "error_rate": 0.0, "p95_duration": 0}
+
+        try:
+            report_data = json.loads(latest_eval.report)
+        except Exception:
+            return {"samples": 0, "success_rate": 1.0, "error_rate": 0.0, "p95_duration": 0}
+
+        success_rate = float(report_data.get("replay_success", 1.0))
+        error_rate = float(report_data.get("error_rate", max(0.0, 1.0 - success_rate)))
+        samples = int(report_data.get("samples", 0))
+        return {
+            "samples": max(0, samples),
+            "success_rate": min(max(success_rate, 0.0), 1.0),
+            "error_rate": min(max(error_rate, 0.0), 1.0),
+            "p95_duration": int(report_data.get("p95_duration", 0) or 0),
+        }
+
+    @staticmethod
+    def _aggregate_execution_metrics(items: list[ExecutionHistory]) -> dict[str, Any]:
+        samples = len(items)
+        if samples == 0:
+            return {"samples": 0, "success_rate": 0.0, "error_rate": 0.0, "p95_duration": 0}
+
+        success_count = sum(1 for item in items if item.success)
+        error_count = samples - success_count
+        success_rate = success_count / samples
+        error_rate = error_count / samples
+
+        durations = sorted(max(0, item.execution_time_ms) for item in items)
+        p95_index = max(0, math.ceil(0.95 * samples) - 1)
+        p95_duration = durations[p95_index]
+
+        return {
+            "samples": samples,
+            "success_rate": success_rate,
+            "error_rate": error_rate,
+            "p95_duration": p95_duration,
+        }
 
     # ---------------------------------------------------------------------
     # Internal helpers
