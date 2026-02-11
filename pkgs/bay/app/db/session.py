@@ -48,6 +48,52 @@ def _get_session_factory():
     return _async_session_factory
 
 
+def _sqlite_default_for_type(col) -> str:
+    """Determine a safe DEFAULT clause for an ALTER TABLE ADD COLUMN in SQLite.
+
+    SQLite requires a DEFAULT for NOT NULL columns added via ALTER TABLE.
+    This function derives a sensible default from the column's Python-side
+    default or its type.
+    """
+    from sqlalchemy import Boolean, DateTime, Float, Integer, String
+
+    # 1. Explicit server_default
+    if col.server_default is not None:
+        return f" DEFAULT {col.server_default.arg}"
+
+    # 2. Nullable columns can simply default to NULL
+    if col.nullable:
+        return " DEFAULT NULL"
+
+    # 3. NOT NULL column — derive default from Python-side default or type
+    if col.default is not None and col.default.arg is not None:
+        py_default = col.default.arg
+        # callable defaults (e.g. default_factory) can't be expressed in DDL;
+        # fall back to type-based defaults below.
+        if not callable(py_default):
+            if isinstance(py_default, bool):
+                return f" DEFAULT {1 if py_default else 0}"
+            if isinstance(py_default, (int, float)):
+                return f" DEFAULT {py_default}"
+            if isinstance(py_default, str):
+                escaped = py_default.replace("'", "''")
+                return f" DEFAULT '{escaped}'"
+
+    # 4. Type-based fallback for NOT NULL columns without usable defaults
+    col_type = type(col.type)
+    if issubclass(col_type, Boolean):
+        return " DEFAULT 0"
+    if issubclass(col_type, (Integer, Float)):
+        return " DEFAULT 0"
+    if issubclass(col_type, String):
+        return " DEFAULT ''"
+    if issubclass(col_type, DateTime):
+        return " DEFAULT '1970-01-01 00:00:00'"
+
+    # 5. Last resort — make it nullable in DDL to avoid crash
+    return " DEFAULT NULL"
+
+
 def _auto_migrate_sync(conn) -> None:
     """Auto-migrate existing tables to add missing columns.
 
@@ -75,12 +121,15 @@ def _auto_migrate_sync(conn) -> None:
 
             # Build column type DDL string
             col_type = col.type.compile(dialect=conn.dialect)
-            nullable = "NULL" if col.nullable else "NOT NULL"
-            default_clause = ""
-            if col.server_default is not None:
-                default_clause = f" DEFAULT {col.server_default.arg}"
-            elif col.nullable:
-                default_clause = " DEFAULT NULL"
+            default_clause = _sqlite_default_for_type(col)
+
+            # SQLite ALTER TABLE ADD COLUMN with NOT NULL requires a DEFAULT.
+            # If we have a default, keep NOT NULL; otherwise make it nullable
+            # in DDL to avoid SQLite errors.
+            if not col.nullable and default_clause.strip().upper().startswith("DEFAULT NULL"):
+                nullable = "NULL"
+            else:
+                nullable = "NULL" if col.nullable else "NOT NULL"
 
             ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col_type} {nullable}{default_clause}"
             logger.info(
