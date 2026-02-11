@@ -331,6 +331,50 @@ class TestBayClient:
             assert release.stage.value == "canary"
 
     @pytest.mark.asyncio
+    async def test_skill_payload_create_and_get(self, httpx_mock):
+        """Client skills manager should support generic payload create/get APIs."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/skills/payloads",
+            json={
+                "payload_ref": "blob:blob-1",
+                "kind": "candidate_payload",
+            },
+            status_code=201,
+        )
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/skills/payloads/blob:blob-1",
+            json={
+                "payload_ref": "blob:blob-1",
+                "kind": "candidate_payload",
+                "payload": {"commands": ["open about:blank"]},
+            },
+            status_code=200,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            created = await client.skills.create_payload(
+                payload={"commands": ["open about:blank"]},
+                kind="candidate_payload",
+            )
+            assert created.payload_ref == "blob:blob-1"
+            assert created.kind == "candidate_payload"
+
+            payload = await client.skills.get_payload("blob:blob-1")
+            assert payload.payload_ref == "blob:blob-1"
+            assert payload.kind == "candidate_payload"
+            assert payload.payload["commands"] == ["open about:blank"]
+
+        create_request = httpx_mock.get_requests()[0]
+        body = json.loads(create_request.content.decode("utf-8"))
+        assert body["kind"] == "candidate_payload"
+        assert body["payload"] == {"commands": ["open about:blank"]}
+
+    @pytest.mark.asyncio
     async def test_browser_exec(self, httpx_mock, mock_sandbox_response):
         """Browser exec should return BrowserExecResult."""
         httpx_mock.add_response(

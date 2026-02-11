@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from typing import TYPE_CHECKING
 
 from shipyard_neo.types import (
@@ -9,10 +11,13 @@ from shipyard_neo.types import (
     SkillCandidateList,
     SkillCandidateStatus,
     SkillEvaluationInfo,
+    SkillPayloadCreateInfo,
+    SkillPayloadInfo,
     SkillReleaseHealth,
     SkillReleaseInfo,
     SkillReleaseList,
     SkillReleaseStage,
+    _SkillPayloadCreateRequest,
 )
 
 if TYPE_CHECKING:
@@ -24,6 +29,26 @@ class SkillManager:
 
     def __init__(self, http: HTTPClient) -> None:
         self._http = http
+
+    async def create_payload(
+        self,
+        *,
+        payload: dict[str, Any] | list[Any],
+        kind: str = "generic",
+    ) -> SkillPayloadCreateInfo:
+        body = _SkillPayloadCreateRequest(
+            payload=cast(dict[str, Any] | list[Any], payload),
+            kind=kind,
+        ).model_dump(exclude_none=True)
+        response = await self._http.post(
+            "/v1/skills/payloads",
+            json=body,
+        )
+        return SkillPayloadCreateInfo.model_validate(response)
+
+    async def get_payload(self, payload_ref: str) -> SkillPayloadInfo:
+        response = await self._http.get(f"/v1/skills/payloads/{payload_ref}")
+        return SkillPayloadInfo.model_validate(response)
 
     async def create_candidate(
         self,
