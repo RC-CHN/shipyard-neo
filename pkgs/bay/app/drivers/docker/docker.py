@@ -78,6 +78,9 @@ class DockerDriver(Driver):
         self._publish_ports = docker_cfg.publish_ports
         self._host_port = docker_cfg.host_port
 
+        # Image pull policy: always | if_not_present | never
+        self._image_pull_policy = settings.driver.image_pull_policy
+
         self._log = logger.bind(driver="docker")
         self._client: aiodocker.Docker | None = None
 
@@ -86,6 +89,38 @@ class DockerDriver(Driver):
         if self._client is None:
             self._client = aiodocker.Docker(url=self._socket)
         return self._client
+
+    async def _ensure_image(self, image: str) -> None:
+        """Ensure the image is available locally according to the pull policy.
+
+        - always: Pull the image unconditionally before creating a container.
+        - if_not_present: Only pull if the image is not available locally.
+        - never: Do nothing; container creation will fail if image is missing.
+        """
+        if self._image_pull_policy == "never":
+            return
+
+        client = await self._get_client()
+
+        if self._image_pull_policy == "if_not_present":
+            # Check if image exists locally
+            try:
+                await client.images.inspect(image)
+                self._log.debug("docker.image.exists_locally", image=image)
+                return
+            except DockerError as e:
+                if e.status != 404:
+                    raise
+                self._log.info("docker.image.not_found_locally", image=image)
+
+        # Pull the image (always, or if_not_present when image is missing)
+        self._log.info("docker.image.pulling", image=image, policy=self._image_pull_policy)
+        try:
+            await client.images.pull(image)
+            self._log.info("docker.image.pulled", image=image)
+        except DockerError:
+            self._log.exception("docker.image.pull_failed", image=image)
+            raise
 
     async def close(self) -> None:
         """Close the docker client."""
@@ -170,6 +205,9 @@ class DockerDriver(Driver):
 
         runtime_port = primary.runtime_port
         image = primary.image
+
+        # Ensure image is available according to pull policy
+        await self._ensure_image(image)
 
         # Get GC instance_id for container labeling
         settings = get_settings()
@@ -757,6 +795,9 @@ class DockerDriver(Driver):
         results: list[MultiContainerInfo] = []
 
         for spec in containers_specs:
+            # Ensure image is available according to pull policy
+            await self._ensure_image(spec.image)
+
             config, container_name = self._build_container_config(
                 spec,
                 session=session,

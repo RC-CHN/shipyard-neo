@@ -21,6 +21,11 @@ database:
 
 driver:
   type: docker
+
+  # Pull latest images when creating new sandboxes.
+  # Production recommendation: "always" ensures you always get the latest image.
+  image_pull_policy: always
+
   docker:
     socket: "unix:///var/run/docker.sock"
 

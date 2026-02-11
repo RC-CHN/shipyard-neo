@@ -21,6 +21,11 @@ data:
 
     driver:
       type: k8s
+
+      # Pull latest images when creating new sandboxes.
+      # Production recommendation: "always" ensures you always get the latest image.
+      image_pull_policy: always
+
       k8s:
         namespace: "bay"
         kubeconfig: null  # in-cluster config（Pod 内自动获取）

@@ -90,6 +90,12 @@ class DriverConfig(BaseModel):
     docker: DockerConfig = Field(default_factory=DockerConfig)
     k8s: K8sConfig = Field(default_factory=K8sConfig)
 
+    # Image pull policy for runtime containers (applies to both Docker and K8s drivers).
+    # - "always": Always pull the image before creating a container (ensures latest).
+    # - "if_not_present": Only pull if the image is not available locally (default).
+    # - "never": Never pull; fail if the image is not available locally.
+    image_pull_policy: Literal["always", "if_not_present", "never"] = "if_not_present"
+
 
 class ResourceSpec(BaseModel):
     """Container resource specification."""

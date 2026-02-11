@@ -17,6 +17,12 @@ database:
 driver:
   type: docker  # docker | k8s
 
+  # Image pull policy for runtime containers (applies to both docker and k8s drivers).
+  # - always: Always pull the image before creating a container (ensures latest).
+  # - if_not_present: Only pull if the image is not available locally (default).
+  # - never: Never pull; fail if the image is not available locally.
+  image_pull_policy: if_not_present
+
   docker:
     socket: "unix:///var/run/docker.sock"
 

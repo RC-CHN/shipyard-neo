@@ -90,6 +90,9 @@ class K8sDriver(Driver):
         self._pod_startup_timeout = k8s_cfg.pod_startup_timeout
         self._label_prefix = k8s_cfg.label_prefix
 
+        # Image pull policy: always | if_not_present | never → K8s values
+        self._image_pull_policy = settings.driver.image_pull_policy
+
         self._log = logger.bind(driver="k8s")
         self._api_client: ApiClient | None = None
         self._config_loaded = False
@@ -97,6 +100,16 @@ class K8sDriver(Driver):
     def _label(self, key: str) -> str:
         """Build label key with prefix (e.g., 'bay.session_id')."""
         return f"{self._label_prefix}.{key}"
+
+    @property
+    def _k8s_pull_policy(self) -> str:
+        """Map config image_pull_policy to K8s imagePullPolicy value."""
+        mapping = {
+            "always": "Always",
+            "if_not_present": "IfNotPresent",
+            "never": "Never",
+        }
+        return mapping.get(self._image_pull_policy, "IfNotPresent")
 
     async def _ensure_config(self) -> None:
         """Load Kubernetes configuration once."""
@@ -209,7 +222,7 @@ class K8sDriver(Driver):
         container = client.V1Container(
             name="ship",
             image=profile.image,
-            image_pull_policy="IfNotPresent",  # Use local image; required for kind/docker-desktop
+            image_pull_policy=self._k8s_pull_policy,
             ports=[client.V1ContainerPort(container_port=runtime_port)],
             env=env,
             volume_mounts=[
@@ -696,7 +709,7 @@ class K8sDriver(Driver):
         return client.V1Container(
             name=spec.name,
             image=spec.image,
-            image_pull_policy="IfNotPresent",
+            image_pull_policy=self._k8s_pull_policy,
             ports=[client.V1ContainerPort(container_port=spec.runtime_port)],
             env=env,
             volume_mounts=[
