@@ -45,6 +45,26 @@ def _exec_ok(base_url: str, cmd: str, timeout: int = 30) -> dict:
     return data
 
 
+def _exec_batch(
+    base_url: str,
+    commands: list[str],
+    timeout: int = 60,
+    stop_on_error: bool = True,
+) -> dict:
+    """Helper: POST /exec_batch and return response JSON."""
+    resp = httpx.post(
+        f"{base_url}/exec_batch",
+        json={
+            "commands": commands,
+            "timeout": timeout,
+            "stop_on_error": stop_on_error,
+        },
+        timeout=float(timeout + 10),
+    )
+    assert resp.status_code == 200, f"HTTP {resp.status_code}: {resp.text}"
+    return resp.json()
+
+
 # ---------------------------------------------------------------------------
 # Health & Meta
 # ---------------------------------------------------------------------------
@@ -127,6 +147,47 @@ class TestExecValidation:
         """agent-browser --version should return quickly."""
         data = _exec_ok(gull_container, "--version", timeout=10)
         assert "agent-browser" in data["stdout"]
+
+
+class TestBatchExec:
+    """POST /exec_batch behavior and contract."""
+
+    def test_exec_batch_validation_requires_commands(self, gull_container: str):
+        resp = httpx.post(
+            f"{gull_container}/exec_batch",
+            json={"timeout": 10, "stop_on_error": True},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        assert resp.status_code == 422
+
+    def test_exec_batch_stop_on_error_true_stops_after_failure(self, gull_container: str):
+        data = _exec_batch(
+            gull_container,
+            commands=["open about:blank", "nonexistent-subcommand", "get title"],
+            timeout=60,
+            stop_on_error=True,
+        )
+
+        assert data["total_steps"] == 3
+        assert data["completed_steps"] == 2
+        assert data["success"] is False
+        assert len(data["results"]) == 2
+        assert data["results"][-1]["cmd"] == "nonexistent-subcommand"
+        assert data["results"][-1]["exit_code"] != 0
+
+    def test_exec_batch_stop_on_error_false_continues_after_failure(self, gull_container: str):
+        data = _exec_batch(
+            gull_container,
+            commands=["open about:blank", "nonexistent-subcommand", "get title"],
+            timeout=60,
+            stop_on_error=False,
+        )
+
+        assert data["total_steps"] == 3
+        assert data["completed_steps"] == 3
+        assert data["success"] is False
+        assert len(data["results"]) == 3
+        assert any(step["exit_code"] != 0 for step in data["results"])
 
 
 # ---------------------------------------------------------------------------

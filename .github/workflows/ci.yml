@@ -118,3 +118,111 @@ jobs:
 
       - name: Unit tests
         run: uv run pytest tests -v --tb=short
+
+  # ── Browser contract smoke (integration/e2e) ─────────────────────────────
+  test-browser-contract:
+    name: "Browser Contract Smoke"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pkgs/gull/uv.lock
+            pkgs/bay/uv.lock
+
+      - name: Install Gull dependencies
+        working-directory: pkgs/gull
+        run: uv sync --frozen
+
+      - name: Install Bay dependencies
+        working-directory: pkgs/bay
+        run: uv sync --frozen
+
+      - name: Build local runtime images for browser e2e
+        run: |
+          docker build -t ship:latest pkgs/ship
+          docker build -t gull:latest pkgs/gull
+
+      - name: Run Gull integration contract tests
+        working-directory: pkgs/gull
+        run: uv run pytest tests/integration/test_gull_api.py -v --tb=short
+
+      - name: Prepare Bay e2e config
+        run: |
+          cat > /tmp/bay-e2e-config.yaml <<'YAML'
+          server:
+            host: "127.0.0.1"
+            port: 8001
+
+          security:
+            allow_anonymous: true
+
+          driver:
+            type: docker
+            docker:
+              connect_mode: host_port
+              host_address: "127.0.0.1"
+              publish_ports: true
+
+          profiles:
+            - id: python-default
+              image: ship:latest
+              runtime_type: ship
+              runtime_port: 8123
+              capabilities: [filesystem, shell, python]
+              idle_timeout: 1800
+
+            - id: browser-python
+              containers:
+                - name: ship
+                  image: ship:latest
+                  runtime_type: ship
+                  runtime_port: 8123
+                  capabilities: [python, shell, filesystem]
+                  primary_for: [filesystem, python, shell]
+                - name: browser
+                  image: gull:latest
+                  runtime_type: gull
+                  runtime_port: 8080
+                  capabilities: [browser]
+                  primary_for: [browser]
+              idle_timeout: 1800
+          YAML
+
+      - name: Start Bay API for e2e
+        working-directory: pkgs/bay
+        run: |
+          BAY_CONFIG_FILE=/tmp/bay-e2e-config.yaml \
+          uv run uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8001 > /tmp/bay-e2e.log 2>&1 &
+          echo $! > /tmp/bay-e2e.pid
+
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8001/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "Bay failed to start within 60s"
+          cat /tmp/bay-e2e.log || true
+          exit 1
+
+      - name: Run Bay browser batch contract e2e
+        working-directory: pkgs/bay
+        env:
+          E2E_BAY_PORT: "8001"
+        run: uv run pytest tests/integration/core/test_browser_exec_batch_contract_e2e.py -v --tb=short
+
+      - name: Dump Bay logs on failure
+        if: failure()
+        run: cat /tmp/bay-e2e.log || true
+
+      - name: Stop Bay API
+        if: always()
+        run: |
+          if [ -f /tmp/bay-e2e.pid ]; then
+            kill $(cat /tmp/bay-e2e.pid) || true
+          fi
