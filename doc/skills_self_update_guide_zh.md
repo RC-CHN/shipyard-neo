@@ -44,6 +44,8 @@ Shipyard Neo 提供的是 **self-update 基建**，而不是固定训练框架�
 
 ### 3.2 Skill Lifecycle
 
+- `POST /v1/skills/payloads`（推荐：先创建通用 payload，获取 `payload_ref`）
+- `GET /v1/skills/payloads/{payload_ref}`
 - `POST /v1/skills/candidates`
 - `GET /v1/skills/candidates`
 - `GET /v1/skills/candidates/{candidate_id}`
@@ -58,7 +60,7 @@ Shipyard Neo 提供的是 **self-update 基建**，而不是固定训练框架�
 - `POST /v1/sandboxes/{sandbox_id}/browser/exec`
 - `POST /v1/sandboxes/{sandbox_id}/browser/exec_batch`
 - `POST /v1/sandboxes/{sandbox_id}/browser/skills/{skill_key}/run`
-- `GET /v1/sandboxes/{sandbox_id}/browser/traces/{trace_ref}`
+- `GET /v1/sandboxes/{sandbox_id}/browser/traces/{trace_ref}`（兼容入口；推荐优先使用 `GET /v1/skills/payloads/{payload_ref}`）
 
 ## 4. Python SDK 示例
 
@@ -75,6 +77,10 @@ async with BayClient(endpoint_url="http://localhost:8000", access_token="token")
         skill_key="etl-loader",
         source_execution_ids=[r1.execution_id, r2.execution_id],
         scenario_key="csv-import",
+        payload_ref=(await client.skills.create_payload(
+            payload={"commands": ["open about:blank"]},
+            kind="candidate_payload",
+        )).payload_ref,
     )
 
     await client.skills.evaluate_candidate(
@@ -100,6 +106,8 @@ async with BayClient(endpoint_url="http://localhost:8000", access_token="token")
 
 - `get_execution_history`
 - `annotate_execution`
+- `create_skill_payload`
+- `get_skill_payload`
 - `create_skill_candidate`
 - `evaluate_skill_candidate`
 - `promote_skill_candidate`

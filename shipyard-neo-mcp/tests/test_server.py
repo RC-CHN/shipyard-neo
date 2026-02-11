@@ -238,6 +238,22 @@ class FakeSkills:
     def __init__(self) -> None:
         self.last_promote_stage: str | None = None
 
+    async def create_payload(
+        self,
+        *,
+        payload: dict | list,
+        kind: str = "generic",
+    ):
+        _ = payload
+        return SimpleNamespace(payload_ref="blob:blob-1", kind=kind)
+
+    async def get_payload(self, payload_ref: str):
+        return SimpleNamespace(
+            payload_ref=payload_ref,
+            kind="candidate_payload",
+            payload={"commands": ["open about:blank"]},
+        )
+
     async def create_candidate(
         self,
         *,
@@ -371,6 +387,8 @@ async def test_list_tools_contains_history_and_skill_tools():
 
     assert "get_execution_history" in names
     assert "annotate_execution" in names
+    assert "create_skill_payload" in names
+    assert "get_skill_payload" in names
     assert "create_skill_candidate" in names
     assert "promote_skill_candidate" in names
     assert "rollback_skill_release" in names
@@ -465,6 +483,35 @@ async def test_create_skill_candidate_tool_calls_sdk_manager():
     assert "Created skill candidate sc-1" in text
     assert "status: draft" in text
     assert "source_execution_ids: exec-1, exec-2" in text
+
+
+@pytest.mark.asyncio
+async def test_create_skill_payload_tool_calls_sdk_manager():
+    skills = FakeSkills()
+    mcp_server._client = FakeClient(skills=skills)
+
+    response = await mcp_server.call_tool(
+        "create_skill_payload",
+        {"payload": {"commands": ["open about:blank"]}, "kind": "candidate_payload"},
+    )
+    text = response[0].text
+    assert "Created skill payload blob:blob-1" in text
+    assert "kind: candidate_payload" in text
+
+
+@pytest.mark.asyncio
+async def test_get_skill_payload_tool_formats_payload():
+    skills = FakeSkills()
+    mcp_server._client = FakeClient(skills=skills)
+
+    response = await mcp_server.call_tool(
+        "get_skill_payload",
+        {"payload_ref": "blob:blob-1"},
+    )
+    text = response[0].text
+    assert "payload_ref: blob:blob-1" in text
+    assert "kind: candidate_payload" in text
+    assert '"commands": ["open about:blank"]' in text
 
 
 @pytest.mark.asyncio

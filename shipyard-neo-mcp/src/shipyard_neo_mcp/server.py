@@ -570,6 +570,38 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="create_skill_payload",
+            description="Create a generic skill payload and return a stable payload_ref.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "payload": {
+                        "anyOf": [{"type": "object"}, {"type": "array"}],
+                        "description": "JSON object/array payload content.",
+                    },
+                    "kind": {
+                        "type": "string",
+                        "description": "Optional payload kind. Defaults to generic.",
+                    },
+                },
+                "required": ["payload"],
+            },
+        ),
+        Tool(
+            name="get_skill_payload",
+            description="Get one skill payload by payload_ref.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "payload_ref": {
+                        "type": "string",
+                        "description": "Payload reference (e.g., blob:blob-xxx).",
+                    },
+                },
+                "required": ["payload_ref"],
+            },
+        ),
+        Tool(
             name="create_skill_candidate",
             description="Create a reusable skill candidate from execution IDs.",
             inputSchema={
@@ -1251,6 +1283,39 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                         f"skill_key: {candidate.skill_key}\n"
                         f"status: {candidate.status.value}\n"
                         f"source_execution_ids: {', '.join(candidate.source_execution_ids)}"
+                    ),
+                )
+            ]
+
+        elif name == "create_skill_payload":
+            payload = arguments.get("payload")
+            if not isinstance(payload, (dict, list)):
+                raise ValueError("field 'payload' must be a JSON object or array")
+            kind = _optional_str(arguments, "kind") or "generic"
+            async with asyncio.timeout(_SDK_CALL_TIMEOUT):
+                result = await _client.skills.create_payload(payload=payload, kind=kind)
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"Created skill payload {result.payload_ref}\n"
+                        f"kind: {result.kind}"
+                    ),
+                )
+            ]
+
+        elif name == "get_skill_payload":
+            payload_ref = _require_str(arguments, "payload_ref")
+            async with asyncio.timeout(_SDK_CALL_TIMEOUT):
+                result = await _client.skills.get_payload(payload_ref)
+            payload_json = json.dumps(result.payload, ensure_ascii=False, default=str)
+            return [
+                TextContent(
+                    type="text",
+                    text=(
+                        f"payload_ref: {result.payload_ref}\n"
+                        f"kind: {result.kind}\n"
+                        f"payload:\n{_truncate_text(payload_json)}"
                     ),
                 )
             ]

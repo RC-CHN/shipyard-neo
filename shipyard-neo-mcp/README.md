@@ -21,6 +21,8 @@ Shipyard Neo 的 MCP (Model Context Protocol) 接入层。
 | `get_execution` | 获取单条执行记录 |
 | `get_last_execution` | 获取最近执行记录 |
 | `annotate_execution` | 更新执行记录注释 |
+| `create_skill_payload` | 创建通用技能 payload，返回 `payload_ref` |
+| `get_skill_payload` | 通过 `payload_ref` 读取技能 payload |
 | `create_skill_candidate` | 创建技能候选 |
 | `evaluate_skill_candidate` | 记录候选评测结果 |
 | `promote_skill_candidate` | 发布候选为版本 |
@@ -113,10 +115,11 @@ pip install -e .
 
 1. 用 `execute_python` / `execute_shell` 执行任务，拿到 `execution_id`
 2. 用 `annotate_execution` 标注 `description/tags/notes`
-3. 用 `create_skill_candidate` 绑定一组 `source_execution_ids`
-4. 用 `evaluate_skill_candidate` 记录评测结果
-5. 用 `promote_skill_candidate` 发布版本（canary/stable）
-6. 异常时用 `rollback_skill_release` 回滚
+3. 可选：用 `create_skill_payload` 存储候选 payload，拿到 `payload_ref`
+4. 用 `create_skill_candidate` 绑定 `source_execution_ids`（可附带 `payload_ref`）
+5. 用 `evaluate_skill_candidate` 记录评测结果
+6. 用 `promote_skill_candidate` 发布版本（canary/stable）
+7. 异常时用 `rollback_skill_release` 回滚
 
 ## 运行时防护（Guardrails）
 
@@ -200,6 +203,15 @@ pip install -e .
 - `include_code` (可选)
 - `description` (可选)
 - `tags` (可选)
+
+### `create_skill_payload`
+
+- `payload` (必填，JSON object/array)
+- `kind` (可选，默认 `generic`)
+
+### `get_skill_payload`
+
+- `payload_ref` (必填，示例：`blob:blob-xxx`)
 
 ### `get_execution_history`
 
