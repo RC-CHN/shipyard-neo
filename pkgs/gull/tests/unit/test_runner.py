@@ -182,11 +182,81 @@ async def test_exec_batch_uses_remaining_budget_without_forced_minimum(
     assert 0 < captured_timeouts[0] <= 0.3 + 1e-9
     assert captured_timeouts[0] < 1.0
 
-
 @pytest.mark.asyncio
-async def test_health_unhealthy_when_agent_browser_missing(
+async def test_exec_batch_stop_on_error_true_stops_at_first_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    executed: list[str] = []
+
+    async def fake_run(cmd: str, **_kwargs):
+        executed.append(cmd)
+        if cmd == "snapshot -i":
+            return "", "step failed", 2
+        return "ok", "", 0
+
+    tick = {"value": 0.0}
+
+    def fake_perf_counter() -> float:
+        tick["value"] += 0.01
+        return tick["value"]
+
+    monkeypatch.setattr(gull_main.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    response = await gull_main.exec_batch(
+        gull_main.BatchExecRequest(
+            commands=["open https://example.com", "snapshot -i", "get title"],
+            timeout=30,
+            stop_on_error=True,
+        )
+    )
+
+    assert executed == ["open https://example.com", "snapshot -i"]
+    assert response.total_steps == 3
+    assert response.completed_steps == 2
+    assert response.success is False
+    assert response.results[-1].cmd == "snapshot -i"
+    assert response.results[-1].exit_code == 2
+
+
+@pytest.mark.asyncio
+async def test_exec_batch_stop_on_error_false_continues_but_stays_unsuccessful(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    executed: list[str] = []
+
+    async def fake_run(cmd: str, **_kwargs):
+        executed.append(cmd)
+        if cmd == "snapshot -i":
+            return "", "step failed", 1
+        return "ok", "", 0
+
+    tick = {"value": 0.0}
+
+    def fake_perf_counter() -> float:
+        tick["value"] += 0.01
+        return tick["value"]
+
+    monkeypatch.setattr(gull_main.time, "perf_counter", fake_perf_counter)
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    response = await gull_main.exec_batch(
+        gull_main.BatchExecRequest(
+            commands=["open https://example.com", "snapshot -i", "get title"],
+            timeout=30,
+            stop_on_error=False,
+        )
+    )
+
+    assert executed == ["open https://example.com", "snapshot -i", "get title"]
+    assert response.total_steps == 3
+    assert response.completed_steps == 3
+    assert response.success is False
+    assert any(step.exit_code != 0 for step in response.results)
+
+
+@pytest.mark.asyncio
+async def test_health_unhealthy_when_agent_browser_missing(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(gull_main.shutil, "which", lambda _name: None)
 
     response = await gull_main.health()
@@ -210,6 +280,23 @@ async def test_health_healthy_when_probe_succeeds(monkeypatch: pytest.MonkeyPatc
 
     assert response.status == "healthy"
     assert response.browser_active is True
+
+
+@pytest.mark.asyncio
+async def test_health_healthy_when_probe_succeeds_without_active_session(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(gull_main.shutil, "which", lambda _name: "/usr/bin/agent-browser")
+
+    async def fake_run(_cmd: str, **_kwargs):
+        return "other-session", "", 0
+
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    response = await gull_main.health()
+
+    assert response.status == "healthy"
+    assert response.browser_active is False
 
 
 @pytest.mark.asyncio
