@@ -748,6 +748,27 @@ class TestBrowserSkillExtensions:
         assert isinstance(payload, dict)
         assert payload["steps"][0]["cmd"] == "open https://example.com"
 
+    async def test_get_payload_with_blob_by_ref_returns_blob_kind_and_payload(
+        self,
+        skill_service: SkillLifecycleService,
+    ):
+        blob = await skill_service.create_artifact_blob(
+            owner="default",
+            kind="candidate_payload",
+            payload={"commands": ["open about:blank"]},
+        )
+        payload_ref = skill_service.make_blob_ref(blob.id)
+
+        resolved_blob, payload = await skill_service.get_payload_with_blob_by_ref(
+            owner="default",
+            payload_ref=payload_ref,
+        )
+
+        assert resolved_blob.id == blob.id
+        assert resolved_blob.kind == "candidate_payload"
+        assert isinstance(payload, dict)
+        assert payload["commands"] == ["open about:blank"]
+
     async def test_payload_ref_validation_and_json_decode_error(
         self,
         skill_service: SkillLifecycleService,

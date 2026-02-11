@@ -95,6 +95,15 @@ async def test_browser_exec_trace_and_history_round_trip():
             assert trace["kind"] == "browser_exec_trace"
             assert trace["steps"][0]["cmd"] == "open about:blank"
 
+            payload_resp = await client.get(
+                f"/v1/skills/payloads/{exec_data['trace_ref']}",
+                timeout=30.0,
+            )
+            assert payload_resp.status_code == 200, payload_resp.text
+            payload_data = payload_resp.json()
+            assert payload_data["payload_ref"] == exec_data["trace_ref"]
+            assert payload_data["payload"] == trace
+
 
 async def test_browser_exec_learn_only_stores_payload_ref_without_returning_trace_ref():
     _require_browser_runtime()
@@ -304,3 +313,70 @@ async def test_browser_run_skill_with_invalid_payload_ref_returns_bad_request():
             )
             assert run_resp.status_code == 400
             assert "Unsupported payload_ref" in run_resp.text
+
+
+async def test_browser_run_skill_works_with_payload_created_by_generic_payload_api():
+    """Generic skills payload API should integrate with candidate -> release -> run flow."""
+    _require_browser_runtime()
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        browser_profile = await _resolve_browser_profile(client)
+        async with create_sandbox(client, profile=browser_profile) as sandbox:
+            sandbox_id = sandbox["id"]
+
+            payload_resp = await client.post(
+                "/v1/skills/payloads",
+                json={
+                    "kind": "candidate_payload",
+                    "payload": {"commands": ["open about:blank"]},
+                },
+                timeout=60.0,
+            )
+            assert payload_resp.status_code == 201, payload_resp.text
+            payload_ref = payload_resp.json()["payload_ref"]
+            assert payload_ref.startswith("blob:")
+
+            source_exec_resp = await client.post(
+                f"/v1/sandboxes/{sandbox_id}/browser/exec",
+                json={"cmd": "open about:blank", "timeout": 60},
+                timeout=120.0,
+            )
+            assert source_exec_resp.status_code == 200, source_exec_resp.text
+            source_execution_id = source_exec_resp.json()["execution_id"]
+
+            candidate_resp = await client.post(
+                "/v1/skills/candidates",
+                json={
+                    "skill_key": "browser-generic-payload",
+                    "source_execution_ids": [source_execution_id],
+                    "payload_ref": payload_ref,
+                },
+                timeout=60.0,
+            )
+            assert candidate_resp.status_code == 201, candidate_resp.text
+            candidate_id = candidate_resp.json()["id"]
+
+            evaluate_resp = await client.post(
+                f"/v1/skills/candidates/{candidate_id}/evaluate",
+                json={"passed": True, "score": 0.91},
+                timeout=60.0,
+            )
+            assert evaluate_resp.status_code == 200, evaluate_resp.text
+
+            promote_resp = await client.post(
+                f"/v1/skills/candidates/{candidate_id}/promote",
+                json={"stage": "canary"},
+                timeout=60.0,
+            )
+            assert promote_resp.status_code == 200, promote_resp.text
+
+            run_resp = await client.post(
+                f"/v1/sandboxes/{sandbox_id}/browser/skills/browser-generic-payload/run",
+                json={"timeout": 60, "stop_on_error": True, "include_trace": False},
+                timeout=120.0,
+            )
+            assert run_resp.status_code == 200, run_resp.text
+            run_data = run_resp.json()
+            assert run_data["execution_id"].startswith("exec-")
+            assert run_data["total_steps"] == 1
+            assert run_data["completed_steps"] == 1
+            assert run_data["results"][0]["cmd"] == "open about:blank"

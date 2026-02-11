@@ -126,6 +126,30 @@ class SkillLifecycleService:
             raise NotFoundError(f"Artifact blob not found: {blob_id}")
         return blob
 
+    async def get_artifact_blob_by_ref(
+        self,
+        *,
+        owner: str,
+        payload_ref: str,
+    ) -> ArtifactBlob:
+        blob_id = self._parse_blob_ref(payload_ref)
+        return await self.get_artifact_blob(owner=owner, blob_id=blob_id)
+
+    async def get_payload_with_blob_by_ref(
+        self,
+        *,
+        owner: str,
+        payload_ref: str,
+    ) -> tuple[ArtifactBlob, dict[str, Any] | list[Any]]:
+        blob = await self.get_artifact_blob_by_ref(owner=owner, payload_ref=payload_ref)
+        try:
+            payload = json.loads(blob.payload_json)
+        except json.JSONDecodeError as exc:
+            raise ValidationError(f"Invalid payload JSON in blob: {blob.id}") from exc
+        if not isinstance(payload, (dict, list)):
+            raise ValidationError(f"Unsupported payload type in blob: {blob.id}")
+        return blob, payload
+
     async def get_payload_by_ref(
         self,
         *,
@@ -134,12 +158,11 @@ class SkillLifecycleService:
     ) -> dict[str, Any] | list[Any] | None:
         if payload_ref is None:
             return None
-        blob_id = self._parse_blob_ref(payload_ref)
-        blob = await self.get_artifact_blob(owner=owner, blob_id=blob_id)
-        try:
-            return json.loads(blob.payload_json)
-        except json.JSONDecodeError as exc:
-            raise ValidationError(f"Invalid payload JSON in blob: {blob_id}") from exc
+        _blob, payload = await self.get_payload_with_blob_by_ref(
+            owner=owner,
+            payload_ref=payload_ref,
+        )
+        return payload
 
     # ---------------------------------------------------------------------
     # Execution history

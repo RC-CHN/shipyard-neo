@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.dependencies import AuthDep, SkillLifecycleServiceDep
 from app.errors import ValidationError
@@ -127,6 +128,28 @@ class SkillReleaseListResponse(BaseModel):
     total: int
 
 
+class SkillPayloadCreateRequest(BaseModel):
+    """Create payload request."""
+
+    payload: dict[str, Any] | list[Any]
+    kind: str = Field(default="generic", min_length=1)
+
+
+class SkillPayloadCreateResponse(BaseModel):
+    """Create payload response."""
+
+    payload_ref: str
+    kind: str
+
+
+class SkillPayloadResponse(BaseModel):
+    """Payload lookup response."""
+
+    payload_ref: str
+    kind: str
+    payload: dict[str, Any] | list[Any]
+
+
 def _candidate_to_response(candidate) -> SkillCandidateResponse:
     source_execution_ids = [item for item in candidate.source_execution_ids.split(",") if item]
     return SkillCandidateResponse(
@@ -176,6 +199,40 @@ def _release_to_response(release) -> SkillReleaseResponse:
         rollback_of=release.rollback_of,
         auto_promoted_from=release.auto_promoted_from,
         health_window_end_at=release.health_window_end_at,
+    )
+
+
+@router.post("/payloads", response_model=SkillPayloadCreateResponse, status_code=201)
+async def create_payload(
+    request: SkillPayloadCreateRequest,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillPayloadCreateResponse:
+    blob = await skill_svc.create_artifact_blob(
+        owner=owner,
+        kind=request.kind,
+        payload=request.payload,
+    )
+    return SkillPayloadCreateResponse(
+        payload_ref=skill_svc.make_blob_ref(blob.id),
+        kind=blob.kind,
+    )
+
+
+@router.get("/payloads/{payload_ref:path}", response_model=SkillPayloadResponse)
+async def get_payload(
+    payload_ref: str,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillPayloadResponse:
+    blob, payload = await skill_svc.get_payload_with_blob_by_ref(
+        owner=owner,
+        payload_ref=payload_ref,
+    )
+    return SkillPayloadResponse(
+        payload_ref=payload_ref,
+        kind=blob.kind,
+        payload=payload,
     )
 
 

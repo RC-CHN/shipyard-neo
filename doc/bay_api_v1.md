@@ -761,7 +761,61 @@ Release（发布版本）
 Release（回滚版本）
 ```
 
-### 5.1 创建候选
+### 5.1 通用 Payload（新增）
+
+Skills 域提供通用 payload 读写能力，推荐用于 candidate payload 与其他可复用工件内容存储。  
+写入后返回 `blob:` 引用（`payload_ref`），后续通过该引用读取。
+
+#### 5.1.1 创建 payload
+
+```
+POST /v1/skills/payloads
+```
+
+**请求体**:
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `payload` | object \| array | *必填* | JSON 负载内容（仅支持 object/array） |
+| `kind` | string | `"generic"` | 负载类型标记 |
+
+**响应** `201`:
+
+```json
+{
+  "payload_ref": "blob:blob_abc123",
+  "kind": "candidate_payload"
+}
+```
+
+#### 5.1.2 读取 payload
+
+```
+GET /v1/skills/payloads/{payload_ref}
+```
+
+**响应** `200`:
+
+```json
+{
+  "payload_ref": "blob:blob_abc123",
+  "kind": "candidate_payload",
+  "payload": {
+    "commands": ["open about:blank"]
+  }
+}
+```
+
+**错误语义**:
+
+| 场景 | 状态码 | 说明 |
+|------|--------|------|
+| `payload_ref` 非 `blob:` 格式 | `400 validation_error` | 不支持的引用类型 |
+| `blob:` 引用不存在或不可见 | `404 not_found` | 资源未找到 |
+
+> 兼容说明：`GET /v1/sandboxes/{sandbox_id}/browser/traces/{trace_ref}` 仍保留，响应结构保持不变；其内部读取逻辑与通用 payload 存储一致。
+
+### 5.2 创建候选
 
 ```
 POST /v1/skills/candidates
@@ -806,7 +860,7 @@ POST /v1/skills/candidates
 | `rejected` | 已拒绝 |
 | `rolled_back` | 已回滚 |
 
-### 5.2 列出候选
+### 5.3 列出候选
 
 ```
 GET /v1/skills/candidates
@@ -830,7 +884,7 @@ GET /v1/skills/candidates
 }
 ```
 
-### 5.3 获取候选详情
+### 5.4 获取候选详情
 
 ```
 GET /v1/skills/candidates/{candidate_id}
@@ -838,7 +892,7 @@ GET /v1/skills/candidates/{candidate_id}
 
 **响应** `200`: [`SkillCandidateResponse`](pkgs/bay/app/api/v1/skills.py:26)
 
-### 5.4 评估候选
+### 5.5 评估候选
 
 ```
 POST /v1/skills/candidates/{candidate_id}/evaluate
@@ -868,7 +922,7 @@ POST /v1/skills/candidates/{candidate_id}/evaluate
 }
 ```
 
-### 5.5 晋升候选
+### 5.6 晋升候选
 
 ```
 POST /v1/skills/candidates/{candidate_id}/promote
@@ -898,7 +952,7 @@ POST /v1/skills/candidates/{candidate_id}/promote
 }
 ```
 
-### 5.6 列出发布版本
+### 5.7 列出发布版本
 
 ```
 GET /v1/skills/releases
@@ -923,7 +977,7 @@ GET /v1/skills/releases
 }
 ```
 
-### 5.7 回滚发布
+### 5.8 回滚发布
 
 ```
 POST /v1/skills/releases/{release_id}/rollback

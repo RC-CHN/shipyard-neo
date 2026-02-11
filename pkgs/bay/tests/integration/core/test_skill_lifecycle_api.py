@@ -7,6 +7,8 @@ Parallel-safe: Yes - each test creates/deletes its own sandbox.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx
 
 from ..conftest import AUTH_HEADERS, BAY_BASE_URL, create_sandbox, e2e_skipif_marks
@@ -259,3 +261,44 @@ async def test_release_health_endpoint_returns_policy_metrics():
             assert "error_rate" in data
             assert "p95_duration" in data
             assert "should_rollback" in data
+
+
+async def test_skill_payload_create_and_get_round_trip():
+    """Skills payload API should create and read payloads via blob references."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        create_resp = await client.post(
+            "/v1/skills/payloads",
+            json={
+                "kind": "candidate_payload",
+                "payload": {"commands": ["open about:blank", "snapshot -i"]},
+            },
+            timeout=30.0,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        create_data = create_resp.json()
+        assert create_data["payload_ref"].startswith("blob:")
+        assert create_data["kind"] == "candidate_payload"
+
+        payload_ref = create_data["payload_ref"]
+        get_resp = await client.get(f"/v1/skills/payloads/{payload_ref}", timeout=30.0)
+        assert get_resp.status_code == 200, get_resp.text
+        get_data = get_resp.json()
+        assert get_data["payload_ref"] == payload_ref
+        assert get_data["kind"] == "candidate_payload"
+        assert get_data["payload"] == {"commands": ["open about:blank", "snapshot -i"]}
+
+
+async def test_skill_payload_get_rejects_non_blob_reference():
+    """Skills payload read API should reject non-blob references."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        bad_ref = quote("s3://candidate/payload-1", safe="")
+        resp = await client.get(f"/v1/skills/payloads/{bad_ref}", timeout=30.0)
+        assert resp.status_code == 400
+        assert "Unsupported payload_ref" in resp.text
+
+
+async def test_skill_payload_get_returns_not_found_for_unknown_blob():
+    """Skills payload read API should return not found for missing blob refs."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        resp = await client.get("/v1/skills/payloads/blob:missing-payload", timeout=30.0)
+        assert resp.status_code == 404

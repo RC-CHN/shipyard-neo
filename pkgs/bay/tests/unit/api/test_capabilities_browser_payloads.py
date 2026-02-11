@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from app.api.v1.capabilities import (
     _build_browser_batch_trace_payload,
     _build_browser_exec_trace_payload,
+    get_browser_trace,
 )
 
 
@@ -61,3 +66,27 @@ def test_build_browser_batch_trace_payload_uses_request_length_defaults():
     assert payload["success"] is False
     assert payload["duration_ms"] == 0
     assert payload["steps"] == []
+
+
+class _FakeSkillService:
+    async def get_payload_with_blob_by_ref(self, *, owner: str, payload_ref: str):
+        _ = owner
+        return (
+            SimpleNamespace(id="blob-1", kind="browser_trace"),
+            {"kind": "browser_exec_trace", "steps": [{"cmd": "open about:blank"}]},
+        )
+
+
+@pytest.mark.asyncio
+async def test_get_browser_trace_keeps_response_shape_while_using_generic_payload_lookup():
+    response = await get_browser_trace(
+        sandbox_id="sbx-1",
+        trace_ref="blob:blob-1",
+        sandbox=SimpleNamespace(id="sbx-1"),
+        skill_svc=_FakeSkillService(),
+        owner="default",
+    )
+
+    assert response.trace_ref == "blob:blob-1"
+    assert response.trace["kind"] == "browser_exec_trace"
+    assert response.trace["steps"][0]["cmd"] == "open about:blank"

@@ -701,9 +701,10 @@ async def get_browser_trace(
     """Get browser trace payload by trace reference."""
     _ = sandbox_id
     _ = sandbox  # ensure caller has browser capability and sandbox ownership
-    trace = await skill_svc.get_payload_by_ref(owner=owner, payload_ref=trace_ref)
-    if trace is None:
-        raise NotFoundError(f"Trace payload not found: {trace_ref}")
+    _blob, trace = await skill_svc.get_payload_with_blob_by_ref(
+        owner=owner,
+        payload_ref=trace_ref,
+    )
     return BrowserTraceResponse(trace_ref=trace_ref, trace=trace)
 
 
