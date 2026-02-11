@@ -28,6 +28,9 @@ COPY --from=builder /app/.venv /app/.venv
 # Copy application code
 COPY --from=builder /app/app ./app/
 
+# Copy pyproject.toml for runtime version detection
+COPY --from=builder /app/pyproject.toml ./
+
 # Set environment
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app"

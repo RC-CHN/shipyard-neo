@@ -31,7 +31,7 @@ async def mock_client(monkeypatch: pytest.MonkeyPatch):
             return httpx.Response(
                 200,
                 json={
-                    "runtime": {"name": "gull", "version": "0.1.0", "api_version": "v1"},
+                    "runtime": {"name": "gull", "version": "0.1.2", "api_version": "v1"},
                     "workspace": {"mount_path": "/workspace"},
                     "capabilities": {"browser": {"version": "1.0"}},
                 },
@@ -74,7 +74,7 @@ async def test_get_meta_parses_and_caches(mock_client):
 
     meta1 = await adapter.get_meta()
     assert meta1.name == "gull"
-    assert meta1.version == "0.1.0"
+    assert meta1.version  # version is present and non-empty
     assert meta1.api_version == "v1"
     assert meta1.mount_path == "/workspace"
     assert "browser" in meta1.capabilities

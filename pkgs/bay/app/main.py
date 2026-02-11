@@ -9,6 +9,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app import __version__ as RUNTIME_VERSION
 from app.config import get_settings
 from app.db import close_db, init_db
 from app.errors import BayError
@@ -26,7 +27,7 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
     # Startup
-    logger.info("bay.startup", version="0.1.0")
+    logger.info("bay.startup", version=RUNTIME_VERSION)
     await init_db()
 
     # Initialize HTTP client with connection pooling
@@ -57,7 +58,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Bay",
         description="Orchestration layer for Ship containers",
-        version="0.1.0",
+        version=RUNTIME_VERSION,
         lifespan=lifespan,
     )
 
@@ -85,7 +86,7 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         """Health check endpoint."""
-        return {"status": "ok"}
+        return {"status": "ok", "version": RUNTIME_VERSION}
 
     # Import and register API routers
     from app.api.v1 import router as v1_router

@@ -191,7 +191,59 @@ GET /v1/sandboxes
 GET /v1/sandboxes/{sandbox_id}
 ```
 
-**响应** `200`: [`SandboxResponse`](pkgs/bay/app/api/v1/sandboxes.py:33)
+**响应** `200`: [`SandboxResponse`](pkgs/bay/app/api/v1/sandboxes.py:54)
+
+当沙箱有活跃会话（`status=ready`）时，响应中会包含 `containers` 字段，列出各容器的运行时版本和健康状态：
+
+```json
+{
+  "id": "sbx_abc123",
+  "status": "ready",
+  "profile": "browser-enabled",
+  "cargo_id": "crg_xyz789",
+  "capabilities": ["browser", "filesystem", "python", "shell"],
+  "created_at": "2025-01-01T00:00:00Z",
+  "expires_at": "2025-01-01T01:00:00Z",
+  "idle_expires_at": "2025-01-01T00:10:00Z",
+  "containers": [
+    {
+      "name": "ship",
+      "runtime_type": "ship",
+      "status": "running",
+      "version": "0.1.2",
+      "capabilities": ["filesystem", "python", "shell"],
+      "healthy": true
+    },
+    {
+      "name": "browser",
+      "runtime_type": "gull",
+      "status": "running",
+      "version": "0.1.2",
+      "capabilities": ["browser"],
+      "healthy": true
+    }
+  ]
+}
+```
+
+**`containers` 字段说明**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `containers` | list \| null | 容器运行时状态列表。仅在有活跃会话时返回，idle 状态时为 `null` |
+
+**`ContainerRuntimeResponse` 结构**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `name` | string | 容器名称，如 `"ship"`, `"browser"` |
+| `runtime_type` | string | 运行时类型: `ship` \| `gull` |
+| `status` | string | 容器状态: `running` \| `stopped` \| `failed` |
+| `version` | string \| null | 运行时版本号，如 `"0.1.2"`。查询失败时为 `null` |
+| `capabilities` | list[string] | 该容器提供的能力列表 |
+| `healthy` | bool \| null | 健康状态。`true`=健康, `false`=不健康, `null`=未检查/查询失败 |
+
+> **注意**: 列表接口 `GET /v1/sandboxes` 不返回 `containers` 字段，避免 N+1 查询性能问题。
 
 ### 1.4 延长 TTL
 

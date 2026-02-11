@@ -33,6 +33,7 @@ class SandboxInfo(BaseModel):
     created_at: datetime
     expires_at: datetime | None
     idle_expires_at: datetime | None
+    containers: list[RuntimeContainerInfo] | None = None
 
 
 class SandboxList(BaseModel):
@@ -170,6 +171,21 @@ class BrowserSkillRunResult(BaseModel):
     completed_steps: int
     success: bool
     duration_ms: int = 0
+
+
+class RuntimeContainerInfo(BaseModel):
+    """Runtime container status within a sandbox.
+
+    Returned in SandboxInfo.containers when the sandbox has an active session.
+    Includes real-time version and health information from each container.
+    """
+
+    name: str  # Container name, e.g. "ship", "browser"
+    runtime_type: str  # ship | gull
+    status: str  # running | stopped | failed
+    version: str | None = None  # Runtime version, e.g. "0.1.2"
+    capabilities: list[str]  # Capabilities provided by this container
+    healthy: bool | None = None  # Health status (None = not checked)
 
 
 class ContainerInfo(BaseModel):

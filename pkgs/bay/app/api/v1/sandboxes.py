@@ -5,18 +5,28 @@ See: plans/bay-api.md section 6.1
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.adapters.base import BaseAdapter
+from app.adapters.gull import GullAdapter
+from app.adapters.ship import ShipAdapter
 from app.api.dependencies import AuthDep, IdempotencyServiceDep, SandboxManagerDep
 from app.config import get_settings
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
+from app.router.capability.adapter_pool import default_adapter_pool
 
 router = APIRouter()
+_log = structlog.get_logger()
+
+# Timeout for container runtime queries (seconds)
+_CONTAINER_QUERY_TIMEOUT = 2.0
 
 
 # Request/Response Models
@@ -30,6 +40,17 @@ class CreateSandboxRequest(BaseModel):
     ttl: int | None = None  # seconds, null/0 = no expiry
 
 
+class ContainerRuntimeResponse(BaseModel):
+    """Runtime container status within a sandbox."""
+
+    name: str  # Container name, e.g. "ship", "browser"
+    runtime_type: str  # ship | gull
+    status: str  # running | stopped | failed
+    version: str | None = None  # Runtime version, e.g. "0.1.2"
+    capabilities: list[str]  # Capabilities provided by this container
+    healthy: bool | None = None  # Health status (None = not checked)
+
+
 class SandboxResponse(BaseModel):
     """Sandbox response model."""
 
@@ -41,6 +62,7 @@ class SandboxResponse(BaseModel):
     created_at: datetime
     expires_at: datetime | None
     idle_expires_at: datetime | None
+    containers: list[ContainerRuntimeResponse] | None = None
 
 
 class SandboxListResponse(BaseModel):
@@ -57,7 +79,10 @@ class ExtendTTLRequest(BaseModel):
 
 
 def _sandbox_to_response(
-    sandbox: Sandbox, current_session: Session | None = None
+    sandbox: Sandbox,
+    current_session: Session | None = None,
+    *,
+    containers: list[ContainerRuntimeResponse] | None = None,
 ) -> SandboxResponse:
     """Convert Sandbox model to API response."""
     now = datetime.utcnow()
@@ -65,6 +90,7 @@ def _sandbox_to_response(
         sandbox,
         now=now,
         current_session=current_session,
+        containers=containers,
     )
 
 
@@ -74,6 +100,7 @@ def _sandbox_to_response_at_time(
     now: datetime,
     current_session=None,
     status: SandboxStatus | None = None,
+    containers: list[ContainerRuntimeResponse] | None = None,
 ) -> SandboxResponse:
     """Convert Sandbox model to API response using a fixed time reference."""
     settings = get_settings()
@@ -100,7 +127,151 @@ def _sandbox_to_response_at_time(
         created_at=sandbox.created_at,
         expires_at=sandbox.expires_at,
         idle_expires_at=sandbox.idle_expires_at,
+        containers=containers,
     )
+
+
+def _make_adapter(endpoint: str, runtime_type: str) -> BaseAdapter:
+    """Create or retrieve a cached adapter for a container endpoint."""
+    pool_key = f"{endpoint}::{runtime_type}"
+
+    def factory() -> BaseAdapter:
+        if runtime_type == "ship":
+            return ShipAdapter(endpoint)
+        if runtime_type == "gull":
+            return GullAdapter(endpoint)
+        raise ValueError(f"Unknown runtime type: {runtime_type}")
+
+    return default_adapter_pool.get_or_create(pool_key, factory)
+
+
+async def _query_single_container(
+    container: dict,
+) -> ContainerRuntimeResponse:
+    """Query runtime version and health for a single container.
+
+    Uses cached adapter.get_meta() for version and real-time health() check.
+    Falls back gracefully on errors (version=None, healthy=None).
+    """
+    name = container.get("name", "unknown")
+    runtime_type = container.get("runtime_type", "ship")
+    status = container.get("status", "unknown")
+    capabilities = container.get("capabilities", [])
+    endpoint = container.get("endpoint")
+
+    version: str | None = None
+    healthy: bool | None = None
+
+    if endpoint and status == "running":
+        try:
+            adapter = _make_adapter(endpoint, runtime_type)
+
+            # Query meta (cached) and health (real-time) concurrently
+            meta_task = asyncio.create_task(adapter.get_meta())
+            health_task = asyncio.create_task(adapter.health())
+
+            results = await asyncio.gather(
+                meta_task, health_task, return_exceptions=True
+            )
+
+            if not isinstance(results[0], BaseException):
+                version = results[0].version
+            else:
+                _log.warning(
+                    "container.meta_failed",
+                    container=name,
+                    error=str(results[0]),
+                )
+
+            if not isinstance(results[1], BaseException):
+                healthy = results[1]
+            else:
+                _log.warning(
+                    "container.health_failed",
+                    container=name,
+                    error=str(results[1]),
+                )
+        except Exception as exc:
+            _log.warning(
+                "container.query_failed",
+                container=name,
+                error=str(exc),
+            )
+
+    return ContainerRuntimeResponse(
+        name=name,
+        runtime_type=runtime_type,
+        status=status,
+        version=version,
+        capabilities=capabilities,
+        healthy=healthy,
+    )
+
+
+async def _query_containers_status(
+    session: Session,
+) -> list[ContainerRuntimeResponse] | None:
+    """Query runtime status for all containers in a session.
+
+    Returns None if the session has no containers or is not running.
+    Uses asyncio.gather with a global timeout to avoid blocking the API.
+    """
+    if not session.containers:
+        # Single-container (legacy) fallback: build from primary session fields
+        if session.endpoint and session.runtime_type:
+            containers_data = [
+                {
+                    "name": session.runtime_type,
+                    "runtime_type": session.runtime_type,
+                    "status": "running" if session.is_ready else "unknown",
+                    "endpoint": session.endpoint,
+                    "capabilities": [],  # Will be filled from meta
+                }
+            ]
+        else:
+            return None
+    else:
+        containers_data = session.containers
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *[_query_single_container(c) for c in containers_data],
+                return_exceptions=True,
+            ),
+            timeout=_CONTAINER_QUERY_TIMEOUT,
+        )
+
+        container_responses: list[ContainerRuntimeResponse] = []
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                # Build a degraded response for failed queries
+                c = containers_data[i]
+                container_responses.append(
+                    ContainerRuntimeResponse(
+                        name=c.get("name", "unknown"),
+                        runtime_type=c.get("runtime_type", "ship"),
+                        status=c.get("status", "unknown"),
+                        capabilities=c.get("capabilities", []),
+                    )
+                )
+            else:
+                container_responses.append(result)
+
+        return container_responses
+
+    except TimeoutError:
+        _log.warning("containers.query_timeout", sandbox_id=session.sandbox_id)
+        # Return basic info without version/health on timeout
+        return [
+            ContainerRuntimeResponse(
+                name=c.get("name", "unknown"),
+                runtime_type=c.get("runtime_type", "ship"),
+                status=c.get("status", "unknown"),
+                capabilities=c.get("capabilities", []),
+            )
+            for c in containers_data
+        ]
 
 
 # Endpoints
@@ -206,10 +377,21 @@ async def get_sandbox(
     sandbox_mgr: SandboxManagerDep,
     owner: AuthDep,
 ) -> SandboxResponse:
-    """Get sandbox details."""
+    """Get sandbox details.
+
+    When the sandbox has an active session, the response includes a
+    ``containers`` list with each container's runtime version and health
+    status, queried in real-time from the container endpoints.
+    """
     sandbox = await sandbox_mgr.get(sandbox_id, owner)
     current_session = await sandbox_mgr.get_current_session(sandbox)
-    return _sandbox_to_response(sandbox, current_session)
+
+    # Query container runtime status when session is running
+    containers = None
+    if current_session and current_session.is_ready:
+        containers = await _query_containers_status(current_session)
+
+    return _sandbox_to_response(sandbox, current_session, containers=containers)
 
 
 @router.post(

@@ -1,6 +1,6 @@
 [project]
 name = "bay"
-version = "0.1.0"
+version = "0.1.2"
 description = "Bay - Orchestration layer for Ship containers"
 readme = "README.md"
 requires-python = ">=3.13"

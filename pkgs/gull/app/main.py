@@ -24,6 +24,7 @@ import re
 import shlex
 import shutil
 import time
+import tomllib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -32,6 +33,18 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+
+def get_version() -> str:
+    """Get version from pyproject.toml (single source of truth)."""
+    try:
+        pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+        return data.get("project", {}).get("version", "unknown")
+    except Exception:
+        return "unknown"
+
+
 # Configuration from environment
 SESSION_NAME = os.environ.get("SANDBOX_ID", os.environ.get("BAY_SANDBOX_ID", "default"))
 WORKSPACE_PATH = os.environ.get("BAY_WORKSPACE_PATH", "/workspace")
@@ -39,7 +52,7 @@ WORKSPACE_PATH = os.environ.get("BAY_WORKSPACE_PATH", "/workspace")
 # agent-browser --profile automatically persists cookies, localStorage,
 # IndexedDB, service workers, and cache to this directory.
 BROWSER_PROFILE_DIR = os.path.join(WORKSPACE_PATH, ".browser", "profile")
-GULL_VERSION = "0.1.0"
+GULL_VERSION = get_version()
 
 
 class ExecRequest(BaseModel):
@@ -98,6 +111,7 @@ class HealthResponse(BaseModel):
     status: str  # healthy | degraded | unhealthy
     browser_active: bool
     session: str
+    version: str
 
 
 class MetaResponse(BaseModel):
@@ -371,6 +385,7 @@ async def health() -> HealthResponse:
             status="unhealthy",
             browser_active=False,
             session=SESSION_NAME,
+            version=GULL_VERSION,
         )
 
     # Check if our session is active
@@ -390,6 +405,7 @@ async def health() -> HealthResponse:
         status=status,
         browser_active=browser_active,
         session=SESSION_NAME,
+        version=GULL_VERSION,
     )
 
 

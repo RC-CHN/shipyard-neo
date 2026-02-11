@@ -3,6 +3,8 @@
 A Python client for the Bay API - secure sandbox execution for AI agents.
 """
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
 from shipyard_neo.client import BayClient
 from shipyard_neo.errors import (
     BayError,
@@ -36,6 +38,7 @@ from shipyard_neo.types import (
     ProfileInfo,
     ProfileList,
     PythonExecResult,
+    RuntimeContainerInfo,
     SandboxInfo,
     SandboxList,
     SandboxStatus,
@@ -66,6 +69,7 @@ __all__ = [
     "ProfileInfo",
     "ProfileList",
     "ContainerInfo",
+    "RuntimeContainerInfo",
     "PythonExecResult",
     "ShellExecResult",
     "BrowserExecResult",
@@ -98,4 +102,7 @@ __all__ = [
     "CargoFileNotFoundError",
 ]
 
-__version__ = "0.1.0"
+try:
+    __version__ = _pkg_version("shipyard-neo-sdk")
+except PackageNotFoundError:
+    __version__ = "unknown"

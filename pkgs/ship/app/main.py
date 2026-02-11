@@ -8,7 +8,7 @@ from .workspace import WORKSPACE_ROOT
 import logging
 import os
 import re
-import tomli
+import tomllib
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -37,11 +37,11 @@ async def lifespan(app: FastAPI):
 
 
 def get_version() -> str:
-    """Get version from pyproject.toml."""
+    """Get version from pyproject.toml (single source of truth)."""
     try:
-        pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
+        pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
         with open(pyproject_path, "rb") as f:
-            data = tomli.load(f)
+            data = tomllib.load(f)
         return data.get("project", {}).get("version", "unknown")
     except Exception:
         return "unknown"
@@ -71,7 +71,7 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    return {"status": "healthy", "version": RUNTIME_VERSION}
 
 
 def get_build_info() -> dict:

@@ -942,6 +942,26 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                 ttl,
             )
 
+            # Build containers info if available
+            containers_text = ""
+            if getattr(sandbox, "containers", None):
+                lines = ["**Containers:**"]
+                for c in sandbox.containers:
+                    ver = getattr(c, "version", None) or "unknown"
+                    healthy = getattr(c, "healthy", None)
+                    health_str = (
+                        "✅" if healthy is True
+                        else "❌" if healthy is False
+                        else "?"
+                    )
+                    rt = getattr(c, "runtime_type", "unknown")
+                    name = getattr(c, "name", "unknown")
+                    caps = ", ".join(getattr(c, "capabilities", []))
+                    lines.append(
+                        f"  - {name} ({rt}) v{ver} {health_str} [{caps}]"
+                    )
+                containers_text = "\n".join(lines) + "\n"
+
             return [
                 TextContent(
                     type="text",
@@ -950,7 +970,8 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     f"**Profile:** {sandbox.profile}\n"
                     f"**Status:** {sandbox.status.value}\n"
                     f"**Capabilities:** {', '.join(sandbox.capabilities)}\n"
-                    f"**TTL:** {ttl} seconds\n\n"
+                    f"**TTL:** {ttl} seconds\n"
+                    f"{containers_text}\n"
                     f"Use this sandbox_id for subsequent operations.",
                 )
             ]
