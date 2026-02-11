@@ -597,6 +597,12 @@ async def run_browser_skill(
     if release is None:
         raise NotFoundError(f"No active release found for skill_key: {skill_key}")
 
+    # Eagerly capture ORM scalar attributes *before* calling exec_browser_batch,
+    # which internally calls ensure_running → rollback/commit and expires all
+    # objects attached to the shared DB session (MissingGreenlet otherwise).
+    release_id = release.id
+    release_stage_value = release.stage.value
+
     candidate = await skill_svc.get_candidate(owner=owner, candidate_id=release.candidate_id)
     payload = await skill_svc.get_payload_by_ref(
         owner=owner,
@@ -652,8 +658,8 @@ async def run_browser_skill(
     merged_tags = skill_svc.merge_tags(
         request.tags,
         f"skill:{skill_key}",
-        f"release:{release.id}",
-        f"stage:{release.stage.value}",
+        f"release:{release_id}",
+        f"stage:{release_stage_value}",
     )
     current_session = await sandbox_mgr.get_current_session(sandbox)
     execution = await skill_svc.create_execution(
@@ -675,7 +681,7 @@ async def run_browser_skill(
 
     return BrowserSkillRunResponse(
         skill_key=skill_key,
-        release_id=release.id,
+        release_id=release_id,
         execution_id=execution.id,
         execution_time_ms=execution_time_ms,
         trace_ref=trace_ref,
