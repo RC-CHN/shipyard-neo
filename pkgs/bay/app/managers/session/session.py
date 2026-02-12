@@ -198,11 +198,14 @@ class SessionManager:
                     runtime_port=runtime_port,
                 )
 
-                # Wait for Ship runtime to be ready before marking as RUNNING
+                # Wait for runtime to be ready before marking as RUNNING.
+                # For browser containers (Gull), also checks that browser_ready=true
+                # in the /health response. For ship containers, just checks HTTP 200.
                 await self._wait_for_ready(
                     endpoint,
                     session_id=session.id,
                     sandbox_id=session.sandbox_id,
+                    runtime_type=session.runtime_type,
                 )
 
                 # Only persist endpoint after readiness succeeds.
@@ -372,7 +375,9 @@ class SessionManager:
     ) -> None:
         """Wait for all containers in a multi-container session to be ready.
 
-        Polls each container's health endpoint until all respond successfully.
+        Polls each container's /health endpoint until all respond successfully.
+        For browser containers (Gull), also checks that browser_ready=true in
+        the health response to ensure Chromium has been pre-warmed.
         """
         pending = {ci.name: ci for ci in container_infos}
 
@@ -402,7 +407,21 @@ class SessionManager:
                             response = await temp_client.get(url, timeout=2.0)
 
                     if response.status_code == 200:
-                        newly_ready.append(name)
+                        # For browser containers, also require browser_ready=true.
+                        # This ensures Chromium is pre-warmed before marking ready.
+                        # Old Gull images without browser_ready field are treated
+                        # as ready (backward compat: field absence = ready).
+                        if ci.runtime_type == "browser":
+                            try:
+                                payload = response.json()
+                                browser_ready = payload.get("browser_ready", True)
+                                if browser_ready:
+                                    newly_ready.append(name)
+                            except Exception:
+                                # Can't parse JSON; treat as ready
+                                newly_ready.append(name)
+                        else:
+                            newly_ready.append(name)
                 except (httpx.RequestError, httpx.TimeoutException):
                     pass
 
@@ -444,20 +463,29 @@ class SessionManager:
         *,
         session_id: str,
         sandbox_id: str,
+        runtime_type: str = "ship",
         max_wait_seconds: float = 120.0,
         initial_interval: float = 0.5,
         max_interval: float = 1.0,
         backoff_factor: float = 2.0,
     ) -> None:
-        """Wait for Ship runtime to be ready using exponential backoff.
+        """Wait for runtime to be ready using exponential backoff.
 
-        Polls the /health endpoint until it responds successfully.
+        Polls the /health endpoint until it responds with HTTP 200.
+        - For browser containers (Gull): also checks that browser_ready=true
+          in the health response to ensure Chromium has been pre-warmed.
+          Old Gull images without browser_ready field are treated as ready
+          (backward compat: field absence = ready).
+        - For ship containers: just checks HTTP 200 (unchanged behavior).
+
         Uses generous timeouts to accommodate image pulling in production.
         Uses shared HTTP client for connection pooling efficiency.
+
         Args:
-            endpoint: Ship endpoint URL
+            endpoint: Runtime endpoint URL
             session_id: Session ID for logging
             sandbox_id: Sandbox ID for error metadata
+            runtime_type: Container runtime type ("ship" or "browser")
             max_wait_seconds: Maximum total time to wait (default 120s for image pull)
             initial_interval: Initial retry interval in seconds
             max_interval: Maximum retry interval in seconds
@@ -491,14 +519,45 @@ class SessionManager:
                         response = await temp_client.get(url, timeout=2.0)
 
                 if response.status_code == 200:
-                    elapsed = asyncio.get_event_loop().time() - start_time
-                    self._log.info(
-                        "session.runtime_ready",
-                        session_id=session_id,
-                        attempts=attempt,
-                        elapsed_ms=int(elapsed * 1000),
-                    )
-                    return
+                    # For browser containers, also require browser_ready=true.
+                    # This ensures Chromium is pre-warmed before marking ready.
+                    # Old Gull images without browser_ready field are treated
+                    # as ready (backward compat: field absence = ready).
+                    if runtime_type == "browser":
+                        try:
+                            payload = response.json()
+                            browser_ready = payload.get("browser_ready", True)
+                            if not browser_ready:
+                                # /health returned 200 but browser not yet warm
+                                pass  # fall through to retry
+                            else:
+                                elapsed = asyncio.get_event_loop().time() - start_time
+                                self._log.info(
+                                    "session.runtime_ready",
+                                    session_id=session_id,
+                                    attempts=attempt,
+                                    elapsed_ms=int(elapsed * 1000),
+                                )
+                                return
+                        except Exception:
+                            # Can't parse JSON; treat as ready (backward compat)
+                            elapsed = asyncio.get_event_loop().time() - start_time
+                            self._log.info(
+                                "session.runtime_ready",
+                                session_id=session_id,
+                                attempts=attempt,
+                                elapsed_ms=int(elapsed * 1000),
+                            )
+                            return
+                    else:
+                        elapsed = asyncio.get_event_loop().time() - start_time
+                        self._log.info(
+                            "session.runtime_ready",
+                            session_id=session_id,
+                            attempts=attempt,
+                            elapsed_ms=int(elapsed * 1000),
+                        )
+                        return
             except (httpx.RequestError, httpx.TimeoutException):
                 pass
 

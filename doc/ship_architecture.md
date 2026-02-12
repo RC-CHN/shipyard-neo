@@ -229,7 +229,7 @@ python:3.13-slim-bookworm
 [`entrypoint.sh`](../pkgs/ship/entrypoint.sh) 在容器启动时：
 
 1. 修复 `/workspace` 目录所有权为 `shipyard:shipyard`（处理卷挂载权限问题）
-2. 注入内置 skills 到 `/workspace/.skills/`（per-skill overwrite，见 [§10](#10-扩展机制--built-in-skills-注入)）
+2. 注入内置 skills 到 `/workspace/skills/`（per-skill overwrite，见 [§10](#10-扩展机制--built-in-skills-注入)）
 3. `exec "$@"` 执行 CMD（即 `python run.py`）
 
 ### 5.4 应用启动流程
@@ -714,17 +714,17 @@ IPython 执行错误不通过 HTTP 错误码返回，而是在响应体中标识
 
 ## 10. 扩展机制 — Built-in Skills 注入
 
-Ship 和 Gull 容器各自携带 **Built-in Skills**（内置技能文件），在容器启动时自动注入到共享 Cargo Volume 的 `/workspace/.skills/` 目录。Skills 是 **结构化的知识文档**，用于指导 AI Agent 如何使用容器内预装的工具和库。
+Ship 和 Gull 容器各自携带 **Built-in Skills**（内置技能文件），在容器启动时自动注入到共享 Cargo Volume 的 `/workspace/skills/` 目录。Skills 是 **结构化的知识文档**，用于指导 AI Agent 如何使用容器内预装的工具和库。
 
 ### 10.1 注入机制
 
 #### 容器自注入（Container Self-Injection）
 
-每个容器镜像在构建时将 skills 打包到 `/app/skills/` 目录，容器启动时通过 [`entrypoint.sh`](../pkgs/ship/entrypoint.sh) 注入到共享的 `/workspace/.skills/`：
+每个容器镜像在构建时将 skills 打包到 `/app/skills/` 目录，容器启动时通过 [`entrypoint.sh`](../pkgs/ship/entrypoint.sh) 注入到共享的 `/workspace/skills/`：
 
 ```
 ┌──── Ship 镜像 ────┐    启动时注入     ┌──── Cargo Volume ────────────────────┐
-│  /app/skills/      │ ═══════════════▶ │  /workspace/.skills/                 │
+│  /app/skills/      │ ═══════════════▶ │  /workspace/skills/                  │
 │  └─ python-sandbox/│    rm -rf + cp   │  ├── python-sandbox/   ← Ship 注入   │
 │     └─ SKILL.md    │                  │  │   └── SKILL.md                    │
 └────────────────────┘                  │  ├── browser-automation/ ← Gull 注入  │
@@ -741,7 +741,7 @@ Ship 和 Gull 容器各自携带 **Built-in Skills**（内置技能文件），�
 
 #### 铺平命名空间（Flat Namespace）
 
-所有 skills 直接放在 `/workspace/.skills/<skill_name>/` 下，**不分 runtime 子目录**。Ship 和 Gull 的 built-in skill 使用不同名称避免冲突。上层 agent 也可以在此目录下自由添加自定义 skill。
+所有 skills 直接放在 `/workspace/skills/<skill_name>/` 下，**不分 runtime 子目录**。Ship 和 Gull 的 built-in skill 使用不同名称避免冲突。上层 agent 也可以在此目录下自由添加自定义 skill。
 
 #### Per-skill Overwrite（幂等覆盖）
 
@@ -750,8 +750,8 @@ Ship 和 Gull 容器各自携带 **Built-in Skills**（内置技能文件），�
 ```bash
 for skill_dir in /app/skills/*/; do
     skill_name=$(basename "$skill_dir")
-    rm -rf "/workspace/.skills/$skill_name"   # 只删除本 skill
-    cp -r "$skill_dir" "/workspace/.skills/$skill_name"
+    rm -rf "/workspace/skills/$skill_name"   # 只删除本 skill
+    cp -r "$skill_dir" "/workspace/skills/$skill_name"
 done
 ```
 
@@ -809,8 +809,8 @@ Shipyard Neo 中有三个层级的 skill，各自独立管理：
 | 层级 | 位置（源码） | 位置（运行时） | 管理者 |
 |------|-------------|---------------|--------|
 | MCP 层 | `skills/shipyard-neo/` | Agent 本地 `.kilocode/skills/` | MCP Server / Agent 框架 |
-| Ship 内置 | `pkgs/ship/skills/` | `/workspace/.skills/` | Ship 容器 entrypoint |
-| Gull 内置 | `pkgs/gull/skills/` | `/workspace/.skills/` | Gull 容器 entrypoint |
+| Ship 内置 | `pkgs/ship/skills/` | `/workspace/skills/` | Ship 容器 entrypoint |
+| Gull 内置 | `pkgs/gull/skills/` | `/workspace/skills/` | Gull 容器 entrypoint |
 
 ### 10.7 设计理念
 

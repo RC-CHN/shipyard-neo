@@ -1,13 +1,13 @@
 """Built-in skills injection E2E tests.
 
 Purpose: Verify that Ship's entrypoint.sh correctly injects built-in skills
-into /workspace/.skills/ when a sandbox container starts.
+into /workspace/skills/ when a sandbox container starts.
 
 Test scenarios:
-1. Skills are injected into /workspace/.skills/<skill_name>/ on first exec
+1. Skills are injected into /workspace/skills/<skill_name>/ on first exec
 2. SKILL.md contains valid frontmatter (name + description)
 3. Skills persist across stop/resume cycles (workspace is on Cargo Volume)
-4. Custom (agent-created) skills in .skills/ are NOT overwritten by injection
+4. Custom (agent-created) skills in skills/ are NOT overwritten by injection
 5. Skills are idempotent - re-injection produces same result
 
 Parallel-safe: Yes - each test creates/deletes its own sandbox.
@@ -27,7 +27,7 @@ pytestmark = e2e_skipif_marks
 # ---------------------------------------------------------------------------
 
 EXPECTED_SHIP_SKILL = "python-sandbox"
-SKILL_MARKER = ".skills"
+SKILL_MARKER = "skills"
 
 
 async def _exec_shell(
@@ -70,7 +70,7 @@ async def _exec_python(
 
 
 async def test_builtin_skills_injected_on_first_exec():
-    """After first exec (container startup), .skills/python-sandbox/SKILL.md exists."""
+    """After first exec (container startup), skills/python-sandbox/SKILL.md exists."""
     async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
         async with create_sandbox(client) as sandbox:
             sid = sandbox["id"]
@@ -79,7 +79,7 @@ async def test_builtin_skills_injected_on_first_exec():
             result = await _exec_shell(client, sid, "echo 'trigger startup'")
             assert result["success"] is True
 
-            # Verify .skills directory exists
+            # Verify skills directory exists
             result = await _exec_shell(
                 client,
                 sid,
@@ -130,7 +130,7 @@ async def test_skill_md_has_valid_frontmatter():
 
 
 async def test_skill_directory_is_flat_namespace():
-    """Skills are injected at /workspace/.skills/<skill_name>/ (flat, no runtime subdirectory)."""
+    """Skills are injected at /workspace/skills/<skill_name>/ (flat, no runtime subdirectory)."""
     async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
         async with create_sandbox(client) as sandbox:
             sid = sandbox["id"]
@@ -138,7 +138,7 @@ async def test_skill_directory_is_flat_namespace():
             # Trigger startup
             await _exec_shell(client, sid, "echo 'startup'")
 
-            # List .skills/ directory - should contain skill name directly, not ship/gull subdirs
+            # List skills/ directory - should contain skill name directly, not ship/gull subdirs
             list_resp = await client.get(
                 f"/v1/sandboxes/{sid}/filesystem/directories",
                 params={"path": SKILL_MARKER},
@@ -148,14 +148,14 @@ async def test_skill_directory_is_flat_namespace():
             entries = list_resp.json().get("entries", [])
             names = [e["name"] for e in entries]
 
-            # python-sandbox should be a direct child of .skills/
+            # python-sandbox should be a direct child of skills/
             assert EXPECTED_SHIP_SKILL in names, (
-                f"Expected '{EXPECTED_SHIP_SKILL}' in .skills/ entries, got: {names}"
+                f"Expected '{EXPECTED_SHIP_SKILL}' in skills/ entries, got: {names}"
             )
 
             # Should NOT have runtime-namespaced directories
             assert "ship" not in names, (
-                f"Should not have 'ship/' subdirectory in .skills/ (flat namespace), got: {names}"
+                f"Should not have 'ship/' subdirectory in skills/ (flat namespace), got: {names}"
             )
 
 
@@ -197,7 +197,7 @@ async def test_skills_persist_across_stop_resume():
 
 
 async def test_custom_skills_not_overwritten_by_injection():
-    """Agent-created custom skills in .skills/ are NOT removed by Ship's injection."""
+    """Agent-created custom skills in skills/ are NOT removed by Ship's injection."""
     async with httpx.AsyncClient(
         base_url=BAY_BASE_URL, headers=AUTH_HEADERS, timeout=60.0
     ) as client:

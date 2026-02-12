@@ -37,7 +37,7 @@ COPY skills ./skills
 
 RUN uv sync --frozen --no-dev
 
-# Entrypoint: injects built-in skills into /workspace/.skills/ before starting
+# Entrypoint: injects built-in skills into /workspace/skills/ before starting
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 

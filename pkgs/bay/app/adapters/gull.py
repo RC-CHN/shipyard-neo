@@ -142,6 +142,11 @@ class GullAdapter(BaseAdapter):
         return self._meta_cache
 
     async def health(self) -> bool:
+        """Liveness check: is the Gull process alive and responding?
+
+        Only accepts "healthy" status. "degraded" means the CLI probe failed,
+        which indicates a problem with the runtime.
+        """
         try:
             client = _get_shared_client()
             if client is not None:
@@ -164,7 +169,7 @@ class GullAdapter(BaseAdapter):
                 return False
 
             status = payload.get("status") if isinstance(payload, dict) else None
-            return status in {"healthy", "degraded"}
+            return status == "healthy"
         except Exception:
             return False
 

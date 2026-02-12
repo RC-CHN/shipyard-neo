@@ -266,6 +266,7 @@ async def test_health_unhealthy_when_agent_browser_missing(
 
     assert response.status == "unhealthy"
     assert response.browser_active is False
+    assert response.browser_ready is False
 
 
 @pytest.mark.asyncio
@@ -273,6 +274,7 @@ async def test_health_healthy_when_probe_succeeds(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         gull_main.shutil, "which", lambda _name: "/usr/bin/agent-browser"
     )
+    monkeypatch.setattr(gull_main, "_browser_ready", True)
 
     async def fake_run(_cmd: str, **_kwargs):
         return gull_main.SESSION_NAME, "", 0
@@ -283,6 +285,7 @@ async def test_health_healthy_when_probe_succeeds(monkeypatch: pytest.MonkeyPatc
 
     assert response.status == "healthy"
     assert response.browser_active is True
+    assert response.browser_ready is True
 
 
 @pytest.mark.asyncio
@@ -319,3 +322,95 @@ async def test_health_degraded_when_probe_fails(monkeypatch: pytest.MonkeyPatch)
 
     assert response.status == "degraded"
     assert response.browser_active is False
+
+
+@pytest.mark.asyncio
+async def test_health_browser_ready_reflects_prewarm_state(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """browser_ready field reflects _browser_ready module state."""
+    monkeypatch.setattr(
+        gull_main.shutil, "which", lambda _name: "/usr/bin/agent-browser"
+    )
+
+    async def fake_run(_cmd: str, **_kwargs):
+        return gull_main.SESSION_NAME, "", 0
+
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    # Not warmed yet
+    monkeypatch.setattr(gull_main, "_browser_ready", False)
+    response = await gull_main.health()
+    assert response.browser_ready is False
+
+    # After warming
+    monkeypatch.setattr(gull_main, "_browser_ready", True)
+    response = await gull_main.health()
+    assert response.browser_ready is True
+
+
+# ---------------------------------------------------------------------------
+# Lifespan pre-warming tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prewarm_sets_browser_ready_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """Successful pre-warm sets _browser_ready = True."""
+    monkeypatch.setattr(gull_main, "BROWSER_PROFILE_DIR", str(tmp_path / "profile"))
+    monkeypatch.setattr(gull_main, "_browser_ready", False)
+
+    async def fake_run(cmd: str, **_kwargs):
+        return "ok", "", 0
+
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    async with gull_main.lifespan(gull_main.app):
+        assert gull_main._browser_ready is True
+
+    # After shutdown, should be False
+    assert gull_main._browser_ready is False
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prewarm_stays_false_on_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """Pre-warm with non-zero exit code does not set _browser_ready."""
+    monkeypatch.setattr(gull_main, "BROWSER_PROFILE_DIR", str(tmp_path / "profile"))
+    monkeypatch.setattr(gull_main, "_browser_ready", False)
+
+    async def fake_run(cmd: str, **_kwargs):
+        if "open" in cmd:
+            return "", "browser failed to start", 1
+        return "", "", 0  # close command
+
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    async with gull_main.lifespan(gull_main.app):
+        assert gull_main._browser_ready is False
+
+
+@pytest.mark.asyncio
+async def test_lifespan_prewarm_stays_false_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+):
+    """Pre-warm exception does not prevent startup."""
+    monkeypatch.setattr(gull_main, "BROWSER_PROFILE_DIR", str(tmp_path / "profile"))
+    monkeypatch.setattr(gull_main, "_browser_ready", False)
+
+    async def fake_run(cmd: str, **_kwargs):
+        if "open" in cmd:
+            raise RuntimeError("agent-browser crashed")
+        return "", "", 0  # close command
+
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    async with gull_main.lifespan(gull_main.app):
+        # Service starts even though pre-warm failed
+        assert gull_main._browser_ready is False

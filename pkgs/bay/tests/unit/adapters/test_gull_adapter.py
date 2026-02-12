@@ -134,7 +134,7 @@ async def test_timeout_maps_to_request_timeout(monkeypatch: pytest.MonkeyPatch):
     ("status_value", "expected"),
     [
         ("healthy", True),
-        ("degraded", True),
+        ("degraded", False),
         ("unhealthy", False),
         ("unknown", False),
     ],

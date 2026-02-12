@@ -54,6 +54,10 @@ WORKSPACE_PATH = os.environ.get("BAY_WORKSPACE_PATH", "/workspace")
 BROWSER_PROFILE_DIR = os.path.join(WORKSPACE_PATH, ".browser", "profile")
 GULL_VERSION = get_version()
 
+# Browser readiness state - set to True after successful pre-warming in lifespan.
+# Safe for concurrent reads: single write in lifespan, multiple reads in /health.
+_browser_ready: bool = False
+
 
 class ExecRequest(BaseModel):
     """Request to execute an agent-browser command."""
@@ -110,6 +114,7 @@ class HealthResponse(BaseModel):
 
     status: str  # healthy | degraded | unhealthy
     browser_active: bool
+    browser_ready: bool
     session: str
     version: str
 
@@ -242,6 +247,9 @@ async def lifespan(app: FastAPI):
 
     On startup:
     - Ensure browser profile directory exists on Cargo Volume.
+    - Pre-warm Chromium browser by opening about:blank.
+      This triggers Playwright + Chromium initialization so subsequent
+      commands don't incur cold-start latency.
     - agent-browser --profile automatically restores persisted state
       (cookies, localStorage, etc.) on first command.
 
@@ -252,10 +260,32 @@ async def lifespan(app: FastAPI):
     Note: Built-in skills injection is handled by entrypoint.sh (shell layer),
     not in Python lifespan, for security and consistency with Ship.
     """
+    global _browser_ready
+
     # Ensure profile dir exists on shared Cargo Volume
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     print(f"[gull] Starting Gull v{GULL_VERSION}, session={SESSION_NAME}")
     print(f"[gull] Browser profile dir: {BROWSER_PROFILE_DIR}")
+
+    # Pre-warm browser: trigger Chromium startup via `open about:blank`.
+    # Similar to Ship pre-warming Jupyter Kernel to avoid first-request latency.
+    # Failure does NOT block service startup (graceful degradation).
+    try:
+        print("[gull] Pre-warming browser (open about:blank)...")
+        stdout, stderr, code = await _run_agent_browser(
+            "open about:blank",
+            session=SESSION_NAME,
+            profile=BROWSER_PROFILE_DIR,
+            timeout=30,
+        )
+        if code == 0:
+            _browser_ready = True
+            print("[gull] Browser pre-warmed successfully")
+        else:
+            print(f"[gull] Browser pre-warm returned exit_code={code}: {stderr}")
+    except Exception as e:
+        # Pre-warm failure is not fatal; first user command will trigger startup
+        print(f"[gull] Failed to pre-warm browser: {e}")
 
     yield
 
@@ -267,6 +297,7 @@ async def lifespan(app: FastAPI):
         profile=BROWSER_PROFILE_DIR,
         timeout=5,
     )
+    _browser_ready = False
     print("[gull] Browser closed.")
 
 
@@ -375,7 +406,17 @@ async def exec_batch(request: BatchExecRequest) -> BatchExecResponse:
 async def health() -> HealthResponse:
     """Health check endpoint.
 
-    Checks if agent-browser is installed and if a browser session is active.
+    Checks if agent-browser is installed, if a browser session is active,
+    and whether the browser has been pre-warmed and is ready to accept commands.
+
+    The `browser_ready` field indicates whether Chromium was successfully
+    pre-warmed during startup. Bay uses this field in _wait_for_ready()
+    to determine when a Gull session is truly operational.
+
+    Status values:
+    - "healthy": agent-browser CLI is available and responsive
+    - "degraded": agent-browser exists but CLI probe failed
+    - "unhealthy": agent-browser binary not found
     """
     # Check if agent-browser is available
     agent_browser_available = shutil.which("agent-browser") is not None
@@ -384,6 +425,7 @@ async def health() -> HealthResponse:
         return HealthResponse(
             status="unhealthy",
             browser_active=False,
+            browser_ready=False,
             session=SESSION_NAME,
             version=GULL_VERSION,
         )
@@ -404,6 +446,7 @@ async def health() -> HealthResponse:
     return HealthResponse(
         status=status,
         browser_active=browser_active,
+        browser_ready=_browser_ready,
         session=SESSION_NAME,
         version=GULL_VERSION,
     )

@@ -1,15 +1,15 @@
-# 设计方案：Skill Candidate 注入到 /workspace/.skills/
+# 设计方案：Skill Candidate 注入到 /workspace/skills/
 
 ## 1. 背景与动机
 
 当前 Shipyard Neo 存在两套并行但未打通的 skill 机制：
 
-1. **Built-in Skills**：Ship 容器 `entrypoint.sh` 在启动时将预置 skills 注入 `/workspace/.skills/<skill_name>/SKILL.md`
+1. **Built-in Skills**：Ship 容器 `entrypoint.sh` 在启动时将预置 skills 注入 `/workspace/skills/<skill_name>/SKILL.md`
 2. **Skill Candidates 控制平面**：通过 DB 存储执行证据链（execution → candidate → evaluation → release），Agent 可通过 API 查询和重放
 
 两者之间缺乏桥梁。Agent 在沙箱内无法"看到"控制平面中学到的 skills，必须通过 MCP 工具链手动查询。
 
-**目标**：将 active skill releases 在沙箱启动时自动生成 SKILL.md 格式写入 `/workspace/.skills/`，使 Agent 能像使用预置 skills 一样发现和使用学到的 skills。
+**目标**：将 active skill releases 在沙箱启动时自动生成 SKILL.md 格式写入 `/workspace/skills/`，使 Agent 能像使用预置 skills 一样发现和使用学到的 skills。
 
 ## 2. 架构概览
 
@@ -19,7 +19,7 @@ flowchart TB
     B --> C[entrypoint.sh 注入 built-in skills]
     C --> D[Session RUNNING]
     D --> E[SkillInjector 注入 learned skills]
-    E --> F[写入 /workspace/.skills/ 目录]
+    E --> F[写入 /workspace/skills/ 目录]
     
     G[SkillLifecycleService] --> H[查询 active releases]
     H --> I[获取 candidate payload_ref]
@@ -69,7 +69,7 @@ Ship 容器启动时主动调用 Bay API 获取 skills 列表。
 
 ```python
 class SkillInjector:
-    """注入 learned skills 到沙箱 /workspace/.skills/ 目录。"""
+    """注入 learned skills 到沙箱 /workspace/skills/ 目录。"""
     
     def __init__(
         self,
@@ -165,7 +165,7 @@ class SkillInjector:
     ) -> None:
         """通过 Ship adapter 写入文件到沙箱。"""
         # 使用 ShipAdapter 直接写入
-        # 路径: .skills/<skill_key>/SKILL.md
+        # 路径: skills/<skill_key>/SKILL.md
         ...
 ```
 
@@ -310,7 +310,7 @@ async def ensure_running(self, sandbox: Sandbox) -> Session:
 
 1. **Session 级标记**：在 Session 模型增加 `skills_injected_at: datetime | None` 字段
 2. **首次 running 时注入**：只在 session 从 non-running 变为 running 时触发注入
-3. **跳过已存在的 skill**：如果 `.skills/<skill_key>/SKILL.md` 已存在且版本匹配，跳过写入
+3. **跳过已存在的 skill**：如果 `skills/<skill_key>/SKILL.md` 已存在且版本匹配，跳过写入
 
 ### 4.5 与 Built-in Skills 的共存
 
@@ -320,9 +320,9 @@ async def ensure_running(self, sandbox: Sandbox) -> Session:
 | 注入方式 | 文件拷贝（容器内） | filesystem API（Bay → Ship） |
 | 覆盖策略 | 每次启动覆盖 built-in 目录 | 只覆盖 learned skill 目录 |
 | 元数据标识 | 无特殊标记 | `metadata.source: learned` |
-| 示例 | `.skills/python-sandbox/` | `.skills/rancher-login-and-dashboard-screenshot/` |
+| 示例 | `skills/python-sandbox/` | `skills/rancher-login-and-dashboard-screenshot/` |
 
-Built-in skills 由 entrypoint.sh 注入且命名固定（如 `python-sandbox`），learned skills 使用 `skill_key` 作为目录名。两者在 `.skills/` 下并列共存，不会冲突。
+Built-in skills 由 entrypoint.sh 注入且命名固定（如 `python-sandbox`），learned skills 使用 `skill_key` 作为目录名。两者在 `skills/` 下并列共存，不会冲突。
 
 ## 5. 数据流
 
@@ -340,10 +340,10 @@ sequenceDiagram
     Bay->>DB: query active releases for owner
     DB-->>Bay: releases + candidates + payloads
     Bay->>Bay: SkillMDRenderer.render
-    Bay->>Ship: PUT /filesystem/files .skills/skill-key/SKILL.md
+    Bay->>Ship: PUT /filesystem/files skills/skill-key/SKILL.md
     Bay-->>Agent: session ready
     
-    Note over Agent,Ship: Agent can now discover learned skills in /workspace/.skills/
+    Note over Agent,Ship: Agent can now discover learned skills in /workspace/skills/
 ```
 
 ## 6. 配置
@@ -368,7 +368,7 @@ skill_injection:
 - [ ] 增加 `skill_injection` 配置项
 - [ ] 编写单元测试：SkillMDRenderer 渲染正确性（Browser + Hybrid）
 - [ ] 编写单元测试：SkillInjector 幂等性和错误处理
-- [ ] 编写集成测试：learned skills 出现在 /workspace/.skills/ 中
+- [ ] 编写集成测试：learned skills 出现在 /workspace/skills/ 中
 - [ ] 编写集成测试：与 built-in skills 共存不冲突
 - [ ] 编写集成测试：session stop/resume 后 learned skills 仍可用（Cargo Volume 持久化）
 

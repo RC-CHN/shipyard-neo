@@ -17,7 +17,7 @@ trap "rm -rf $TMPDIR" EXIT
 
 APP_SKILLS="$TMPDIR/app/skills"
 WORKSPACE="$TMPDIR/workspace"
-WORKSPACE_SKILLS="$WORKSPACE/.skills"
+WORKSPACE_SKILLS="$WORKSPACE/skills"
 
 # --- Test 1: Basic injection ---
 echo ""

@@ -165,9 +165,11 @@ Gull 的会话管理依赖 agent-browser 的两个关键参数：
 
 | 事件 | 行为 |
 |------|------|
-| Gull 容器启动 | 创建 profile 目录，agent-browser 自动恢复已持久化状态 |
+| Gull 容器启动 | 创建 profile 目录，执行 `open about:blank` 预热 Chromium，agent-browser 自动恢复已持久化状态 |
 | Gull 容器关闭 | 调用 `agent-browser close` 关闭浏览器，状态自动持久化 |
 | Sandbox 删除 | Cargo Volume 删除，浏览器状态一并清理 |
+
+> **浏览器预热**: Gull 在 lifespan 启动阶段执行 `agent-browser open about:blank` 触发 Chromium 初始化。预热成功后 `/health` 的 `browser_ready` 字段变为 `true`。预热失败不阻止服务启动，但 `browser_ready` 保持 `false`，Bay 会在 `_wait_for_ready()` 中持续等待直到超时。
 
 ---
 
@@ -323,7 +325,7 @@ curl -X POST http://localhost:8080/exec_batch \
 
 ### 3.3 健康检查 — `GET /health`
 
-检查 Gull 服务和浏览器的运行状态。
+检查 Gull 服务和浏览器的运行状态。同时作为 liveness 和 readiness 探针。
 
 **请求示例**:
 
@@ -337,14 +339,16 @@ curl http://localhost:8080/health
 {
   "status": "healthy",
   "browser_active": true,
+  "browser_ready": true,
   "session": "sbx_abc123"
 }
 ```
 
 | 字段 | 类型 | 可选值 | 说明 |
 |------|------|--------|------|
-| `status` | string | `healthy` / `degraded` / `unhealthy` | 服务状态 |
+| `status` | string | `healthy` / `degraded` / `unhealthy` | 服务状态（liveness） |
 | `browser_active` | bool | — | 当前 session 是否有活跃浏览器 |
+| `browser_ready` | bool | — | 浏览器是否已预热就绪（readiness） |
 | `session` | string | — | 当前 session 名称（来自 `SANDBOX_ID`） |
 
 **状态判断逻辑**（见 [`health()`](pkgs/gull/app/main.py:301)）:
@@ -355,6 +359,14 @@ curl http://localhost:8080/health
 | `agent-browser` 命令不存在 | `unhealthy` |
 
 `browser_active` 通过执行 `agent-browser session list` 并检查当前 session 名称是否在输出中来判断。
+
+**`browser_ready` 字段**:
+
+`browser_ready` 表示 Chromium 浏览器是否已在 lifespan 启动阶段完成预热。Gull 在启动时会执行 `agent-browser open about:blank` 来触发 Chromium 初始化，成功后将 `browser_ready` 设为 `true`。
+
+Bay 的 `SessionManager._wait_for_ready()` 在等待 browser 类型容器就绪时，会检查此字段。只有当 `browser_ready=true` 时，Bay 才会标记 session 为 `RUNNING`。这确保了用户发送第一个 `open` 命令时浏览器已完全可用，无需等待 Chromium 冷启动的额外延迟。
+
+> **向后兼容**: 旧版 Gull 镜像的 `/health` 响应不包含 `browser_ready` 字段。Bay 在解析时使用 `payload.get("browser_ready", True)` 作为默认值，因此旧版 Gull 会被视为就绪，不会阻塞。
 
 ### 3.4 运行时元数据 — `GET /meta`
 

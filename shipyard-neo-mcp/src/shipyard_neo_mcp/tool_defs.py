@@ -281,7 +281,10 @@ def get_tool_definitions() -> list[Tool]:
                 "type": "object",
                 "properties": {
                     "payload": {
-                        "anyOf": [{"type": "object"}, {"type": "array"}],
+                        "anyOf": [
+                            {"type": "object"},
+                            {"type": "array", "items": {}},
+                        ],
                         "description": "JSON object/array payload content.",
                     },
                     "kind": {

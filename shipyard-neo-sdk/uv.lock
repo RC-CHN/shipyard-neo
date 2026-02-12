@@ -488,7 +488,7 @@ wheels = [
 
 [[package]]
 name = "shipyard-neo-sdk"
-version = "0.1.2"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

@@ -82,8 +82,16 @@ class TestHealthEndpoint:
         data = resp.json()
         assert "status" in data
         assert "browser_active" in data
+        assert "browser_ready" in data
         assert "session" in data
         assert data["status"] in ("healthy", "degraded", "unhealthy")
+        assert isinstance(data["browser_ready"], bool)
+
+    def test_health_browser_ready_after_prewarm(self, gull_container: str):
+        """After lifespan pre-warm, browser_ready should be True."""
+        resp = httpx.get(f"{gull_container}/health", timeout=DEFAULT_TIMEOUT)
+        data = resp.json()
+        assert data["browser_ready"] is True
 
     def test_health_status_is_healthy(self, gull_container: str):
         resp = httpx.get(f"{gull_container}/health", timeout=DEFAULT_TIMEOUT)
