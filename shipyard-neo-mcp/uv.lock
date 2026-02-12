@@ -750,7 +750,7 @@ wheels = [
 
 [[package]]
 name = "shipyard-neo-mcp"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -774,7 +774,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "shipyard-neo-sdk"
-version = "0.1.6"
+version = "0.1.7"
 source = { editable = "../shipyard-neo-sdk" }
 dependencies = [
     { name = "httpx" },
