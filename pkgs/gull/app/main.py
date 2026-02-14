@@ -62,7 +62,12 @@ GULL_VERSION = get_version()
 # Note: This does NOT guarantee the daemon was started with our desired
 # `--profile` (see _ensure_browser_ready() for the trade-off).
 _browser_ready: bool = False
-_browser_ready_lock: asyncio.Lock | None = None
+
+# Module-global lock to prevent concurrent pre-warm races.
+#
+# We intentionally instantiate this at import time to avoid a check-then-set
+# race when many requests hit Gull at once.
+_browser_ready_lock: asyncio.Lock = asyncio.Lock()
 
 
 async def _ensure_browser_ready() -> None:
@@ -87,13 +92,10 @@ async def _ensure_browser_ready() -> None:
       If you must guarantee the profile is applied, you would need an explicit
       close → open(with profile) restart policy (not implemented here).
     """
-    global _browser_ready, _browser_ready_lock
+    global _browser_ready
 
     if _browser_ready:
         return
-
-    if _browser_ready_lock is None:
-        _browser_ready_lock = asyncio.Lock()
 
     async with _browser_ready_lock:
         if _browser_ready:
@@ -299,8 +301,17 @@ def _scan_built_in_skills(root: Path = SKILLS_SRC_DIR) -> list[dict]:
 
 
 def _parse_frontmatter(text: str) -> dict:
-    """Extract YAML frontmatter from markdown text (simple parser)."""
-    match = re.match(r"^---\s*\n(.*?)\n---", text, re.DOTALL)
+    """Extract YAML frontmatter from markdown text (simple parser).
+
+    Tolerates:
+    - CRLF line endings
+    - optional leading BOM
+    - leading whitespace/blank lines before the opening '---'
+
+    Note: This is intentionally a *simple* frontmatter parser (flat key/value
+    pairs only), not a full YAML implementation.
+    """
+    match = re.match(r"^\ufeff?\s*---\s*\r?\n(.*?)\r?\n---", text, re.DOTALL)
     if not match:
         return {}
     result: dict[str, str] = {}
