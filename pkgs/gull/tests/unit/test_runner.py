@@ -265,6 +265,29 @@ async def test_ensure_browser_ready_is_idempotent_under_concurrency(
 
 
 @pytest.mark.asyncio
+async def test_ensure_browser_ready_probe_fail_and_open_fail_keeps_not_ready(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[str] = []
+
+    async def fake_run(cmd: str, **_kwargs):
+        calls.append(cmd)
+        if cmd == "session list":
+            return "", "probe failed", 2
+        if cmd == "open about:blank":
+            return "", "browser failed", 1
+        return "", "", 0
+
+    monkeypatch.setattr(gull_main, "_browser_ready", False)
+    monkeypatch.setattr(gull_main, "_run_agent_browser", fake_run)
+
+    await gull_main._ensure_browser_ready()
+
+    assert gull_main._browser_ready is False
+    assert calls == ["session list", "open about:blank"]
+
+
+@pytest.mark.asyncio
 async def test_exec_command_omits_profile_when_browser_ready_true(
     monkeypatch: pytest.MonkeyPatch,
 ):
