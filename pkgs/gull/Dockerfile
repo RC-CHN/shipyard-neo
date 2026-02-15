@@ -44,7 +44,7 @@ RUN chmod +x /app/entrypoint.sh
 # Runtime defaults
 ENV BAY_WORKSPACE_PATH=/workspace
 
-EXPOSE 8080
+EXPOSE 8115
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
@@ -54,4 +54,4 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # Node.js child processes (agent-browser): pipe management differs from
 # standard asyncio, causing process.communicate() to hang waiting for EOF,
 # which manifests as command timeouts.
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--loop", "asyncio"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8115", "--loop", "asyncio"]
