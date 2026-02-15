@@ -93,7 +93,7 @@ def gull_container():
             "--name",
             GULL_CONTAINER_NAME,
             "-p",
-            f"{GULL_HOST_PORT}:8080",
+            f"{GULL_HOST_PORT}:8115",
             GULL_IMAGE,
         ],
         capture_output=True,

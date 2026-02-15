@@ -10,7 +10,7 @@ services:
       dockerfile: Dockerfile
     container_name: bay-e2e-test
     ports:
-      - "8002:8000"
+      - "8002:8114"
     volumes:
       # Mount Docker socket for Bay to create Ship containers
       - /var/run/docker.sock:/var/run/docker.sock
@@ -21,7 +21,7 @@ services:
     networks:
       - bay-e2e-test-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8114/health"]
       interval: 5s
       timeout: 3s
       retries: 10

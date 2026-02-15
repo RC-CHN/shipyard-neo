@@ -241,7 +241,7 @@ data:
   config.yaml: |
     server:
       host: "0.0.0.0"
-      port: 8000
+      port: 8114
 
     database:
       url: "sqlite+aiosqlite:///./bay-e2e-test.db"
@@ -346,7 +346,7 @@ data:
           - name: browser
             image: "gull:latest"
             runtime_type: gull
-            runtime_port: 8080
+            runtime_port: 8115
             resources:
               cpus: 1.0
               memory: "2g"
@@ -395,13 +395,13 @@ spec:
       readinessProbe:
         httpGet:
           path: /health
-          port: 8000
+          port: 8114
         initialDelaySeconds: 5
         periodSeconds: 2
       livenessProbe:
         httpGet:
           path: /health
-          port: 8000
+          port: 8114
         initialDelaySeconds: 10
         periodSeconds: 10
   volumes:
@@ -455,7 +455,7 @@ EOF
 # ─── Port forward ────────────────────────────────────────────────────
 start_port_forward() {
     log_info "Starting port-forward to Bay Pod..."
-    kubectl port-forward pod/bay -n "$NAMESPACE" $BAY_PORT:8000 &
+    kubectl port-forward pod/bay -n "$NAMESPACE" $BAY_PORT:8114 &
     PORT_FORWARD_PID=$!
     sleep 2
 

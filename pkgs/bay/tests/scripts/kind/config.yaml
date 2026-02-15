@@ -121,7 +121,7 @@ profiles:
       - name: browser
         image: "gull:latest"
         runtime_type: gull
-        runtime_port: 8080
+        runtime_port: 8115
         resources:
           cpus: 1.0
           memory: "2g"
