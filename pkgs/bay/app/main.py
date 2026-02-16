@@ -30,6 +30,15 @@ async def lifespan(app: FastAPI):
     logger.info("bay.startup", version=RUNTIME_VERSION)
     await init_db()
 
+    # Auto-provision API key (generates on first boot, loads hashes for auth)
+    from app.db.session import get_async_session
+    from app.services.api_key import ApiKeyService
+
+    settings = get_settings()
+    async with get_async_session() as db:
+        api_key_hashes = await ApiKeyService.auto_provision(db, settings)
+    app.state.api_key_hashes = api_key_hashes
+
     # Initialize HTTP client with connection pooling
     await http_client_manager.startup()
 

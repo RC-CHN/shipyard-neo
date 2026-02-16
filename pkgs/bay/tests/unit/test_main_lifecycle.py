@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -35,12 +36,23 @@ async def test_lifespan_wires_startup_and_shutdown_in_order(monkeypatch: pytest.
     async def shutdown_browser_learning_scheduler() -> None:
         await _record("shutdown_browser_learning_scheduler")
 
+    @asynccontextmanager
+    async def fake_get_async_session():
+        yield object()
+
+    async def fake_auto_provision(db, settings):  # noqa: ANN001, ANN202
+        await _record("api_key_auto_provision")
+        return {}
+
     class FakeHTTPClientManager:
         async def startup(self) -> None:
             await _record("http_startup")
 
         async def shutdown(self) -> None:
             await _record("http_shutdown")
+
+    import app.db.session as db_session_module
+    from app.services.api_key import ApiKeyService
 
     monkeypatch.setattr(main_module, "init_db", init_db)
     monkeypatch.setattr(main_module, "close_db", close_db)
@@ -57,12 +69,17 @@ async def test_lifespan_wires_startup_and_shutdown_in_order(monkeypatch: pytest.
         shutdown_browser_learning_scheduler,
     )
     monkeypatch.setattr(main_module, "http_client_manager", FakeHTTPClientManager())
+    monkeypatch.setattr(db_session_module, "get_async_session", fake_get_async_session)
+    monkeypatch.setattr(ApiKeyService, "auto_provision", staticmethod(fake_auto_provision))
 
-    async with main_module.lifespan(SimpleNamespace()):
+    app = SimpleNamespace(state=SimpleNamespace())
+    async with main_module.lifespan(app):
         events.append("inside")
 
+    assert app.state.api_key_hashes == {}
     assert events == [
         "init_db",
+        "api_key_auto_provision",
         "http_startup",
         "init_gc_scheduler",
         "init_browser_learning_scheduler",
