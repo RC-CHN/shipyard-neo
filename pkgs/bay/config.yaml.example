@@ -51,16 +51,34 @@ cargo:
 
 security:
   # API Key authentication
-  # Set to enable API key validation, requests must include:
-  #   Authorization: Bearer <api_key>
-  # Leave null/empty to disable API key validation
-  api_key: null  # Production: "your-secret-api-key"
-  
+  #
+  # Bay supports three modes for API key configuration:
+  #
+  # 1. Auto-generation (recommended for personal deployment):
+  #    Leave api_key null/empty. On first boot, Bay will:
+  #    - Auto-generate a key (sk-bay-...) and store its SHA-256 hash in the DB
+  #    - Log the plaintext key once at INFO level
+  #    - Write credentials.json for companion services (e.g., AstrBot)
+  #    Subsequent restarts will reuse the existing key from DB.
+  #
+  # 2. Environment variable override:
+  #    Set BAY_API_KEY=sk-bay-your-key to inject a specific key.
+  #    This seeds the key to DB on startup.
+  #
+  # 3. Config file (legacy):
+  #    Set api_key below. This skips auto-generation and DB entirely.
+  #    Requests must include: Authorization: Bearer <api_key>
+  #
+  api_key: null
+
   # Allow anonymous access (no authentication required)
   # Development: true (default) - allows unauthenticated requests
   # Production: false - requires valid API key
   allow_anonymous: true
-  
+
+  # Credentials file output directory (env: BAY_DATA_DIR, default: current directory)
+  # Auto-generated key is written to {BAY_DATA_DIR}/credentials.json
+
   # Network blocklist (Phase 2)
   blocked_hosts:
     - "169.254.0.0/16"  # Cloud metadata
