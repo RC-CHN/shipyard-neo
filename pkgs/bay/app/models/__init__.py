@@ -1,5 +1,6 @@
 """SQLModel data models."""
 
+from app.models.api_key import ApiKey
 from app.models.cargo import Cargo
 from app.models.idempotency import IdempotencyKey
 from app.models.sandbox import Sandbox
@@ -26,6 +27,7 @@ Session.model_rebuild()
 Sandbox.model_rebuild()
 
 __all__ = [
+    "ApiKey",
     "IdempotencyKey",
     "Sandbox",
     "Session",
