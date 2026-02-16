@@ -8,3 +8,4 @@ scripts/
 .codex/
 .claude/
 camel/
+.agent/
