@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -15,6 +14,7 @@ from app.managers.session import SessionManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
 from app.services.gc.base import GCResult, GCTask
+from app.utils.datetime import utcnow
 
 if TYPE_CHECKING:
     from app.drivers.base import Driver
@@ -54,7 +54,7 @@ class ExpiredSandboxGC(GCTask):
     async def run(self) -> GCResult:
         """Execute expired sandbox cleanup."""
         result = GCResult(task_name=self.name)
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Start a fresh transaction to see latest committed data.
         # This is safe because:
@@ -120,7 +120,7 @@ class ExpiredSandboxGC(GCTask):
                 return False
 
             # Double-check: user may have extended TTL while we waited for lock
-            now = datetime.utcnow()
+            now = utcnow()
             if sandbox.expires_at is None or sandbox.expires_at >= now:
                 self._log.debug(
                     "gc.expired_sandbox.skip.ttl_extended",
@@ -155,7 +155,7 @@ class ExpiredSandboxGC(GCTask):
             cargo = await self._cargo_mgr.get_by_id(cargo_id)
 
             # Soft delete sandbox
-            sandbox.deleted_at = datetime.utcnow()
+            sandbox.deleted_at = utcnow()
             sandbox.current_session_id = None
             await self._db.commit()
 

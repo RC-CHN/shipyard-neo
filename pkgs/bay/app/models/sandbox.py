@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.utils.datetime import utcnow
+
 if TYPE_CHECKING:
     from app.models.cargo import Cargo
     from app.models.session import Session
@@ -59,8 +61,8 @@ class Sandbox(SQLModel, table=True):
     version: int = Field(default=1)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_active_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    last_active_at: datetime = Field(default_factory=utcnow)
 
     # Relationships
     cargo: "Cargo" = Relationship(back_populates="sandboxes")
@@ -76,7 +78,7 @@ class Sandbox(SQLModel, table=True):
         """Check if sandbox TTL has expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return utcnow() > self.expires_at
 
     def compute_status(
         self,

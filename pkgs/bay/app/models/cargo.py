@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.utils.datetime import utcnow
+
 if TYPE_CHECKING:
     from app.models.sandbox import Sandbox
 
@@ -36,8 +38,8 @@ class Cargo(SQLModel, table=True):
     size_limit_mb: int = Field(default=1024)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_accessed_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    last_accessed_at: datetime = Field(default_factory=utcnow)
 
     # Relationships
     sandboxes: list["Sandbox"] = Relationship(back_populates="cargo")

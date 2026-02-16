@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from sqlalchemy import Column
 from sqlmodel import Field, Relationship, SQLModel
 
+from app.utils.datetime import utcnow
+
 try:
     from sqlalchemy import JSON
 except ImportError:
@@ -87,8 +89,8 @@ class Session(SQLModel, table=True):
     last_observed_at: Optional[datetime] = Field(default=None)
 
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_active_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    last_active_at: datetime = Field(default_factory=utcnow)
 
     # Relationships
     sandbox: "Sandbox" = Relationship(back_populates="sessions")

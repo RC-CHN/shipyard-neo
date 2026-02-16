@@ -22,8 +22,8 @@ from app.api.v1.sandboxes import (
     _query_containers_status,
     _query_single_container,
 )
-from app.models.session import Session, SessionStatus
-
+from app.models.session import Session
+from app.utils.datetime import utcnow
 
 # -- Model serialization tests --
 
@@ -102,7 +102,7 @@ class TestSandboxResponseWithContainers:
             profile="python-default",
             cargo_id="cargo-test",
             capabilities=["python"],
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             expires_at=None,
             idle_expires_at=None,
         )
@@ -134,7 +134,7 @@ class TestSandboxResponseWithContainers:
             profile="browser-enabled",
             cargo_id="cargo-test",
             capabilities=["python", "shell", "filesystem", "browser"],
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             expires_at=None,
             idle_expires_at=None,
             containers=containers,
@@ -180,7 +180,7 @@ class TestSandboxResponseWithContainers:
             profile="python-default",
             cargo_id="cargo-test",
             capabilities=["python"],
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
             expires_at=None,
             idle_expires_at=None,
         )

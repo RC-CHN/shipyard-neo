@@ -14,6 +14,8 @@ from enum import Enum
 
 from sqlmodel import Field, SQLModel
 
+from app.utils.datetime import utcnow
+
 
 class ExecutionType(str, Enum):
     """Execution type for evidence records."""
@@ -95,7 +97,7 @@ class ExecutionHistory(SQLModel, table=True):
     learn_error: str | None = Field(default=None)
     learn_processed_at: datetime | None = Field(default=None, index=True)
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class ArtifactBlob(SQLModel, table=True):
@@ -107,7 +109,7 @@ class ArtifactBlob(SQLModel, table=True):
     owner: str = Field(index=True)
     kind: str = Field(default="generic", index=True)
     payload_json: str
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class SkillCandidate(SQLModel, table=True):
@@ -131,8 +133,8 @@ class SkillCandidate(SQLModel, table=True):
     status: SkillCandidateStatus = Field(default=SkillCandidateStatus.DRAFT, index=True)
 
     created_by: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
 
     latest_score: float | None = Field(default=None)
     latest_pass: bool | None = Field(default=None)
@@ -157,7 +159,7 @@ class SkillEvaluation(SQLModel, table=True):
     report: str | None = Field(default=None)
 
     evaluated_by: str | None = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class SkillRelease(SQLModel, table=True):
@@ -177,7 +179,7 @@ class SkillRelease(SQLModel, table=True):
     release_mode: SkillReleaseMode = Field(default=SkillReleaseMode.MANUAL, index=True)
 
     promoted_by: str | None = Field(default=None)
-    promoted_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    promoted_at: datetime = Field(default_factory=utcnow, index=True)
 
     rollback_of: str | None = Field(default=None, index=True)
     auto_promoted_from: str | None = Field(default=None, index=True)

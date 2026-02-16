@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete
@@ -20,6 +20,7 @@ from sqlmodel import select
 
 from app.errors import ConflictError
 from app.models.idempotency import IdempotencyKey
+from app.utils.datetime import utcnow
 
 if TYPE_CHECKING:
     from app.config import IdempotencyConfig
@@ -231,7 +232,7 @@ class IdempotencyService:
         else:
             response_json = json.dumps(response, default=str)
 
-        now = datetime.utcnow()
+        now = utcnow()
         expires_at = now + timedelta(hours=self.ttl_hours)
 
         record = IdempotencyKey(
@@ -276,7 +277,7 @@ class IdempotencyService:
         Returns:
             Number of deleted records
         """
-        now = datetime.utcnow()
+        now = utcnow()
         stmt = (
             delete(IdempotencyKey)
             .where(IdempotencyKey.expires_at < now)

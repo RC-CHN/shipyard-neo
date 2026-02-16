@@ -10,6 +10,8 @@ from datetime import datetime
 
 from sqlmodel import Field, SQLModel
 
+from app.utils.datetime import utcnow
+
 
 class IdempotencyKey(SQLModel, table=True):
     """Idempotency key for POST operations."""
@@ -28,9 +30,9 @@ class IdempotencyKey(SQLModel, table=True):
     status_code: int = Field(default=200)
 
     # TTL
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime = Field(index=True)
 
     def is_expired(self) -> bool:
         """Check if this idempotency key has expired."""
-        return datetime.utcnow() > self.expires_at
+        return utcnow() > self.expires_at

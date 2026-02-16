@@ -7,13 +7,14 @@ Includes edge cases: _process_sandbox returns False, delete errors, etc.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app.config import GCConfig, GCTaskConfig
 from app.drivers.base import RuntimeInstance
+from app.utils.datetime import utcnow
 
 
 class TestIdleSessionGCQueryConditions:
@@ -32,7 +33,7 @@ class TestIdleSessionGCQueryConditions:
         expired_sandbox = MagicMock()
         expired_sandbox.id = "sandbox-1"
         expired_sandbox.deleted_at = None
-        expired_sandbox.idle_expires_at = datetime.utcnow() - timedelta(minutes=5)
+        expired_sandbox.idle_expires_at = utcnow() - timedelta(minutes=5)
 
         # Mock the DB query result
         result_mock = MagicMock()
@@ -137,7 +138,7 @@ class TestExpiredSandboxGCQueryConditions:
         expired_sandbox.owner = "default"
         expired_sandbox.cargo_id = "ws-1"
         expired_sandbox.deleted_at = None
-        expired_sandbox.expires_at = datetime.utcnow() - timedelta(hours=1)
+        expired_sandbox.expires_at = utcnow() - timedelta(hours=1)
 
         result_mock = MagicMock()
         result_mock.scalars.return_value.all.return_value = [expired_sandbox]

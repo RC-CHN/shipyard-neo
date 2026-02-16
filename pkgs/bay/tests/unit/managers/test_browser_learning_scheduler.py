@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -22,6 +22,7 @@ from app.models.skill import (
 from app.services.skills import scheduler as scheduler_module
 from app.services.skills.scheduler import BrowserLearningProcessor
 from app.services.skills.service import SkillLifecycleService
+from app.utils.datetime import utcnow
 
 
 @pytest.fixture
@@ -223,7 +224,7 @@ async def test_auto_promotes_stable_after_healthy_window(
         stage=SkillReleaseStage.CANARY,
         promoted_by="system:auto",
         release_mode=SkillReleaseMode.AUTO,
-        health_window_end_at=datetime.utcnow() + timedelta(seconds=1),
+        health_window_end_at=utcnow() + timedelta(seconds=1),
     )
     await skill_service.create_execution(
         owner="default",
@@ -444,7 +445,7 @@ async def test_auto_stable_promotion_blocked_when_auto_release_disabled(
         stage=SkillReleaseStage.CANARY,
         promoted_by="system:auto",
         release_mode=SkillReleaseMode.AUTO,
-        health_window_end_at=datetime.utcnow() - timedelta(seconds=1),
+        health_window_end_at=utcnow() - timedelta(seconds=1),
     )
     await skill_service.create_execution(
         owner="default",

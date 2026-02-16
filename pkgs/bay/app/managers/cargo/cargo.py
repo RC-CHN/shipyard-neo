@@ -6,7 +6,6 @@ See: plans/bay-design.md section 3.2
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,8 +14,9 @@ from sqlmodel import select
 from app.config import get_settings
 from app.drivers.base import Driver
 from app.errors import ConflictError, NotFoundError
-from app.models.sandbox import Sandbox
 from app.models.cargo import Cargo
+from app.models.sandbox import Sandbox
+from app.utils.datetime import utcnow
 
 logger = structlog.get_logger()
 
@@ -78,8 +78,8 @@ class CargoManager:
             managed=managed,
             managed_by_sandbox_id=managed_by_sandbox_id,
             size_limit_mb=size_limit_mb or self._settings.cargo.default_size_limit_mb,
-            created_at=datetime.utcnow(),
-            last_accessed_at=datetime.utcnow(),
+            created_at=utcnow(),
+            last_accessed_at=utcnow(),
         )
 
         self._db.add(cargo)
@@ -131,7 +131,8 @@ class CargoManager:
 
         Args:
             owner: Owner identifier
-            managed: Filter by managed status (None = all, True = managed only, False = external only)
+            managed: Filter by managed status
+                (None = all, True = managed only, False = external only)
             limit: Maximum number of results
             cursor: Pagination cursor
 
@@ -247,7 +248,7 @@ class CargoManager:
         cargo = result.scalars().first()
 
         if cargo:
-            cargo.last_accessed_at = datetime.utcnow()
+            cargo.last_accessed_at = utcnow()
             await self._db.commit()
 
     async def delete_internal_by_id(self, cargo_id: str) -> None:

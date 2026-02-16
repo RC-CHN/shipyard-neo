@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
 from app.router.capability.adapter_pool import default_adapter_pool
+from app.utils.datetime import utcnow
 
 router = APIRouter()
 _log = structlog.get_logger()
@@ -85,7 +86,7 @@ def _sandbox_to_response(
     containers: list[ContainerRuntimeResponse] | None = None,
 ) -> SandboxResponse:
     """Convert Sandbox model to API response."""
-    now = datetime.utcnow()
+    now = utcnow()
     return _sandbox_to_response_at_time(
         sandbox,
         now=now,
@@ -359,7 +360,7 @@ async def list_sandboxes(
         cursor=cursor,
     )
 
-    now = datetime.utcnow()
+    now = utcnow()
     items = [
         _sandbox_to_response_at_time(
             item.sandbox,

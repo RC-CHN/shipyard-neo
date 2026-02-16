@@ -6,7 +6,6 @@ Includes new tests for managed filter and delete protection.
 
 from __future__ import annotations
 
-from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -17,8 +16,9 @@ from sqlmodel import SQLModel, select
 from app.config import ProfileConfig, ResourceSpec, Settings
 from app.errors import ConflictError, NotFoundError
 from app.managers.cargo import CargoManager
-from app.models.sandbox import Sandbox
 from app.models.cargo import Cargo
+from app.models.sandbox import Sandbox
+from app.utils.datetime import utcnow
 from tests.fakes import FakeDriver
 
 
@@ -342,7 +342,7 @@ class TestCargoManagerDelete:
             owner="test-user",
             profile_id="python-default",
             cargo_id=cargo.id,
-            deleted_at=datetime.utcnow(),  # Soft-deleted
+            deleted_at=utcnow(),  # Soft-deleted
         )
         db_session.add(sandbox)
         await db_session.commit()
@@ -401,7 +401,7 @@ class TestCargoManagerDelete:
             owner="test-user",
             profile_id="python-default",
             cargo_id=cargo.id,
-            deleted_at=datetime.utcnow(),  # Soft-deleted
+            deleted_at=utcnow(),  # Soft-deleted
         )
         db_session.add(sandbox)
         await db_session.commit()

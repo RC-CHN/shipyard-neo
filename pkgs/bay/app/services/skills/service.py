@@ -34,6 +34,7 @@ from app.models.skill import (
     SkillReleaseStage,
     SkillType,
 )
+from app.utils.datetime import utcnow
 
 
 class SkillLifecycleService:
@@ -107,7 +108,7 @@ class SkillLifecycleService:
             owner=owner,
             kind=kind,
             payload_json=json.dumps(payload, ensure_ascii=False),
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         self._db.add(blob)
         await self._db.commit()
@@ -210,7 +211,7 @@ class SkillLifecycleService:
             learn_status=normalized_learn_status,
             learn_error=learn_error,
             learn_processed_at=learn_processed_at,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         self._db.add(entry)
         await self._db.commit()
@@ -443,8 +444,8 @@ class SkillLifecycleService:
             auto_release_reason=auto_release_reason,
             status=SkillCandidateStatus.DRAFT,
             created_by=created_by,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=utcnow(),
+            updated_at=utcnow(),
         )
 
         self._db.add(candidate)
@@ -463,7 +464,7 @@ class SkillLifecycleService:
         candidate = await self.get_candidate(owner=owner, candidate_id=candidate_id)
         candidate.auto_release_eligible = eligible
         candidate.auto_release_reason = reason
-        candidate.updated_at = datetime.utcnow()
+        candidate.updated_at = utcnow()
         await self._db.commit()
         await self._db.refresh(candidate)
         return candidate
@@ -530,7 +531,7 @@ class SkillLifecycleService:
         candidate = await self.get_candidate(owner=owner, candidate_id=candidate_id)
 
         candidate.status = SkillCandidateStatus.EVALUATING
-        candidate.updated_at = datetime.utcnow()
+        candidate.updated_at = utcnow()
         await self._db.commit()
 
         evaluation = SkillEvaluation(
@@ -542,14 +543,14 @@ class SkillLifecycleService:
             passed=passed,
             report=report,
             evaluated_by=evaluated_by,
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         self._db.add(evaluation)
 
         candidate.latest_score = score
         candidate.latest_pass = passed
-        candidate.last_evaluated_at = datetime.utcnow()
-        candidate.updated_at = datetime.utcnow()
+        candidate.last_evaluated_at = utcnow()
+        candidate.updated_at = utcnow()
         if not passed:
             candidate.status = SkillCandidateStatus.REJECTED
 
@@ -624,7 +625,7 @@ class SkillLifecycleService:
             is_active=True,
             release_mode=release_mode,
             promoted_by=promoted_by,
-            promoted_at=datetime.utcnow(),
+            promoted_at=utcnow(),
             auto_promoted_from=auto_promoted_from,
             health_window_end_at=health_window_end_at,
         )
@@ -644,7 +645,7 @@ class SkillLifecycleService:
             candidate.status = SkillCandidateStatus.PROMOTED_STABLE
         else:
             candidate.status = SkillCandidateStatus.PROMOTED
-        candidate.updated_at = datetime.utcnow()
+        candidate.updated_at = utcnow()
         candidate.promotion_release_id = release.id
 
         await self._db.commit()
@@ -780,7 +781,7 @@ class SkillLifecycleService:
             is_active=True,
             release_mode=release_mode,
             promoted_by=rolled_back_by,
-            promoted_at=datetime.utcnow(),
+            promoted_at=utcnow(),
             rollback_of=current.id,
             auto_promoted_from=current.id if release_mode == SkillReleaseMode.AUTO else None,
         )
@@ -788,7 +789,7 @@ class SkillLifecycleService:
 
         current_candidate = await self.get_candidate(owner=owner, candidate_id=current.candidate_id)
         current_candidate.status = SkillCandidateStatus.ROLLED_BACK
-        current_candidate.updated_at = datetime.utcnow()
+        current_candidate.updated_at = utcnow()
 
         await self._db.commit()
         await self._db.refresh(rollback_release)
@@ -810,7 +811,7 @@ class SkillLifecycleService:
     ) -> dict[str, Any]:
         release = await self._get_release(owner=owner, release_id=release_id)
 
-        now_dt = now or datetime.utcnow()
+        now_dt = now or utcnow()
         window_end = release.health_window_end_at or (release.promoted_at + timedelta(hours=24))
         window_now = min(now_dt, window_end)
         window_complete = now_dt >= window_end

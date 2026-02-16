@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 import structlog
@@ -21,6 +21,7 @@ from app.models.skill import (
     SkillType,
 )
 from app.services.skills.service import SkillLifecycleService
+from app.utils.datetime import utcnow
 
 logger = structlog.get_logger()
 
@@ -92,7 +93,7 @@ class BrowserLearningProcessor:
                     execution_id=entry.id,
                     status=LearnStatus.ERROR,
                     error=str(exc),
-                    processed_at=datetime.utcnow(),
+                    processed_at=utcnow(),
                 )
                 self._log.exception(
                     "skills.browser.learning.execution_failed",
@@ -115,7 +116,7 @@ class BrowserLearningProcessor:
                 execution_id=entry.id,
                 status=LearnStatus.SKIPPED,
                 error="no_actionable_segments",
-                processed_at=datetime.utcnow(),
+                processed_at=utcnow(),
             )
             return False
 
@@ -203,7 +204,7 @@ class BrowserLearningProcessor:
                 promoted_by="system:auto",
                 release_mode=SkillReleaseMode.AUTO,
                 auto_promoted_from=active.id if active else None,
-                health_window_end_at=datetime.utcnow()
+                health_window_end_at=utcnow()
                 + timedelta(hours=self._config.canary_window_hours),
             )
             result.promoted_canary += 1
@@ -227,7 +228,7 @@ class BrowserLearningProcessor:
             execution_id=entry.id,
             status=LearnStatus.PROCESSED,
             error=None,
-            processed_at=datetime.utcnow(),
+            processed_at=utcnow(),
         )
         return True
 

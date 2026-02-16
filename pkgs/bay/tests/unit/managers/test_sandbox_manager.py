@@ -6,7 +6,7 @@ Includes edge cases: stop without session, unmanaged workspace handling.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +20,7 @@ from app.managers.sandbox import SandboxManager
 from app.models.cargo import Cargo
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session, SessionStatus
+from app.utils.datetime import utcnow
 from tests.fakes import FakeDriver
 
 
@@ -142,7 +143,7 @@ class TestSandboxManagerCreate:
         # Assert
         assert sandbox.expires_at is not None
         # TTL should be approximately 1 hour from now
-        delta = sandbox.expires_at - datetime.utcnow()
+        delta = sandbox.expires_at - utcnow()
         assert 3590 < delta.total_seconds() < 3610
 
     async def test_create_sandbox_without_ttl_has_no_expiry(
@@ -174,7 +175,7 @@ class TestSandboxManagerCreate:
         )
 
         # Assert
-        status = sandbox.compute_status(now=datetime.utcnow(), current_session=None)
+        status = sandbox.compute_status(now=utcnow(), current_session=None)
         assert status == SandboxStatus.IDLE
 
 
@@ -520,7 +521,7 @@ class TestSandboxManagerExtendTTL:
         assert sandbox.expires_at is not None
 
         # force expires_at to past
-        sandbox.expires_at = datetime.utcnow() - timedelta(seconds=5)
+        sandbox.expires_at = utcnow() - timedelta(seconds=5)
         await sandbox_manager._db.commit()
 
         with pytest.raises(SandboxExpiredError):

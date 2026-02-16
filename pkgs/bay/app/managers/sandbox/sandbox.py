@@ -9,8 +9,8 @@ See: plans/bay-design.md section 2.4
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import structlog
@@ -29,6 +29,7 @@ from app.managers.cargo import CargoManager
 from app.managers.session import SessionManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
+from app.utils.datetime import utcnow
 
 if TYPE_CHECKING:
     from app.drivers.base import Driver
@@ -107,7 +108,7 @@ class SandboxManager:
         # Calculate expiry
         expires_at = None
         if ttl and ttl > 0:
-            expires_at = datetime.utcnow() + timedelta(seconds=ttl)
+            expires_at = utcnow() + timedelta(seconds=ttl)
 
         # Create sandbox
         sandbox = Sandbox(
@@ -116,8 +117,8 @@ class SandboxManager:
             profile_id=profile_id,
             cargo_id=cargo.id,
             expires_at=expires_at,
-            created_at=datetime.utcnow(),
-            last_active_at=datetime.utcnow(),
+            created_at=utcnow(),
+            last_active_at=utcnow(),
         )
 
         self._db.add(sandbox)
@@ -172,7 +173,7 @@ class SandboxManager:
         Returns:
             Tuple of (sandboxes, next_cursor)
         """
-        now = datetime.utcnow()
+        now = utcnow()
         scan_cursor = cursor
 
         # Limit per-call scanning so rare filters don't force unbounded work.
@@ -229,7 +230,8 @@ class SandboxManager:
                     if len(returned) >= limit:
                         # Cursor is the last scanned sandbox_id at the point we reached the limit.
                         next_cursor = sandbox.id
-                        # Match CargoManager cursor semantics: only return cursor if there may be more.
+                        # Match CargoManager cursor semantics:
+                        # only return cursor if there may be more.
                         has_more_result = await self._db.execute(
                             select(Sandbox.id)
                             .where(
@@ -318,10 +320,10 @@ class SandboxManager:
             )
 
             # Update idle timeout
-            locked_sandbox.idle_expires_at = datetime.utcnow() + timedelta(
+            locked_sandbox.idle_expires_at = utcnow() + timedelta(
                 seconds=profile.idle_timeout
             )
-            locked_sandbox.last_active_at = datetime.utcnow()
+            locked_sandbox.last_active_at = utcnow()
             await self._db.commit()
 
             return session
@@ -377,7 +379,7 @@ class SandboxManager:
                     }
                 )
 
-            now = datetime.utcnow()
+            now = utcnow()
             if old < now:
                 raise SandboxExpiredError(
                     details={
@@ -410,9 +412,9 @@ class SandboxManager:
 
         profile = self._settings.get_profile(sandbox.profile_id)
         if profile:
-            sandbox.idle_expires_at = datetime.utcnow() + timedelta(seconds=profile.idle_timeout)
+            sandbox.idle_expires_at = utcnow() + timedelta(seconds=profile.idle_timeout)
 
-        sandbox.last_active_at = datetime.utcnow()
+        sandbox.last_active_at = utcnow()
         await self._db.commit()
 
     async def stop(self, sandbox: Sandbox) -> None:
@@ -500,7 +502,7 @@ class SandboxManager:
             cargo = await self._cargo_mgr.get_by_id(cargo_id)
 
             # Soft delete sandbox
-            locked_sandbox.deleted_at = datetime.utcnow()
+            locked_sandbox.deleted_at = utcnow()
             locked_sandbox.current_session_id = None
             await self._db.commit()
 

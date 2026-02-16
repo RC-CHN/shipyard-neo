@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 import structlog
@@ -14,6 +13,7 @@ from app.managers.session import SessionManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
 from app.services.gc.base import GCResult, GCTask
+from app.utils.datetime import utcnow
 
 if TYPE_CHECKING:
     from app.drivers.base import Driver
@@ -51,7 +51,7 @@ class IdleSessionGC(GCTask):
     async def run(self) -> GCResult:
         """Execute idle session cleanup."""
         result = GCResult(task_name=self.name)
-        now = datetime.utcnow()
+        now = utcnow()
 
         # Start a fresh transaction to see latest committed data.
         # This is safe because:
@@ -117,7 +117,7 @@ class IdleSessionGC(GCTask):
                 return False
 
             # Double-check: user may have activated the sandbox while we waited for lock
-            now = datetime.utcnow()
+            now = utcnow()
             if sandbox.idle_expires_at is None or sandbox.idle_expires_at >= now:
                 self._log.debug(
                     "gc.idle_session.skip.still_active",

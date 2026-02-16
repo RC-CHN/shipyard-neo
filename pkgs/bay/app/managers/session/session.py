@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import datetime
 
 import httpx
 import structlog
@@ -27,6 +26,7 @@ from app.errors import SessionNotReadyError
 from app.models.cargo import Cargo
 from app.models.session import Session, SessionStatus
 from app.services.http import http_client_manager
+from app.utils.datetime import utcnow
 
 logger = structlog.get_logger()
 
@@ -79,8 +79,8 @@ class SessionManager:
             profile_id=profile.id,
             desired_state=SessionStatus.PENDING,
             observed_state=SessionStatus.PENDING,
-            created_at=datetime.utcnow(),
-            last_active_at=datetime.utcnow(),
+            created_at=utcnow(),
+            last_active_at=utcnow(),
         )
 
         self._db.add(session)
@@ -180,7 +180,7 @@ class SessionManager:
                     error=str(e),
                 )
                 session.observed_state = SessionStatus.FAILED
-                session.last_observed_at = datetime.utcnow()
+                session.last_observed_at = utcnow()
                 await self._db.commit()
                 raise
 
@@ -211,7 +211,7 @@ class SessionManager:
                 # Only persist endpoint after readiness succeeds.
                 session.endpoint = endpoint
                 session.observed_state = SessionStatus.RUNNING
-                session.last_observed_at = datetime.utcnow()
+                session.last_observed_at = utcnow()
                 await self._db.commit()
 
             except Exception as e:
@@ -235,7 +235,7 @@ class SessionManager:
                 session.container_id = None
                 session.endpoint = None
                 session.observed_state = SessionStatus.FAILED
-                session.last_observed_at = datetime.utcnow()
+                session.last_observed_at = utcnow()
                 await self._db.commit()
                 raise
 
@@ -316,7 +316,7 @@ class SessionManager:
                 session.endpoint = primary_info.endpoint
                 session.containers = [ci.to_dict() for ci in container_infos]
                 session.observed_state = SessionStatus.RUNNING
-                session.last_observed_at = datetime.utcnow()
+                session.last_observed_at = utcnow()
                 await self._db.commit()
 
                 self._log.info(
@@ -356,7 +356,7 @@ class SessionManager:
                 session.endpoint = None
                 session.containers = None
                 session.observed_state = SessionStatus.FAILED
-                session.last_observed_at = datetime.utcnow()
+                session.last_observed_at = utcnow()
                 await self._db.commit()
                 raise
 
@@ -628,7 +628,7 @@ class SessionManager:
         session.observed_state = SessionStatus.STOPPED
         session.endpoint = None
         session.containers = None
-        session.last_observed_at = datetime.utcnow()
+        session.last_observed_at = utcnow()
         await self._db.commit()
 
     async def destroy(self, session: Session) -> None:
@@ -708,7 +708,7 @@ class SessionManager:
             session.observed_state = SessionStatus.STOPPED
             session.container_id = None
 
-        session.last_observed_at = datetime.utcnow()
+        session.last_observed_at = utcnow()
         await self._db.commit()
 
         return session
@@ -719,7 +719,7 @@ class SessionManager:
         session = result.scalars().first()
 
         if session:
-            session.last_active_at = datetime.utcnow()
+            session.last_active_at = utcnow()
             await self._db.commit()
 
     async def _probe_and_recover_if_dead(
@@ -792,7 +792,7 @@ class SessionManager:
         session.container_id = None
         session.endpoint = None
         session.observed_state = SessionStatus.PENDING
-        session.last_observed_at = datetime.utcnow()
+        session.last_observed_at = utcnow()
         await self._db.commit()
 
         self._log.info(

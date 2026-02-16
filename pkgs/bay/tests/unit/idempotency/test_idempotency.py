@@ -9,7 +9,7 @@ Tests cover:
 - Field persistence verification
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ from app.config import IdempotencyConfig
 from app.errors import ConflictError
 from app.models.idempotency import IdempotencyKey
 from app.services.idempotency import CachedResponse, IdempotencyService
+from app.utils.datetime import utcnow
 
 
 class TestKeyValidation:
@@ -148,8 +149,8 @@ class TestIdempotencyServiceCheck:
             request_fingerprint=fingerprint,
             response_snapshot='{"id": "sandbox-123"}',
             status_code=201,
-            created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            created_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
         )
         db_session.add(record)
         await db_session.flush()
@@ -183,8 +184,8 @@ class TestIdempotencyServiceCheck:
             request_fingerprint=fingerprint,
             response_snapshot='{"id": "sandbox-123"}',
             status_code=201,
-            created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            created_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
         )
         db_session.add(record)
         await db_session.flush()
@@ -213,8 +214,8 @@ class TestIdempotencyServiceCheck:
             request_fingerprint=fingerprint,
             response_snapshot='{"id": "sandbox-123"}',
             status_code=201,
-            created_at=datetime.utcnow() - timedelta(hours=2),
-            expires_at=datetime.utcnow() - timedelta(hours=1),  # Expired
+            created_at=utcnow() - timedelta(hours=2),
+            expires_at=utcnow() - timedelta(hours=1),  # Expired
         )
         db_session.add(record)
         await db_session.flush()
@@ -257,8 +258,8 @@ class TestIdempotencyServiceCheck:
             request_fingerprint=fingerprint,
             response_snapshot='{"id": "sandbox-user1"}',
             status_code=201,
-            created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(hours=1),
+            created_at=utcnow(),
+            expires_at=utcnow() + timedelta(hours=1),
         )
         db_session.add(record)
         await db_session.flush()
