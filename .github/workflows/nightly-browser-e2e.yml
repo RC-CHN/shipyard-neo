@@ -82,7 +82,7 @@ jobs:
                 - name: browser
                   image: gull:latest
                   runtime_type: gull
-                  runtime_port: 8080
+                  runtime_port: 8115
                   capabilities: [browser]
                   primary_for: [browser]
               idle_timeout: 1800
