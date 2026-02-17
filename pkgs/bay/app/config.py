@@ -349,10 +349,6 @@ class BrowserLearningConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
-    # API Key authentication
-    # None = no API key validation (check allow_anonymous only)
-    api_key: str | None = None
-
     # Allow anonymous access (no authentication required)
     # Development: True (default)
     # Production: False

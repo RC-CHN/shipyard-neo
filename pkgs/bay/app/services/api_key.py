@@ -94,10 +94,9 @@ class ApiKeyService:
         """Auto-provision API key on first boot.
 
         Logic:
-        1. If security.api_key is configured → skip (backward compat), return empty
-        2. Check BAY_API_KEY env var → seed to DB if set
-        3. Check DB for existing active keys → skip if any exist
-        4. Generate new key → store hash in DB + write credentials.json
+        1. Check BAY_API_KEY env var → seed to DB if set
+        2. Check DB for existing active keys → skip if any exist
+        3. Generate new key → store hash in DB + write credentials.json
 
         Args:
             db: Database session
@@ -106,17 +105,8 @@ class ApiKeyService:
         Returns:
             Dict mapping key_hash → owner (for in-memory cache)
         """
-        security = settings.security
 
-        # 1. Legacy api_key config — backward compat, no DB needed
-        if security.api_key:
-            logger.info(
-                "api_key.provision.skip",
-                reason="security.api_key configured in config",
-            )
-            return {}
-
-        # 2. BAY_API_KEY env var override
+        # 1. BAY_API_KEY env var override
         env_key = os.environ.get("BAY_API_KEY")
         if env_key:
             key_hash = ApiKeyService.hash_key(env_key)

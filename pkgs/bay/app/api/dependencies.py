@@ -88,10 +88,9 @@ def authenticate(request: Request) -> str:
 
     Authentication flow:
     1. If Bearer token provided:
-       a. If security.api_key configured → validate against config (legacy)
-       b. Else if DB key hashes loaded → validate via SHA-256 hash lookup
-       c. Else if allow_anonymous → allow any token
-       d. Otherwise → 401
+       a. If DB key hashes loaded → validate via hash lookup
+       b. Else if allow_anonymous → allow any token
+       c. Otherwise → 401
     2. If no token and allow_anonymous → allow (with optional X-Owner)
     3. Otherwise → 401 Unauthorized
 
@@ -109,14 +108,7 @@ def authenticate(request: Request) -> str:
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
 
-        # 1a. Legacy: Validate against config api_key
-        if security.api_key:
-            if hmac.compare_digest(token, security.api_key):
-                logger.debug("auth.success", source="config")
-                return "default"  # Single-tenant, fixed owner
-            raise UnauthorizedError("Invalid API key")
-
-        # 1b. DB key hash lookup (loaded at startup into app.state)
+        # 1a. DB key hash lookup (loaded at startup into app.state)
         api_key_hashes: dict[str, str] = getattr(
             request.app.state, "api_key_hashes", {}
         )

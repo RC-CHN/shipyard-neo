@@ -139,16 +139,6 @@ class TestAutoProvision:
         return db
 
     @pytest.mark.asyncio
-    async def test_skip_when_config_api_key_set(self, mock_db, mock_settings):
-        """Skips provisioning when security.api_key is configured."""
-        mock_settings.security.api_key = "configured-key"
-
-        result = await ApiKeyService.auto_provision(mock_db, mock_settings)
-
-        assert result == {}
-        mock_db.add.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_first_boot_generates_key(self, mock_db, mock_settings, tmp_path):
         """First boot with no keys generates a new key and writes credentials."""
         with patch.dict(os.environ, {"BAY_DATA_DIR": str(tmp_path)}, clear=False):
@@ -267,14 +257,13 @@ class TestAuthenticateWithDbKey:
 
     def _create_mock_settings(
         self,
-        api_key: str | None = None,
         allow_anonymous: bool = True,
     ):
         from app.config import SecurityConfig, Settings
 
         settings = MagicMock(spec=Settings)
         settings.security = SecurityConfig(
-            api_key=api_key, allow_anonymous=allow_anonymous
+            allow_anonymous=allow_anonymous
         )
         return settings
 
@@ -290,7 +279,7 @@ class TestAuthenticateWithDbKey:
             headers={"Authorization": f"Bearer {plaintext}"},
             api_key_hashes=hashes,
         )
-        settings = self._create_mock_settings(api_key=None, allow_anonymous=False)
+        settings = self._create_mock_settings(allow_anonymous=False)
 
         with patch("app.api.dependencies.get_settings", return_value=settings):
             result = authenticate(request)
@@ -308,7 +297,7 @@ class TestAuthenticateWithDbKey:
             headers={"Authorization": "Bearer wrong-key"},
             api_key_hashes=hashes,
         )
-        settings = self._create_mock_settings(api_key=None, allow_anonymous=False)
+        settings = self._create_mock_settings(allow_anonymous=False)
 
         with patch("app.api.dependencies.get_settings", return_value=settings):
             with pytest.raises(UnauthorizedError):
@@ -322,7 +311,7 @@ class TestAuthenticateWithDbKey:
             headers={"Authorization": "Bearer any-token"},
             api_key_hashes={},
         )
-        settings = self._create_mock_settings(api_key=None, allow_anonymous=True)
+        settings = self._create_mock_settings(allow_anonymous=True)
 
         with patch("app.api.dependencies.get_settings", return_value=settings):
             result = authenticate(request)
@@ -338,26 +327,10 @@ class TestAuthenticateWithDbKey:
             headers={"Authorization": "Bearer any-token"},
             api_key_hashes={},
         )
-        settings = self._create_mock_settings(api_key=None, allow_anonymous=False)
+        settings = self._create_mock_settings(allow_anonymous=False)
 
         with patch("app.api.dependencies.get_settings", return_value=settings):
             with pytest.raises(UnauthorizedError):
                 authenticate(request)
 
-    def test_config_key_takes_precedence_over_db(self):
-        """Config api_key is checked before DB hashes."""
-        from app.api.dependencies import authenticate
 
-        hashes = {ApiKeyService.hash_key("db-key"): "db-owner"}
-
-        request = self._create_mock_request(
-            headers={"Authorization": "Bearer config-key"},
-            api_key_hashes=hashes,
-        )
-        settings = self._create_mock_settings(api_key="config-key", allow_anonymous=False)
-
-        with patch("app.api.dependencies.get_settings", return_value=settings):
-            result = authenticate(request)
-
-        # Config path returns "default", not DB owner
-        assert result == "default"
