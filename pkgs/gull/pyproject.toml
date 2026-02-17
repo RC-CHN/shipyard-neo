@@ -1,6 +1,6 @@
 [project]
 name = "gull"
-version = "0.1.8"
+version = "0.1.9"
 description = "Gull - Browser Runtime for Shipyard Bay (agent-browser CLI passthrough)"
 readme = "README.md"
 requires-python = ">=3.11"
