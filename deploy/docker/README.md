@@ -37,6 +37,7 @@ Bay + Ship + Gull 的 Docker Compose 自包含生产部署方案。
 ```bash
 # 1. 编辑 config.yaml，搜索 CHANGE-ME 修改必须项：
 #    - security.api_key → 设置强随机密钥 (e.g. `openssl rand -hex 32`)
+#      （若同时设置 BAY_API_KEY 环境变量，则 BAY_API_KEY 优先）
 vi config.yaml
 
 # 2. 启动
@@ -89,6 +90,7 @@ docker compose -f docker-compose.yaml -f docker-compose.with-astrbot.yaml logs -
 - **驱动模式**: `container_network` — Bay 和 Ship/Gull 处于同一 Docker 网络，通过容器 IP 直连
 - **端口映射**: 禁用 (`publish_ports: false`) — sandbox 容器不暴露宿主机端口，减少攻击面
 - **认证**: 强制要求 API Key (`allow_anonymous: false`)
+  - API Key 读取优先级：`BAY_API_KEY` > `security.api_key` >（首次启动且 DB 为空时）自动生成
 - **GC**: 启用自动回收（包括 orphan container 检测），每 5 分钟一轮
 - **Profile**: 包含 3 个常用 profile：
   - `python-default` — 标准 Python 沙箱 (1 CPU / 1GB)
@@ -184,7 +186,7 @@ image: "ghcr.io/astrbotdevs/shipyard-neo-gull:0.1.0"
 
 ## 安全建议
 
-1. **必须设置 `api_key`** — 生产环境禁止匿名访问
+1. **必须配置 API Key** — 建议至少设置 `security.api_key`；若同时设置 `BAY_API_KEY`，以环境变量为准
 2. **使用反向代理** — 在 Bay 前部署 nginx/traefik 进行 TLS 终止
 3. **限制 Docker Socket 访问** — Bay 容器需要 Docker socket，建议使用 Docker Socket Proxy
 4. **网络隔离** — sandbox 容器仅通过 `bay-network` 与 Bay 通信，不暴露宿主机端口

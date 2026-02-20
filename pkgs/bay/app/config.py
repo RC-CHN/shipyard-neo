@@ -349,6 +349,14 @@ class BrowserLearningConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
+    # Static API key from config file.
+    # Priority is handled in ApiKeyService.auto_provision:
+    #   1) BAY_API_KEY env var
+    #   2) security.api_key from config
+    #   3) auto-generate on first boot
+    # Use a strong random secret in production.
+    api_key: str | None = None
+
     # Allow anonymous access (no authentication required)
     # Development: True (default)
     # Production: False

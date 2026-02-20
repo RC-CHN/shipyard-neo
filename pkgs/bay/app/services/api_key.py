@@ -95,8 +95,9 @@ class ApiKeyService:
 
         Logic:
         1. Check BAY_API_KEY env var → seed to DB if set
-        2. Check DB for existing active keys → skip if any exist
-        3. Generate new key → store hash in DB + write credentials.json
+        2. Else check security.api_key from config → seed to DB if set
+        3. Else check DB for existing active keys → skip if any exist
+        4. Else generate new key → store hash in DB + write credentials.json
 
         Args:
             db: Database session
@@ -106,11 +107,18 @@ class ApiKeyService:
             Dict mapping key_hash → owner (for in-memory cache)
         """
 
-        # 1. BAY_API_KEY env var override
-        env_key = os.environ.get("BAY_API_KEY")
-        if env_key:
-            key_hash = ApiKeyService.hash_key(env_key)
-            key_prefix = env_key[:_KEY_DISPLAY_LEN]
+        # 1. Resolve configured key source with precedence:
+        #    BAY_API_KEY env var > security.api_key from config
+        configured_key = os.environ.get("BAY_API_KEY")
+        source = "env_var"
+        if not configured_key and settings.security.api_key:
+            configured_key = settings.security.api_key
+            source = "config"
+
+        # 2. If a configured key exists, seed it to DB and return hashes
+        if configured_key:
+            key_hash = ApiKeyService.hash_key(configured_key)
+            key_prefix = configured_key[:_KEY_DISPLAY_LEN]
 
             # Check if already seeded
             existing = await db.execute(
@@ -127,9 +135,10 @@ class ApiKeyService:
                 db.add(api_key)
                 await db.flush()
                 logger.info(
-                    "api_key.provision.env_var",
+                    "api_key.provision.configured",
+                    source=source,
                     key_prefix=key_prefix,
-                    msg="API key from BAY_API_KEY seeded to database",
+                    msg="Configured API key seeded to database",
                 )
 
             return await ApiKeyService.load_active_key_hashes(db)

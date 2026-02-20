@@ -48,6 +48,7 @@ Bay + Ship + Gull 的 Kubernetes 生产部署方案。
 ```bash
 # 1. 编辑 ConfigMap，搜索 CHANGE-ME 修改必须项：
 #    - security.api_key → 设置强随机密钥
+#      （若同时设置 BAY_API_KEY 环境变量，则 BAY_API_KEY 优先）
 vi 02-configmap.yaml
 
 # 2. 按序部署
@@ -189,7 +190,7 @@ kubectl -n bay cp deployment/bay:/app/data/bay.db ./bay-backup.db
 
 ## 安全建议
 
-1. **必须设置 `api_key`** — 生产环境禁止匿名访问
+1. **必须配置 API Key** — 建议至少设置 `security.api_key`；若同时设置 `BAY_API_KEY`，以环境变量为准
 2. **使用 Ingress + TLS** — 在 Bay 前部署 Ingress Controller 进行 TLS 终止
 3. **RBAC 最小权限** — 已配置为仅允许 Bay namespace 内操作
 4. **Pod Security** — 建议配置 PodSecurityAdmission 限制 sandbox Pod 权限
