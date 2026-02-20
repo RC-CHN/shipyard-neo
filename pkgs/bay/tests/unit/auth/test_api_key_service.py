@@ -232,6 +232,130 @@ class TestAutoProvision:
         added = mock_db.add.call_args[0][0]
         assert added.key_hash == ApiKeyService.hash_key("sk-bay-from-env")
 
+    @pytest.mark.asyncio
+    async def test_config_key_seeds_to_db(self, mock_db):
+        """security.api_key from config seeds key to DB when no env var."""
+        from app.config import SecurityConfig, ServerConfig
+
+        settings = MagicMock()
+        settings.security = SecurityConfig(api_key="sk-bay-from-config", allow_anonymous=False)
+        settings.server = ServerConfig(host="0.0.0.0", port=8114)
+
+        # First execute: check if already seeded → no
+        # Second execute: load_active_key_hashes
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalars.return_value.first.return_value = None
+            else:
+                from app.models.api_key import ApiKey
+
+                seeded = ApiKey(
+                    id="seeded",
+                    key_hash=ApiKeyService.hash_key("sk-bay-from-config"),
+                    key_prefix="sk-bay-from",
+                    owner="default",
+                )
+                result.scalars.return_value.all.return_value = [seeded]
+            return result
+
+        mock_db.execute.side_effect = side_effect
+
+        # No BAY_API_KEY in environment
+        env = {k: v for k, v in os.environ.items() if k != "BAY_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            await ApiKeyService.auto_provision(mock_db, settings)
+
+        mock_db.add.assert_called_once()
+        added = mock_db.add.call_args[0][0]
+        assert added.key_hash == ApiKeyService.hash_key("sk-bay-from-config")
+        assert added.owner == "default"
+
+    @pytest.mark.asyncio
+    async def test_env_var_takes_precedence_over_config(self, mock_db):
+        """BAY_API_KEY env var takes precedence over security.api_key config."""
+        from app.config import SecurityConfig, ServerConfig
+
+        settings = MagicMock()
+        settings.security = SecurityConfig(api_key="sk-bay-from-config", allow_anonymous=False)
+        settings.server = ServerConfig(host="0.0.0.0", port=8114)
+
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                result.scalars.return_value.first.return_value = None
+            else:
+                from app.models.api_key import ApiKey
+
+                seeded = ApiKey(
+                    id="seeded",
+                    key_hash=ApiKeyService.hash_key("sk-bay-env-wins"),
+                    key_prefix="sk-bay-env-",
+                    owner="default",
+                )
+                result.scalars.return_value.all.return_value = [seeded]
+            return result
+
+        mock_db.execute.side_effect = side_effect
+
+        with patch.dict(os.environ, {"BAY_API_KEY": "sk-bay-env-wins"}, clear=False):
+            await ApiKeyService.auto_provision(mock_db, settings)
+
+        # Should seed the env var key, NOT the config key
+        mock_db.add.assert_called_once()
+        added = mock_db.add.call_args[0][0]
+        assert added.key_hash == ApiKeyService.hash_key("sk-bay-env-wins")
+        assert added.key_hash != ApiKeyService.hash_key("sk-bay-from-config")
+
+    @pytest.mark.asyncio
+    async def test_config_key_already_seeded_is_idempotent(self, mock_db):
+        """Config key already in DB → no duplicate insert."""
+        from app.config import SecurityConfig, ServerConfig
+        from app.models.api_key import ApiKey
+
+        settings = MagicMock()
+        settings.security = SecurityConfig(api_key="sk-bay-already-seeded", allow_anonymous=False)
+        settings.server = ServerConfig(host="0.0.0.0", port=8114)
+
+        existing = ApiKey(
+            id="existing",
+            key_hash=ApiKeyService.hash_key("sk-bay-already-seeded"),
+            key_prefix="sk-bay-alrea",
+            owner="default",
+            is_active=True,
+        )
+
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            result = MagicMock()
+            if call_count == 1:
+                # Already seeded — return existing
+                result.scalars.return_value.first.return_value = existing
+            else:
+                result.scalars.return_value.all.return_value = [existing]
+            return result
+
+        mock_db.execute.side_effect = side_effect
+
+        env = {k: v for k, v in os.environ.items() if k != "BAY_API_KEY"}
+        with patch.dict(os.environ, env, clear=True):
+            result = await ApiKeyService.auto_provision(mock_db, settings)
+
+        # Should NOT add a duplicate
+        mock_db.add.assert_not_called()
+        assert existing.key_hash in result
+
 
 class TestAuthenticateWithDbKey:
     """Test authenticate() with DB-stored key hashes."""
