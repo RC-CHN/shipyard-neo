@@ -445,15 +445,15 @@ async def get_release_health(
 @router.delete("/releases/{release_id}", response_model=SkillDeleteResponse)
 async def delete_release(
     release_id: str,
-    request: SkillDeleteRequest,
     skill_svc: SkillLifecycleServiceDep,
     owner: AuthDep,
+    request: SkillDeleteRequest | None = None,
 ) -> SkillDeleteResponse:
     deleted = await skill_svc.delete_release(
         owner=owner,
         release_id=release_id,
         deleted_by=owner,
-        reason=request.reason,
+        reason=(request.reason if request is not None else None),
     )
     return SkillDeleteResponse(
         id=deleted.id,
@@ -466,15 +466,15 @@ async def delete_release(
 @router.delete("/candidates/{candidate_id}", response_model=SkillDeleteResponse)
 async def delete_candidate(
     candidate_id: str,
-    request: SkillDeleteRequest,
     skill_svc: SkillLifecycleServiceDep,
     owner: AuthDep,
+    request: SkillDeleteRequest | None = None,
 ) -> SkillDeleteResponse:
     deleted = await skill_svc.delete_candidate(
         owner=owner,
         candidate_id=candidate_id,
         deleted_by=owner,
-        reason=request.reason,
+        reason=(request.reason if request is not None else None),
     )
     return SkillDeleteResponse(
         id=deleted.id,

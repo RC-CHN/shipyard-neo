@@ -184,9 +184,9 @@ promote_skill_candidate(
 | `canary` | Limited rollout for validation. Start here. |
 | `stable` | Full production release. Promote after canary succeeds. |
 
-### Step 7: Monitor and Rollback (If Needed)
+### Step 7: Monitor, Cleanup and Rollback (If Needed)
 
-List active releases and rollback if issues arise:
+List active releases, optionally delete stale inactive records, and rollback if issues arise:
 
 ```
 # List active releases for a skill
@@ -194,6 +194,10 @@ list_skill_releases(
     skill_key="etl-csv-loader",
     active_only=true
 )
+
+# Delete stale inactive release/candidate records (soft-delete)
+delete_skill_release(release_id="rel-000", reason="cleanup")
+delete_skill_candidate(candidate_id="cand-old", reason="obsolete")
 
 # Rollback to previous version
 rollback_skill_release(release_id="rel-001")

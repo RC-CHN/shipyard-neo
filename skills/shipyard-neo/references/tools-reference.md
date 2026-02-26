@@ -250,6 +250,10 @@ Create a reusable skill candidate from execution IDs.
 | `source_execution_ids` | string[] | Yes | Execution IDs used as source evidence |
 | `scenario_key` | string | No | Optional scenario key (e.g., `csv-import`) |
 | `payload_ref` | string | No | Optional payload reference |
+| `summary` | string | No | Human-readable skill summary |
+| `usage_notes` | string | No | Optional usage notes/caveats |
+| `preconditions` | object | No | JSON object for preconditions |
+| `postconditions` | object | No | JSON object for expected outcomes |
 
 **Returns**: Candidate ID, skill_key, status, source_execution_ids.
 
@@ -273,6 +277,9 @@ Promote a passing skill candidate to release.
 |-----------|------|----------|---------|-------------|
 | `candidate_id` | string | Yes | — | Skill candidate ID |
 | `stage` | string | No | `canary` | Release stage: `canary` or `stable` |
+| `upgrade_of_release_id` | string | No | — | Parent release id for upgrade traceability |
+| `upgrade_reason` | string | No | — | Human-readable or code-like upgrade reason |
+| `change_summary` | string | No | — | Human-readable change summary |
 
 **Returns**: Release ID, skill_key, version, stage, active status.
 
@@ -298,6 +305,24 @@ List skill releases with optional filters.
 | `stage` | string | No | — | Stage filter: `canary` or `stable` |
 | `limit` | integer | No | 50 | Max items (1-500) |
 | `offset` | integer | No | 0 | Pagination offset |
+
+### `delete_skill_release`
+
+Soft-delete one inactive release.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `release_id` | string | Yes | Release ID to delete |
+| `reason` | string | No | Optional delete reason for audit trail |
+
+### `delete_skill_candidate`
+
+Soft-delete one candidate that is not referenced by active releases.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `candidate_id` | string | Yes | Candidate ID to delete |
+| `reason` | string | No | Optional delete reason for audit trail |
 
 ### `rollback_skill_release`
 

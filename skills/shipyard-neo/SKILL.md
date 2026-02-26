@@ -197,6 +197,7 @@ Use optional metadata fields (`summary`, `usage_notes`, `preconditions`, `postco
 4. `evaluate_skill_candidate` — Record evaluation results (pass/fail, score, report)
 5. `promote_skill_candidate` — Release as `canary` or `stable`; optionally include `upgrade_of_release_id`, `upgrade_reason`, `change_summary` for upgrade traceability
 6. `rollback_skill_release` — Revert to previous version if needed
+7. `delete_skill_release` / `delete_skill_candidate` — Soft-delete stale records (only inactive release can be deleted; candidate referenced by active release cannot be deleted)
 
 See [references/skills-lifecycle.md](references/skills-lifecycle.md) for the complete workflow, including optional metadata fields for candidate creation and release promotion.
 
