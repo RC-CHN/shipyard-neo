@@ -364,6 +364,13 @@ async def test_skill_delete_release_and_candidate_flow():
             assert deleted_active_release["id"] == release_a["id"]
             assert deleted_active_release["delete_reason"] == "cleanup-active"
 
+            # Candidate pointer should be cleaned when its promoted release is deleted.
+            candidate_a_after_release_delete = await client.get(
+                f"/v1/skills/candidates/{candidate_a['id']}"
+            )
+            assert candidate_a_after_release_delete.status_code == 200
+            assert candidate_a_after_release_delete.json()["promotion_release_id"] is None
+
             exec_b = await _create_python_execution(client, sandbox_id, "print('delete-b')")
             create_b = await client.post(
                 "/v1/skills/candidates",

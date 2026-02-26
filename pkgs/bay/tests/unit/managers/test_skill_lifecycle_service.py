@@ -728,6 +728,35 @@ class TestCandidateLifecycle:
         )
         assert active_now is None
 
+        refreshed_candidate = await skill_service.get_candidate(
+            owner="default",
+            candidate_id=candidate.id,
+        )
+        assert refreshed_candidate.promotion_release_id is None
+
+    async def test_get_candidate_sanitizes_stale_promotion_release_pointer(
+        self,
+        skill_service: SkillLifecycleService,
+    ):
+        entry = await skill_service.create_execution(
+            owner="default",
+            sandbox_id="sandbox-1",
+            exec_type=ExecutionType.PYTHON,
+            code="print('stale-pointer')",
+            success=True,
+            execution_time_ms=1,
+        )
+        candidate = await skill_service.create_candidate(
+            owner="default",
+            skill_key="stale-pointer-skill",
+            source_execution_ids=[entry.id],
+        )
+        candidate.promotion_release_id = "sr-missing-historical"
+        await skill_service._db.commit()  # test-only state injection
+
+        refreshed = await skill_service.get_candidate(owner="default", candidate_id=candidate.id)
+        assert refreshed.promotion_release_id is None
+
     async def test_rollback_requires_previous_release(self, skill_service: SkillLifecycleService):
         entry = await skill_service.create_execution(
             owner="default",

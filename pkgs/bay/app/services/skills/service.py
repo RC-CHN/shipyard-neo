@@ -516,6 +516,7 @@ class SkillLifecycleService:
         candidate = result.scalars().first()
         if candidate is None:
             raise NotFoundError(f"Skill candidate not found: {candidate_id}")
+        await self._sanitize_candidate_promotion_pointer(candidate)
         return candidate
 
     async def list_candidates(
@@ -555,7 +556,10 @@ class SkillLifecycleService:
             .offset(offset)
             .limit(limit)
         )
-        return list(result.scalars().all()), total
+        items = list(result.scalars().all())
+        for candidate in items:
+            await self._sanitize_candidate_promotion_pointer(candidate)
+        return items, total
 
     async def evaluate_candidate(
         self,
@@ -1038,6 +1042,24 @@ class SkillLifecycleService:
             raise NotFoundError(f"Skill release not found: {release_id}")
         return release
 
+    async def _sanitize_candidate_promotion_pointer(self, candidate: SkillCandidate) -> None:
+        """Clear stale promotion release pointer on candidate if target release is deleted/missing."""
+        release_id = candidate.promotion_release_id
+        if not release_id:
+            return
+
+        result = await self._db.execute(
+            select(SkillRelease.id).where(
+                SkillRelease.id == release_id,
+                SkillRelease.owner == candidate.owner,
+                SkillRelease.is_deleted.is_(False),
+            )
+        )
+        if result.first() is None:
+            candidate.promotion_release_id = None
+            candidate.updated_at = utcnow()
+            await self._db.commit()
+
     async def delete_release(
         self,
         *,
@@ -1062,6 +1084,19 @@ class SkillLifecycleService:
         release.deleted_at = utcnow()
         release.deleted_by = deleted_by
         release.delete_reason = reason
+
+        # Keep candidate promotion pointer consistent: if it points to the
+        # deleted release, clear it to avoid dangling references.
+        candidate_result = await self._db.execute(
+            select(SkillCandidate).where(
+                SkillCandidate.owner == owner,
+                SkillCandidate.promotion_release_id == release_id,
+            )
+        )
+        for candidate in candidate_result.scalars().all():
+            candidate.promotion_release_id = None
+            candidate.updated_at = utcnow()
+
         await self._db.commit()
         await self._db.refresh(release)
         return release
