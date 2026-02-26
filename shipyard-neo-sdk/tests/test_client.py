@@ -383,6 +383,49 @@ class TestBayClient:
         assert body["payload"] == {"commands": ["open about:blank"]}
 
     @pytest.mark.asyncio
+    async def test_skill_payload_create_accepts_json_string(self, httpx_mock):
+        """create_payload should accept JSON-string payload and decode to object before HTTP."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/skills/payloads",
+            json={
+                "payload_ref": "blob:blob-json-str",
+                "kind": "candidate_payload",
+            },
+            status_code=201,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            created = await client.skills.create_payload(
+                payload='{"commands": ["open about:blank"]}',
+                kind="candidate_payload",
+            )
+            assert created.payload_ref == "blob:blob-json-str"
+            assert created.kind == "candidate_payload"
+
+        create_request = httpx_mock.get_requests()[0]
+        body = json.loads(create_request.content.decode("utf-8"))
+        assert body["payload"] == {"commands": ["open about:blank"]}
+
+    @pytest.mark.asyncio
+    async def test_skill_payload_create_rejects_invalid_json_string(self, httpx_mock):
+        """create_payload should fail fast on invalid JSON string payload."""
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            with pytest.raises(ValueError, match="payload must be a JSON object/array"):
+                await client.skills.create_payload(
+                    payload='{"commands": ["open about:blank"]',
+                    kind="candidate_payload",
+                )
+
+        assert httpx_mock.get_requests() == []
+
+    @pytest.mark.asyncio
     async def test_browser_exec(self, httpx_mock, mock_sandbox_response):
         """Browser exec should return BrowserExecResult."""
         httpx_mock.add_response(

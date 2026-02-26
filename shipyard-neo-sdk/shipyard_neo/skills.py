@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 from typing import TYPE_CHECKING
@@ -33,11 +34,25 @@ class SkillManager:
     async def create_payload(
         self,
         *,
-        payload: dict[str, Any] | list[Any],
+        payload: dict[str, Any] | list[Any] | str,
         kind: str = "generic",
     ) -> SkillPayloadCreateInfo:
+        normalized_payload: dict[str, Any] | list[Any] | str = payload
+        if isinstance(payload, str):
+            try:
+                normalized_payload = json.loads(payload)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "payload must be a JSON object/array or a JSON string representing one"
+                ) from exc
+
+        if not isinstance(normalized_payload, (dict, list)):
+            raise ValueError(
+                "payload must be a JSON object/array or a JSON string representing one"
+            )
+
         body = _SkillPayloadCreateRequest(
-            payload=cast(dict[str, Any] | list[Any], payload),
+            payload=cast(dict[str, Any] | list[Any], normalized_payload),
             kind=kind,
         ).model_dump(exclude_none=True)
         response = await self._http.post(
