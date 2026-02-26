@@ -167,7 +167,7 @@ wheels = [
 
 [[package]]
 name = "bay"
-version = "0.1.12"
+version = "0.1.13"
 source = { editable = "." }
 dependencies = [
     { name = "aiodocker" },
