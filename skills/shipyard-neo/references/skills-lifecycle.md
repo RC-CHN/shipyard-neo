@@ -2,6 +2,29 @@
 
 Shipyard Neo provides infrastructure for turning proven execution patterns into reusable, versioned skills. This document covers the complete lifecycle: evidence collection → candidate creation → evaluation → release → rollback.
 
+## How the Self-Iteration Mechanism Works in This Project
+
+This project follows a **two-layer model**:
+
+1. **Evidence Layer (runtime facts)**
+   - Python/Shell/Browser executions are stored as immutable execution history records.
+   - These records are the traceable source-of-truth for what the agent actually did.
+
+2. **Skill Control Layer (versioned decisions)**
+   - Candidate bundles selected `source_execution_ids`.
+   - Evaluation records quality signals (`passed`, `score`, `report`).
+   - Promotion converts a passing candidate into a release (`canary`/`stable`).
+   - Rollback creates a new release that points back to a previous one.
+
+In short: **execution history answers "what happened"; release records answer "what should be reused"**.
+
+To make iterations explainable, candidate/promotion can carry semantic metadata:
+
+- Candidate metadata: `summary`, `usage_notes`, `preconditions`, `postconditions`
+- Promotion metadata: `upgrade_of_release_id`, `upgrade_reason`, `change_summary`
+
+These fields help downstream systems render readable skill docs and trace why a release was upgraded.
+
 ## Overview
 
 ```
@@ -90,7 +113,11 @@ Bundle a set of execution IDs into a skill candidate:
 create_skill_candidate(
     skill_key="etl-csv-loader",
     source_execution_ids=["exec-abc123", "exec-def456"],
-    scenario_key="csv-import"
+    scenario_key="csv-import",
+    summary="Load CSV, validate schema, clean and export standardized output",
+    usage_notes="Expect UTF-8 CSV input; fail fast on missing required columns",
+    preconditions={"input": "csv", "required_columns": ["id", "email"]},
+    postconditions={"output": "clean.csv", "quality_gate": "no_null_id"}
 )
 # Returns: candidate_id = "cand-xyz789", status = "pending"
 ```
@@ -101,6 +128,10 @@ create_skill_candidate(
 - `source_execution_ids`: Array of execution IDs that serve as evidence/source for this skill
 - `scenario_key` (optional): Identifies the scenario this candidate covers (e.g., `csv-import`, `json-api`)
 - `payload_ref` (optional): Reference to an external payload
+- `summary` (optional): Human-readable summary of skill purpose
+- `usage_notes` (optional): Operational notes / caveats for using the skill
+- `preconditions` (optional): Structured preconditions (JSON object)
+- `postconditions` (optional): Structured expected outcomes (JSON object)
 
 ### Step 5: Evaluate Skill Candidate
 
@@ -130,14 +161,19 @@ Promote a passing candidate to release:
 # Start with canary
 promote_skill_candidate(
     candidate_id="cand-xyz789",
-    stage="canary"
+    stage="canary",
+    upgrade_reason="manual_promote",
+    change_summary="Add strict schema validation and null-safe export",
+    upgrade_of_release_id="rel-000"
 )
 # Returns: release_id = "rel-001", version = 1, stage = "canary", active = true
 
 # Later, promote to stable after canary validation
 promote_skill_candidate(
     candidate_id="cand-xyz789",
-    stage="stable"
+    stage="stable",
+    upgrade_reason="canary_passed",
+    change_summary="Canary metrics stable for 7 days"
 )
 ```
 

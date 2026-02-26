@@ -186,16 +186,19 @@ Track and retrieve past executions for debugging, auditing, or skill creation:
 
 ### 6. Skill Self-Update Lifecycle
 
-Turn proven execution patterns into reusable, versioned skills:
+Turn proven execution patterns into reusable, versioned skills.
+
+This mechanism separates **evidence** from **release decisions**: execution history records what actually happened, while candidate/evaluation/release records what should be reused.
+Use optional metadata fields (`summary`, `usage_notes`, `preconditions`, `postconditions`, `upgrade_reason`, `change_summary`) to make each iteration explainable and auditable.
 
 1. Execute tasks → collect `execution_id`s
 2. `annotate_execution` — Tag and describe executions
-3. `create_skill_candidate` — Bundle execution IDs into a candidate
+3. `create_skill_candidate` — Bundle execution IDs into a candidate; optionally include `summary`, `usage_notes`, `preconditions`, `postconditions` for explainable skill metadata
 4. `evaluate_skill_candidate` — Record evaluation results (pass/fail, score, report)
-5. `promote_skill_candidate` — Release as `canary` or `stable`
+5. `promote_skill_candidate` — Release as `canary` or `stable`; optionally include `upgrade_of_release_id`, `upgrade_reason`, `change_summary` for upgrade traceability
 6. `rollback_skill_release` — Revert to previous version if needed
 
-See [references/skills-lifecycle.md](references/skills-lifecycle.md) for the complete workflow.
+See [references/skills-lifecycle.md](references/skills-lifecycle.md) for the complete workflow, including optional metadata fields for candidate creation and release promotion.
 
 ## Key Constraints
 
