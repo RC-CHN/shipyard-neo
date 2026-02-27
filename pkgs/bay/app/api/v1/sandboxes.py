@@ -9,15 +9,17 @@ import asyncio
 from datetime import datetime
 
 import structlog
-from fastapi import APIRouter, Header, Query
+from fastapi import APIRouter, BackgroundTasks, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.adapters.base import BaseAdapter
 from app.adapters.gull import GullAdapter
 from app.adapters.ship import ShipAdapter
-from app.api.dependencies import AuthDep, IdempotencyServiceDep, SandboxManagerDep
+from app.api.dependencies import AuthDep, IdempotencyServiceDep, SandboxManagerDep, get_driver
 from app.config import get_settings
+from app.db.session import get_async_session
+from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox, SandboxStatus
 from app.models.session import Session
 from app.router.capability.adapter_pool import default_adapter_pool
@@ -276,9 +278,50 @@ async def _query_containers_status(
 # Endpoints
 
 
+async def _warmup_sandbox_runtime_impl(*, sandbox_id: str, owner: str) -> None:
+    """Perform sandbox warmup in an isolated DB session."""
+    try:
+        async with get_async_session() as db:
+            manager = SandboxManager(driver=get_driver(), db_session=db)
+            sandbox = await manager.get(sandbox_id, owner)
+            await manager.ensure_running(sandbox)
+    except Exception as exc:
+        _log.warning(
+            "sandbox.warmup_failed",
+            sandbox_id=sandbox_id,
+            owner=owner,
+            error=str(exc),
+        )
+
+
+async def _warmup_sandbox_runtime(*, sandbox_id: str, owner: str) -> None:
+    """Schedule sandbox warmup in a detached task and return immediately.
+
+    This keeps request completion fast even if invoked via BackgroundTasks.
+    """
+    task = asyncio.create_task(
+        _warmup_sandbox_runtime_impl(sandbox_id=sandbox_id, owner=owner),
+        name=f"warmup-{sandbox_id}",
+    )
+
+    def _on_warmup_done(t: asyncio.Task[None]) -> None:
+        try:
+            t.result()
+        except Exception as exc:  # pragma: no cover
+            _log.warning(
+                "sandbox.warmup_task_failed",
+                sandbox_id=sandbox_id,
+                owner=owner,
+                error=str(exc),
+            )
+
+    task.add_done_callback(_on_warmup_done)
+
+
 @router.post("", response_model=SandboxResponse, status_code=201)
 async def create_sandbox(
     request: CreateSandboxRequest,
+    background_tasks: BackgroundTasks,
     sandbox_mgr: SandboxManagerDep,
     idempotency_svc: IdempotencyServiceDep,
     owner: AuthDep,
@@ -330,6 +373,14 @@ async def create_sandbox(
             response=response,
             status_code=201,
         )
+
+    # 4. Enqueue warmup hook. The hook itself detaches actual warmup work,
+    # so this does not block request completion on keep-alive connections.
+    background_tasks.add_task(
+        _warmup_sandbox_runtime,
+        sandbox_id=sandbox.id,
+        owner=owner,
+    )
 
     return response
 
