@@ -1,4 +1,11 @@
-"""SkillMutationAgent — generates mutated skill candidates via LLM."""
+"""SkillMutationAgent — generates mutated skill candidates via LLM.
+
+Phase 3 additions:
+- Injects the declared SkillGoal text into the LLM prompt.
+- Generates (or loads cached) SkillRubric via rubric_generator.
+- Evaluates the mutated candidate against goal + rubric using an evaluator.
+- Auto-promotes the candidate when evaluator score >= auto_promote_threshold.
+"""
 
 from __future__ import annotations
 
@@ -9,9 +16,17 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.models.skill import SkillCandidate, SkillCandidateStatus, SkillOutcome
+from app.models.skill import (
+    SkillCandidate,
+    SkillCandidateStatus,
+    SkillGoal,
+    SkillOutcome,
+    SkillReleaseMode,
+    SkillReleaseStage,
+)
 from app.services.skills.evolution.llm import MutationOutput  # re-exported
 from app.services.skills.evolution.meta_prompt import MetaPromptService
+from app.services.skills.evolution.rubric import SkillRubric
 from app.services.skills.service import SkillLifecycleService, _assemble_skill_content
 from app.utils.datetime import utcnow
 
@@ -29,10 +44,16 @@ class SkillMutationAgent:
         db_session: AsyncSession,
         llm_client,
         max_recent_outcomes: int = 10,
+        evaluator=None,
+        auto_promote_threshold: float = 0.7,
+        rubric_generator=None,
     ) -> None:
         self._db = db_session
         self._llm = llm_client
         self._max_recent_outcomes = max_recent_outcomes
+        self._evaluator = evaluator
+        self._auto_promote_threshold = auto_promote_threshold
+        self._rubric_generator = rubric_generator
         self._log = logger.bind(component="skill_mutation_agent")
 
     async def mutate(self, *, owner: str, skill_key: str) -> str | None:
@@ -79,12 +100,27 @@ class SkillMutationAgent:
             self._log.warning("skill_mutation.no_meta_prompt", owner=owner, skill_key=skill_key)
             return None
 
-        # Decode parent pre/postconditions
+        # Phase 3: load declared goal and cached rubric (optional)
+        goal_result = await self._db.execute(
+            select(SkillGoal).where(
+                SkillGoal.owner == owner,
+                SkillGoal.skill_key == skill_key,
+            )
+        )
+        skill_goal = goal_result.scalars().first()
+        goal_text: str | None = skill_goal.goal if skill_goal is not None else None
+
+        # Load or generate rubric when goal + generator are available
+        rubric: SkillRubric | None = None
+        if skill_goal is not None and self._rubric_generator is not None:
+            rubric = await self._load_or_generate_rubric(skill_goal)
+
+        # Decode parent pre/postconditions for the LLM prompt
         preconditions = _decode_conditions(parent.preconditions_json)
         postconditions = _decode_conditions(parent.postconditions_json)
 
-        # Build LLM prompt
-        current_content = _assemble_skill_content(
+        # Build LLM prompt from parent content (the "current" state being mutated)
+        parent_content = _assemble_skill_content(
             skill_key=skill_key,
             summary=parent.summary,
             usage_notes=parent.usage_notes,
@@ -94,8 +130,10 @@ class SkillMutationAgent:
         failure_lines = "\n".join(
             f"- Failure {i + 1}: {o.reasoning}" for i, o in enumerate(recent_failures)
         )
+        goal_section = f"## Goal\n\n{goal_text}\n\n" if goal_text else ""
         prompt = (
-            f"## Current Skill Content\n\n{current_content}\n\n"
+            f"{goal_section}"
+            f"## Current Skill Content\n\n{parent_content}\n\n"
             f"## Recent Failures\n\n{failure_lines or '(none recorded)'}\n\n"
             f"## Mutation Strategy\n\n{meta_prompt.instruction}"
         )
@@ -148,7 +186,123 @@ class SkillMutationAgent:
             candidate_id=new_candidate.id,
             meta_prompt_id=meta_prompt.id,
         )
+
+        # Phase 3: evaluate against mutated content + rubric, then optionally promote
+        if self._evaluator is not None and goal_text is not None:
+            # Assemble content from the *mutation output* — not the parent
+            mutated_content = _assemble_skill_content(
+                skill_key=skill_key,
+                summary=mutation.summary,
+                usage_notes=mutation.usage_notes,
+                preconditions=mutation.preconditions,
+                postconditions=mutation.postconditions,
+            )
+            await self._auto_evaluate_and_promote(
+                svc=svc,
+                candidate=new_candidate,
+                goal=goal_text,
+                rubric=rubric,
+                skill_content=mutated_content,
+                failure_context=failure_lines or "(none recorded)",
+                owner=owner,
+            )
+
         return new_candidate.id
+
+    async def _load_or_generate_rubric(self, skill_goal: SkillGoal) -> SkillRubric | None:
+        """Return the cached rubric from SkillGoal, or generate+persist a new one."""
+        if skill_goal.rubric_json:
+            try:
+                return SkillRubric.model_validate_json(skill_goal.rubric_json)
+            except Exception:
+                pass  # regenerate if cached JSON is malformed
+
+        rubric = await self._rubric_generator.generate(skill_goal.goal)
+        if rubric is not None:
+            skill_goal.rubric_json = rubric.model_dump_json()
+            skill_goal.rubric_summary = rubric.summary
+            skill_goal.updated_at = utcnow()
+            await self._db.commit()
+            self._log.info(
+                "skill_mutation.rubric_generated",
+                skill_key=skill_goal.skill_key,
+            )
+        return rubric
+
+    async def _auto_evaluate_and_promote(
+        self,
+        *,
+        svc: SkillLifecycleService,
+        candidate: SkillCandidate,
+        goal: str,
+        rubric: SkillRubric | None,
+        skill_content: str,
+        failure_context: str,
+        owner: str,
+    ) -> None:
+        """Evaluate the mutation and auto-promote if it passes the threshold.
+
+        Only records a formal evaluation and promotes when the evaluator returns
+        a passing score at or above the threshold.  Below-threshold candidates
+        remain DRAFT for human review — we don't mark them REJECTED so they can
+        still be promoted manually.
+        """
+        try:
+            result = await self._evaluator.evaluate(
+                goal=goal,
+                rubric=rubric,
+                skill_content=skill_content,
+                failure_context=failure_context,
+            )
+        except Exception as exc:
+            self._log.warning(
+                "skill_mutation.evaluator_failed",
+                candidate_id=candidate.id,
+                error=str(exc),
+            )
+            return
+
+        if result is None:
+            return
+
+        should_promote = result.passed and result.score >= self._auto_promote_threshold
+
+        if should_promote:
+            # Record evaluation then promote in one sweep
+            await svc.evaluate_candidate(
+                owner=owner,
+                candidate_id=candidate.id,
+                passed=True,
+                score=result.score,
+                report=result.reasoning,
+                evaluated_by="system:evolution",
+            )
+            try:
+                await svc.promote_candidate(
+                    owner=owner,
+                    candidate_id=candidate.id,
+                    stage=SkillReleaseStage.CANARY,
+                    release_mode=SkillReleaseMode.AUTO,
+                )
+                self._log.info(
+                    "skill_mutation.auto_promoted",
+                    candidate_id=candidate.id,
+                    score=result.score,
+                )
+            except Exception as exc:
+                self._log.warning(
+                    "skill_mutation.auto_promote_failed",
+                    candidate_id=candidate.id,
+                    error=str(exc),
+                )
+        else:
+            self._log.info(
+                "skill_mutation.evaluation_below_threshold",
+                candidate_id=candidate.id,
+                passed=result.passed,
+                score=result.score,
+                threshold=self._auto_promote_threshold,
+            )
 
 
 def _decode_conditions(json_str: str | None) -> list[str]:

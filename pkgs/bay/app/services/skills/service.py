@@ -1061,6 +1061,11 @@ class SkillLifecycleService:
         existing = result.scalars().first()
         now = utcnow()
         if existing is not None:
+            if existing.goal != goal:
+                # Goal text changed — cached rubric is stale, clear it so the
+                # next mutation cycle regenerates it against the new goal.
+                existing.rubric_json = None
+                existing.rubric_summary = ""
             existing.goal = goal
             existing.updated_at = now
             self._db.add(existing)
@@ -1175,7 +1180,24 @@ class SkillLifecycleService:
     ) -> SkillOutcome:
         """Record an execution outcome report — the evolution signal feed."""
         if outcome not in ("success", "failure", "partial"):
-            raise ValidationError(f"Invalid outcome: {outcome!r}. Must be success, failure, or partial.")
+            raise ValidationError(
+                f"Invalid outcome: {outcome!r}. Must be success, failure, or partial."
+            )
+
+        # Validate release ownership and skill_key consistency to prevent signal pollution.
+        release_check = await self._db.execute(
+            select(SkillRelease).where(
+                SkillRelease.id == release_id,
+                SkillRelease.owner == owner,
+                SkillRelease.skill_key == skill_key,
+                SkillRelease.is_deleted.is_(False),
+            )
+        )
+        if release_check.scalars().first() is None:
+            raise NotFoundError(
+                f"Release '{release_id}' not found, not owned by '{owner}', "
+                f"or does not belong to skill '{skill_key}'."
+            )
 
         skill_outcome = SkillOutcome(
             id=f"outcome-{uuid.uuid4().hex[:12]}",
@@ -1221,7 +1243,7 @@ class SkillLifecycleService:
         return release
 
     async def _sanitize_candidate_promotion_pointer(self, candidate: SkillCandidate) -> None:
-        """Clear stale promotion release pointer on candidate if target release is deleted/missing."""
+        """Clear stale promotion release pointer if target release is deleted/missing."""
         release_id = candidate.promotion_release_id
         if not release_id:
             return

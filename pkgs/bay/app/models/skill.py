@@ -211,6 +211,7 @@ class SkillGoal(SQLModel, table=True):
 
     goal: str
     rubric_summary: str = Field(default="")
+    rubric_json: str | None = Field(default=None)  # JSON: SkillRubric structure
 
     created_at: datetime = Field(default_factory=utcnow, index=True)
     updated_at: datetime = Field(default_factory=utcnow)

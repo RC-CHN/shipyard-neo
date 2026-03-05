@@ -23,6 +23,32 @@ pytestmark = e2e_skipif_marks
 # ---------------------------------------------------------------------------
 
 
+async def _get_or_create_execution_id(client: httpx.AsyncClient) -> str:
+    """Create a minimal sandbox, run a shell command, return the execution_id, then delete it."""
+    sandbox_resp = await client.post(
+        "/v1/sandboxes",
+        json={"profile": "python-default", "ttl": 60},
+        timeout=30.0,
+    )
+    if sandbox_resp.status_code != 201:
+        pytest.skip(f"Cannot create sandbox for execution seed (status {sandbox_resp.status_code})")
+    sandbox_id = sandbox_resp.json()["id"]
+
+    try:
+        exec_resp = await client.post(
+            f"/v1/sandboxes/{sandbox_id}/shell/exec",
+            json={"command": "echo seed"},
+            timeout=30.0,
+        )
+        if exec_resp.status_code != 200:
+            pytest.skip(
+                f"Cannot run shell command for execution seed (status {exec_resp.status_code})"
+            )
+        return exec_resp.json()["execution_id"]
+    finally:
+        await client.delete(f"/v1/sandboxes/{sandbox_id}", timeout=15.0)
+
+
 async def _create_candidate_and_promote(
     client: httpx.AsyncClient,
     *,
@@ -30,6 +56,8 @@ async def _create_candidate_and_promote(
     summary: str = "Test skill summary",
 ) -> tuple[str, str]:
     """Create a candidate, evaluate it, promote to canary. Returns (candidate_id, release_id)."""
+    execution_id = await _get_or_create_execution_id(client)
+
     payload_resp = await client.post(
         "/v1/skills/payloads",
         json={"payload": {"commands": ["open about:blank"]}, "kind": "browser_segment"},
@@ -41,7 +69,7 @@ async def _create_candidate_and_promote(
         "/v1/skills/candidates",
         json={
             "skill_key": skill_key,
-            "source_execution_ids": [],
+            "source_execution_ids": [execution_id],
             "summary": summary,
             "usage_notes": "Requires browser sandbox",
             "preconditions": {"browser": "available"},
@@ -207,7 +235,7 @@ async def test_report_outcome_failure_with_signals():
                 "skill_key": skill_key,
                 "release_id": release_id,
                 "outcome": "failure",
-                "reasoning": "GitHub layout changed. Star count element not found at .social-count.",
+                "reasoning": "GitHub layout changed. Star count element not found at .social-count.",  # noqa: E501
                 "signals": {"page_load_time_ms": 3200, "element_found": False},
             },
         )
@@ -278,7 +306,7 @@ async def test_full_evolution_round_trip():
             "/v1/skills/goals",
             json={
                 "skill_key": skill_key,
-                "goal": "Navigate to a GitHub repository page and return the star count as an integer.",
+                "goal": "Navigate to a GitHub repository page and return the star count as an integer.",  # noqa: E501
             },
         )
         assert goal_resp.status_code == 200

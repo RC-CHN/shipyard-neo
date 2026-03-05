@@ -1,4 +1,4 @@
-"""Unit tests for SkillMutationAgent (Phase 2).
+"""Unit tests for SkillMutationAgent (Phase 2 + Phase 3).
 
 All tests use a FakeLlmClient — no real HTTP calls.
 
@@ -9,22 +9,25 @@ Tests cover:
 - mutate: graceful failure when LLM call fails
 - mutate: returns None when no active release exists
 - mutate: records meta-prompt usage
+Phase 3:
+- mutate: includes goal text in LLM prompt when SkillGoal exists
+- mutate: calls evaluator after creating candidate when injected
+- mutate: auto-promotes when evaluator passes and score >= threshold
+- mutate: does not promote when evaluator score < threshold
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel, select
 
-from app.models.skill import ExecutionType, SkillCandidate, SkillReleaseStage
+from app.models.skill import ExecutionType, SkillCandidate, SkillCandidateStatus, SkillReleaseStage
 from app.services.skills import SkillLifecycleService
 from app.services.skills.evolution.agent import MutationOutput, SkillMutationAgent
+from app.services.skills.evolution.evaluator import EvaluationResult
 from app.services.skills.evolution.meta_prompt import MetaPromptService
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -79,6 +82,56 @@ class _FakeLlmClient:
         if self._raises is not None:
             raise self._raises
         return self._output
+
+
+# ---------------------------------------------------------------------------
+# Fake evaluator (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class _FakeEvaluator:
+    """Synchronously returns a fixed EvaluationResult and records call kwargs."""
+
+    def __init__(self, output: EvaluationResult | None = None):
+        self._output = output or EvaluationResult(passed=True, score=0.85, reasoning="Looks good.")
+        self.call_count = 0
+        self.last_kwargs: dict = {}
+
+    async def evaluate(
+        self,
+        *,
+        goal: str,
+        rubric,
+        skill_content: str,
+        failure_context: str,
+    ) -> EvaluationResult | None:
+        self.call_count += 1
+        self.last_kwargs = {
+            "goal": goal,
+            "rubric": rubric,
+            "skill_content": skill_content,
+            "failure_context": failure_context,
+        }
+        return self._output
+
+
+class _FakeRubricGenerator:
+    """Returns a fixed rubric string-ish object and records calls."""
+
+    def __init__(self, rubric=None):
+        from app.services.skills.evolution.rubric import SkillRubric
+
+        self._rubric = rubric or SkillRubric(
+            summary="Return star count as integer.",
+            success_criteria=["Returns an integer"],
+            failure_indicators=["Returns None"],
+            evaluation_focus="Selector robustness.",
+        )
+        self.call_count = 0
+
+    async def generate(self, goal: str):
+        self.call_count += 1
+        return self._rubric
 
 
 # ---------------------------------------------------------------------------
@@ -147,11 +200,17 @@ class TestSkillMutationAgent:
         db_session: AsyncSession,
         llm: _FakeLlmClient | None = None,
         max_recent_outcomes: int = 10,
+        evaluator: _FakeEvaluator | None = None,
+        auto_promote_threshold: float = 0.7,
+        rubric_generator: _FakeRubricGenerator | None = None,
     ) -> SkillMutationAgent:
         return SkillMutationAgent(
             db_session=db_session,
             llm_client=llm or _FakeLlmClient(),
             max_recent_outcomes=max_recent_outcomes,
+            evaluator=evaluator,
+            auto_promote_threshold=auto_promote_threshold,
+            rubric_generator=rubric_generator,
         )
 
     async def test_mutate_returns_none_when_no_active_release(
@@ -351,3 +410,166 @@ class TestSkillMutationAgent:
 
         updated_prompt = await meta_svc.get_prompt(prompt_id)
         assert updated_prompt.usage_count >= 1
+
+    # -------------------------------------------------------------------------
+    # Phase 3: Goal-conditioned evolution
+    # -------------------------------------------------------------------------
+
+    async def test_mutate_includes_goal_in_llm_prompt(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """When a SkillGoal is declared, the goal text appears in the LLM prompt."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return the exact star count as an integer.",
+        )
+
+        llm = _FakeLlmClient()
+        agent = self._make_agent(db_session, llm=llm)
+        await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        assert len(llm.calls) == 1
+        assert "Return the exact star count as an integer." in llm.calls[0]
+
+    async def test_mutate_calls_evaluator_after_creating_candidate(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """When an evaluator is injected, it's invoked after the mutation candidate is created."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return star count.",
+        )
+
+        evaluator = _FakeEvaluator(EvaluationResult(passed=True, score=0.9, reasoning="Good."))
+        agent = self._make_agent(db_session, evaluator=evaluator)
+        await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        assert evaluator.call_count == 1
+
+    async def test_mutate_auto_promotes_when_evaluator_passes(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """If evaluator returns passed=True with score >= threshold, candidate is auto-promoted."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return star count.",
+        )
+
+        evaluator = _FakeEvaluator(EvaluationResult(passed=True, score=0.9, reasoning="Excellent."))
+        agent = self._make_agent(db_session, evaluator=evaluator, auto_promote_threshold=0.7)
+        new_id = await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        result = await db_session.execute(
+            select(SkillCandidate).where(SkillCandidate.id == new_id)
+        )
+        new_candidate = result.scalars().first()
+        assert new_candidate.status == SkillCandidateStatus.PROMOTED
+
+    async def test_mutate_does_not_promote_when_score_below_threshold(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """Candidate stays DRAFT when evaluator score is below the auto-promote threshold."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return star count.",
+        )
+
+        evaluator = _FakeEvaluator(EvaluationResult(passed=False, score=0.4, reasoning="Too slow."))
+        agent = self._make_agent(db_session, evaluator=evaluator, auto_promote_threshold=0.7)
+        new_id = await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        result = await db_session.execute(
+            select(SkillCandidate).where(SkillCandidate.id == new_id)
+        )
+        new_candidate = result.scalars().first()
+        assert new_candidate.status == SkillCandidateStatus.DRAFT
+
+    async def test_mutate_evaluator_receives_mutated_content_not_parent(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """Evaluator must see the mutation output fields, not the parent candidate's fields."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return star count.",
+        )
+
+        # LLM produces a mutation with a distinctive summary
+        mutated_summary = "MUTATED: wait 3s for dynamic star count element"
+        llm = _FakeLlmClient(
+            MutationOutput(
+                summary=mutated_summary,
+                usage_notes="Use explicit wait",
+                preconditions=["browser available"],
+                postconditions=["integer returned"],
+                mutation_reasoning="Addressed async loading failure.",
+            )
+        )
+        evaluator = _FakeEvaluator(EvaluationResult(passed=True, score=0.9, reasoning="Good."))
+        agent = self._make_agent(db_session, llm=llm, evaluator=evaluator)
+        await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        # The skill_content passed to evaluator must contain the mutated summary
+        assert evaluator.call_count == 1
+        assert mutated_summary in evaluator.last_kwargs["skill_content"]
+        # And must NOT be the parent's summary
+        assert "Gets GitHub repo star count" not in evaluator.last_kwargs["skill_content"]
+
+    async def test_mutate_evaluator_receives_rubric_when_generator_provided(
+        self,
+        db_session: AsyncSession,
+        skill_svc: SkillLifecycleService,
+        meta_svc: MetaPromptService,
+    ):
+        """When a rubric_generator is injected, the evaluator receives the generated rubric."""
+        await meta_svc.seed_defaults()
+        parent, release = await _setup_skill_with_release(skill_svc)
+        await _add_failure_outcomes(skill_svc, release_id=release.id)
+        await skill_svc.declare_goal(
+            owner="default",
+            skill_key="github-get-stars",
+            goal="Return star count.",
+        )
+
+        rubric_gen = _FakeRubricGenerator()
+        evaluator = _FakeEvaluator(EvaluationResult(passed=True, score=0.9, reasoning="Good."))
+        agent = self._make_agent(db_session, evaluator=evaluator, rubric_generator=rubric_gen)
+        await agent.mutate(owner="default", skill_key="github-get-stars")
+
+        assert evaluator.call_count == 1
+        assert evaluator.last_kwargs["rubric"] is not None
+        assert rubric_gen.call_count >= 1

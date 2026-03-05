@@ -16,12 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from app.errors import ValidationError
+from app.errors import NotFoundError, ValidationError
 from app.models.skill import (
     ExecutionType,
-    SkillCandidateStatus,
     SkillReleaseStage,
-    SkillType,
 )
 from app.services.skills import SkillLifecycleService
 
@@ -148,6 +146,55 @@ class TestDeclareGoal:
         assert g1.skill_key == "skill-a"
         assert g2.skill_key == "skill-b"
 
+    async def test_goal_change_clears_rubric_cache(self, svc: SkillLifecycleService):
+        """When goal text changes, rubric_json and rubric_summary must be cleared.
+
+        This prevents the evaluator from using a stale rubric that was derived
+        from the old goal text.
+        """
+        goal = await svc.declare_goal(
+            owner="default",
+            skill_key="cache-skill",
+            goal="Original goal.",
+        )
+        # Simulate rubric having been generated and cached
+        goal.rubric_json = '{"summary": "old rubric", "success_criteria": [], "failure_indicators": [], "evaluation_focus": ""}'  # noqa: E501
+        goal.rubric_summary = "old rubric"
+        svc._db.add(goal)
+        await svc._db.commit()
+
+        # Update goal to a new text
+        updated = await svc.declare_goal(
+            owner="default",
+            skill_key="cache-skill",
+            goal="Completely different goal.",
+        )
+
+        assert updated.rubric_json is None
+        assert updated.rubric_summary == ""
+
+    async def test_same_goal_text_preserves_rubric_cache(self, svc: SkillLifecycleService):
+        """Re-declaring with the exact same goal text must NOT clear the rubric cache."""
+        goal = await svc.declare_goal(
+            owner="default",
+            skill_key="stable-skill",
+            goal="Stable goal.",
+        )
+        goal.rubric_json = '{"summary": "valid rubric", "success_criteria": [], "failure_indicators": [], "evaluation_focus": ""}'  # noqa: E501
+        goal.rubric_summary = "valid rubric"
+        svc._db.add(goal)
+        await svc._db.commit()
+
+        # Re-declare with the same goal text
+        updated = await svc.declare_goal(
+            owner="default",
+            skill_key="stable-skill",
+            goal="Stable goal.",
+        )
+
+        assert updated.rubric_json is not None
+        assert updated.rubric_summary == "valid rubric"
+
 
 # ---------------------------------------------------------------------------
 # get_skill_goal
@@ -180,10 +227,11 @@ class TestGetSkillGoal:
 
 class TestRecordOutcome:
     async def test_success_outcome(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(svc, skill_key="github-get-stars")
         outcome = await svc.record_outcome(
             owner="default",
             skill_key="github-get-stars",
-            release_id="release-abc",
+            release_id=release.id,
             outcome="success",
             reasoning="Page loaded, star count found at expected selector.",
         )
@@ -191,18 +239,19 @@ class TestRecordOutcome:
         assert outcome.id.startswith("outcome-")
         assert outcome.owner == "default"
         assert outcome.skill_key == "github-get-stars"
-        assert outcome.release_id == "release-abc"
+        assert outcome.release_id == release.id
         assert outcome.outcome == "success"
         assert outcome.reasoning == "Page loaded, star count found at expected selector."
         assert outcome.execution_id is None
         assert outcome.signals_json is None
 
     async def test_failure_outcome_with_signals(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(svc, skill_key="github-get-stars")
         signals = {"page_load_time_ms": 5000, "element_found": False}
         outcome = await svc.record_outcome(
             owner="default",
             skill_key="github-get-stars",
-            release_id="release-xyz",
+            release_id=release.id,
             outcome="failure",
             reasoning="Star count element no longer at .social-count — layout changed.",
             execution_id="exec-123",
@@ -216,10 +265,11 @@ class TestRecordOutcome:
         assert parsed_signals["page_load_time_ms"] == 5000
 
     async def test_partial_outcome(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(svc, skill_key="ui-beautify")
         outcome = await svc.record_outcome(
             owner="default",
             skill_key="ui-beautify",
-            release_id="release-001",
+            release_id=release.id,
             outcome="partial",
             reasoning="UI partially updated; footer styles were skipped.",
         )
@@ -227,6 +277,7 @@ class TestRecordOutcome:
         assert outcome.outcome == "partial"
 
     async def test_invalid_outcome_raises_validation_error(self, svc: SkillLifecycleService):
+        # ValidationError fires before release lookup — no real release needed
         with pytest.raises(ValidationError, match="Invalid outcome"):
             await svc.record_outcome(
                 owner="default",
@@ -236,18 +287,53 @@ class TestRecordOutcome:
                 reasoning="some reasoning",
             )
 
+    async def test_release_id_not_found_raises_not_found_error(self, svc: SkillLifecycleService):
+        with pytest.raises(NotFoundError):
+            await svc.record_outcome(
+                owner="default",
+                skill_key="test-skill",
+                release_id="nonexistent-release",
+                outcome="success",
+                reasoning="some reasoning",
+            )
+
+    async def test_wrong_owner_raises_not_found_error(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(
+            svc, owner="alice", skill_key="shared-skill"
+        )
+        with pytest.raises(NotFoundError):
+            await svc.record_outcome(
+                owner="bob",           # wrong owner
+                skill_key="shared-skill",
+                release_id=release.id,
+                outcome="success",
+                reasoning="trying to pollute alice's signal feed",
+            )
+
+    async def test_wrong_skill_key_raises_not_found_error(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(svc, skill_key="real-skill")
+        with pytest.raises(NotFoundError):
+            await svc.record_outcome(
+                owner="default",
+                skill_key="other-skill",   # mismatched skill_key
+                release_id=release.id,
+                outcome="failure",
+                reasoning="trying to tag wrong skill",
+            )
+
     async def test_multiple_outcomes_are_independent_records(self, svc: SkillLifecycleService):
+        _, release = await _make_candidate_with_release(svc, skill_key="skill-z")
         o1 = await svc.record_outcome(
             owner="default",
             skill_key="skill-z",
-            release_id="rel-1",
+            release_id=release.id,
             outcome="success",
             reasoning="First run OK.",
         )
         o2 = await svc.record_outcome(
             owner="default",
             skill_key="skill-z",
-            release_id="rel-1",
+            release_id=release.id,
             outcome="failure",
             reasoning="Second run failed.",
         )
@@ -255,17 +341,23 @@ class TestRecordOutcome:
         assert o1.id != o2.id
 
     async def test_owner_isolation(self, svc: SkillLifecycleService):
+        _, release_a = await _make_candidate_with_release(
+            svc, owner="alice", skill_key="shared-skill"
+        )
+        _, release_b = await _make_candidate_with_release(
+            svc, owner="bob", skill_key="shared-skill"
+        )
         oa = await svc.record_outcome(
             owner="alice",
             skill_key="shared-skill",
-            release_id="rel-1",
+            release_id=release_a.id,
             outcome="success",
             reasoning="Alice's run.",
         )
         ob = await svc.record_outcome(
             owner="bob",
             skill_key="shared-skill",
-            release_id="rel-1",
+            release_id=release_b.id,
             outcome="failure",
             reasoning="Bob's run.",
         )

@@ -12,7 +12,7 @@ Tests cover:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import uuid
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -20,10 +20,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
 from app.config import EvolutionConfig
-from app.models.skill import ExecutionType, SkillReleaseStage
+from app.models.skill import ExecutionType, SkillCandidate, SkillCandidateStatus, SkillReleaseStage
 from app.services.skills import SkillLifecycleService
-from app.services.skills.evolution.scheduler import EvolutionCycleResult, EvolutionScheduler
-
+from app.services.skills.evolution.scheduler import EvolutionScheduler
+from app.utils.datetime import utcnow
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,15 +52,36 @@ def skill_svc(db_session: AsyncSession) -> SkillLifecycleService:
 
 
 class _FakeMutationAgent:
-    """Records mutate() calls. Returns fake candidate IDs."""
+    """Records mutate() calls.
 
-    def __init__(self, *, success: bool = True):
+    If ``db_session`` is provided, creates a real SkillCandidate row so the
+    scheduler's dedup check (which queries the DB) works correctly.
+    """
+
+    def __init__(self, *, success: bool = True, db_session: AsyncSession | None = None):
         self.calls: list[tuple[str, str]] = []  # (owner, skill_key)
         self._success = success
+        self._db = db_session
 
     async def mutate(self, *, owner: str, skill_key: str) -> str | None:
         self.calls.append((owner, skill_key))
-        return f"candidate-{skill_key}" if self._success else None
+        if not self._success:
+            return None
+        candidate_id = f"sc-fake-{uuid.uuid4().hex[:8]}"
+        if self._db is not None:
+            candidate = SkillCandidate(
+                id=candidate_id,
+                owner=owner,
+                skill_key=skill_key,
+                source_execution_ids="",
+                status=SkillCandidateStatus.DRAFT,
+                created_by="system:evolution",
+                created_at=utcnow(),
+                updated_at=utcnow(),
+            )
+            self._db.add(candidate)
+            await self._db.commit()
+        return candidate_id
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +196,7 @@ class TestEvolutionScheduler:
         agent = _FakeMutationAgent()
         scheduler = _make_scheduler(db_session, agent, min_failures=2)
 
-        result = await scheduler.run_cycle()
+        await scheduler.run_cycle()
 
         assert not any(call[1] == "barely-failing" for call in agent.calls)
 
@@ -216,7 +237,7 @@ class TestEvolutionScheduler:
         agent = _FakeMutationAgent()
         scheduler = _make_scheduler(db_session, agent, min_failures=2)
 
-        result = await scheduler.run_cycle()
+        await scheduler.run_cycle()
 
         assert not any(call[1] == "no-goal-skill" for call in agent.calls)
 
@@ -264,3 +285,54 @@ class TestEvolutionScheduler:
 
         assert result.mutations_attempted >= 1
         assert result.mutations_succeeded == 0
+
+    async def test_cycle_skips_skill_already_mutated_since_last_failure(
+        self, db_session: AsyncSession, skill_svc: SkillLifecycleService
+    ):
+        """Skip mutating when an evolution candidate already exists after the latest failure."""
+        await _setup_skill_with_release_and_failures(
+            skill_svc, skill_key="stable-skill", failure_count=3
+        )
+
+        # Pass db_session so the fake agent creates a real SkillCandidate row
+        agent = _FakeMutationAgent(success=True, db_session=db_session)
+        scheduler = _make_scheduler(db_session, agent, min_failures=2)
+
+        # First cycle mutates
+        first = await scheduler.run_cycle()
+        assert first.mutations_attempted == 1
+
+        # Second cycle: mutation candidate already exists after latest failure → skip
+        second = await scheduler.run_cycle()
+        assert second.mutations_attempted == 0
+        assert len(agent.calls) == 1  # agent called exactly once total
+
+    async def test_cycle_mutates_again_after_new_failures(
+        self, db_session: AsyncSession, skill_svc: SkillLifecycleService
+    ):
+        """New failures that arrive after the last mutation should re-trigger evolution."""
+        release_id = await _setup_skill_with_release_and_failures(
+            skill_svc, skill_key="resurging-skill", failure_count=3
+        )
+
+        agent = _FakeMutationAgent(success=True, db_session=db_session)
+        scheduler = _make_scheduler(db_session, agent, min_failures=2)
+
+        # First cycle mutates
+        await scheduler.run_cycle()
+        assert len(agent.calls) == 1
+
+        # New failures arrive after the mutation candidate was created
+        for i in range(3):
+            await skill_svc.record_outcome(
+                owner="default",
+                skill_key="resurging-skill",
+                release_id=release_id,
+                outcome="failure",
+                reasoning=f"New post-mutation failure {i}",
+            )
+
+        # Second cycle: new failures detected → mutate again
+        second = await scheduler.run_cycle()
+        assert second.mutations_attempted == 1
+        assert len(agent.calls) == 2

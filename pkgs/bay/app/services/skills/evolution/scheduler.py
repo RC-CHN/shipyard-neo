@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.config import EvolutionConfig
-from app.models.skill import SkillGoal, SkillOutcome
+from app.models.skill import SkillCandidate, SkillGoal, SkillOutcome
 
 logger = structlog.get_logger()
 
@@ -76,6 +76,35 @@ class EvolutionScheduler:
                     skill_key=goal.skill_key,
                     failure_count=len(recent_failures),
                     min_required=self._config.min_failures_to_trigger,
+                )
+                continue
+
+            # Dedup: skip if an evolution candidate was already created after the latest failure.
+            # This prevents the scheduler from firing again every cycle on the same failure set.
+            latest_failure = recent_failures[0]  # already sorted desc
+            latest_mutation_result = await self._db.execute(
+                select(SkillCandidate)
+                .where(
+                    SkillCandidate.owner == goal.owner,
+                    SkillCandidate.skill_key == goal.skill_key,
+                    SkillCandidate.created_by == "system:evolution",
+                    SkillCandidate.is_deleted.is_(False),
+                )
+                .order_by(SkillCandidate.created_at.desc())
+                .limit(1)
+            )
+            latest_mutation = latest_mutation_result.scalars().first()
+            already_mutated = (
+                latest_mutation is not None
+                and latest_mutation.created_at >= latest_failure.created_at
+            )
+            if already_mutated:
+                self._log.debug(
+                    "evolution_scheduler.skip_already_mutated",
+                    owner=goal.owner,
+                    skill_key=goal.skill_key,
+                    last_mutation_at=str(latest_mutation.created_at),
+                    last_failure_at=str(latest_failure.created_at),
                 )
                 continue
 

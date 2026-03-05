@@ -9,8 +9,14 @@ import structlog
 from app.config import EvolutionConfig, get_settings
 from app.db.session import get_async_session
 from app.services.skills.evolution.agent import SkillMutationAgent
-from app.services.skills.evolution.llm import LlmEvolutionClient
+from app.services.skills.evolution.evaluator import GoalConditionedEvaluator
+from app.services.skills.evolution.llm import (
+    LlmEvolutionClient,
+    make_evaluator_client,
+    make_rubric_client,
+)
 from app.services.skills.evolution.meta_prompt import MetaPromptService
+from app.services.skills.evolution.rubric import RubricGenerator
 from app.services.skills.evolution.scheduler import EvolutionCycleResult, EvolutionScheduler
 
 logger = structlog.get_logger()
@@ -41,16 +47,25 @@ class EvolutionSchedulerRunner:
         if not config.enabled:
             return EvolutionCycleResult()
 
+        if not config.llm.enabled:
+            self._log.debug("skills.evolution.llm.disabled")
+            return EvolutionCycleResult()
+
         async with get_async_session() as db_session:
             # Seed meta-prompts on first run
             meta_svc = MetaPromptService(db_session)
             await meta_svc.seed_defaults()
 
             llm_client = LlmEvolutionClient(config.llm)
+            rubric_generator = RubricGenerator(llm_client=make_rubric_client(config.llm))
+            evaluator = GoalConditionedEvaluator(llm_client=make_evaluator_client(config.llm))
             agent = SkillMutationAgent(
                 db_session=db_session,
                 llm_client=llm_client,
                 max_recent_outcomes=config.max_recent_outcomes,
+                evaluator=evaluator,
+                auto_promote_threshold=config.auto_promote_threshold,
+                rubric_generator=rubric_generator,
             )
             scheduler = EvolutionScheduler(
                 db_session=db_session,
