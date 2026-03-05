@@ -22,6 +22,11 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
+# Install curl for container health checks
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
