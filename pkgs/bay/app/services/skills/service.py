@@ -29,12 +29,37 @@ from app.models.skill import (
     SkillCandidate,
     SkillCandidateStatus,
     SkillEvaluation,
+    SkillGoal,
+    SkillOutcome,
     SkillRelease,
     SkillReleaseMode,
     SkillReleaseStage,
     SkillType,
 )
 from app.utils.datetime import utcnow
+
+
+def _assemble_skill_content(
+    *,
+    skill_key: str,
+    summary: str | None,
+    usage_notes: str | None,
+    preconditions: list[str],
+    postconditions: list[str],
+) -> str:
+    """Assemble a human/LLM-readable skill content block from candidate fields."""
+    lines: list[str] = [f"# SKILL: {skill_key}"]
+    if summary:
+        lines += ["", "## Summary", summary]
+    if usage_notes:
+        lines += ["", "## Usage Notes", usage_notes]
+    if preconditions:
+        lines += ["", "## Preconditions"]
+        lines += [f"- {p}" for p in preconditions]
+    if postconditions:
+        lines += ["", "## Postconditions"]
+        lines += [f"- {p}" for p in postconditions]
+    return "\n".join(lines)
 
 
 class SkillLifecycleService:
@@ -1014,6 +1039,159 @@ class SkillLifecycleService:
             "error_rate": error_rate,
             "p95_duration": p95_duration,
         }
+
+    # ---------------------------------------------------------------------
+    # Goal registry & outcome reporting (evolution infrastructure)
+    # ---------------------------------------------------------------------
+
+    async def declare_goal(
+        self,
+        *,
+        owner: str,
+        skill_key: str,
+        goal: str,
+    ) -> SkillGoal:
+        """Upsert the declared goal for a skill key."""
+        result = await self._db.execute(
+            select(SkillGoal).where(
+                SkillGoal.owner == owner,
+                SkillGoal.skill_key == skill_key,
+            )
+        )
+        existing = result.scalars().first()
+        now = utcnow()
+        if existing is not None:
+            existing.goal = goal
+            existing.updated_at = now
+            self._db.add(existing)
+            await self._db.commit()
+            await self._db.refresh(existing)
+            return existing
+
+        skill_goal = SkillGoal(
+            id=f"goal-{uuid.uuid4().hex[:12]}",
+            owner=owner,
+            skill_key=skill_key,
+            goal=goal,
+            rubric_summary="",
+            created_at=now,
+            updated_at=now,
+        )
+        self._db.add(skill_goal)
+        await self._db.commit()
+        await self._db.refresh(skill_goal)
+        return skill_goal
+
+    async def get_skill_goal(
+        self,
+        *,
+        owner: str,
+        skill_key: str,
+    ) -> SkillGoal | None:
+        result = await self._db.execute(
+            select(SkillGoal).where(
+                SkillGoal.owner == owner,
+                SkillGoal.skill_key == skill_key,
+            )
+        )
+        return result.scalars().first()
+
+    async def get_active_skill_view(
+        self,
+        *,
+        owner: str,
+        skill_key: str,
+    ) -> dict[str, Any] | None:
+        """Return a unified SkillView for the active release of a skill key."""
+        release = await self.get_active_release(owner=owner, skill_key=skill_key)
+        if release is None:
+            return None
+
+        candidate_result = await self._db.execute(
+            select(SkillCandidate).where(
+                SkillCandidate.id == release.candidate_id,
+                SkillCandidate.owner == owner,
+            )
+        )
+        candidate = candidate_result.scalars().first()
+        if candidate is None:
+            return None
+
+        goal_record = await self.get_skill_goal(owner=owner, skill_key=skill_key)
+
+        preconditions: list[str] = []
+        if candidate.preconditions_json:
+            try:
+                raw = json.loads(candidate.preconditions_json)
+                if isinstance(raw, list):
+                    preconditions = [str(x) for x in raw]
+                elif isinstance(raw, dict):
+                    preconditions = [f"{k}: {v}" for k, v in raw.items()]
+            except Exception:
+                pass
+
+        postconditions: list[str] = []
+        if candidate.postconditions_json:
+            try:
+                raw = json.loads(candidate.postconditions_json)
+                if isinstance(raw, list):
+                    postconditions = [str(x) for x in raw]
+                elif isinstance(raw, dict):
+                    postconditions = [f"{k}: {v}" for k, v in raw.items()]
+            except Exception:
+                pass
+
+        content = _assemble_skill_content(
+            skill_key=skill_key,
+            summary=candidate.summary,
+            usage_notes=candidate.usage_notes,
+            preconditions=preconditions,
+            postconditions=postconditions,
+        )
+
+        return {
+            "skill_key": skill_key,
+            "release_id": release.id,
+            "version": release.version,
+            "stage": release.stage.value,
+            "goal": goal_record.goal if goal_record else None,
+            "content": content,
+            "summary": candidate.summary,
+            "preconditions": preconditions,
+            "postconditions": postconditions,
+            "payload_ref": candidate.payload_ref,
+        }
+
+    async def record_outcome(
+        self,
+        *,
+        owner: str,
+        skill_key: str,
+        release_id: str,
+        outcome: str,
+        reasoning: str,
+        execution_id: str | None = None,
+        signals: dict[str, Any] | None = None,
+    ) -> SkillOutcome:
+        """Record an execution outcome report — the evolution signal feed."""
+        if outcome not in ("success", "failure", "partial"):
+            raise ValidationError(f"Invalid outcome: {outcome!r}. Must be success, failure, or partial.")
+
+        skill_outcome = SkillOutcome(
+            id=f"outcome-{uuid.uuid4().hex[:12]}",
+            owner=owner,
+            skill_key=skill_key,
+            release_id=release_id,
+            outcome=outcome,
+            reasoning=reasoning,
+            execution_id=execution_id,
+            signals_json=json.dumps(signals, ensure_ascii=False) if signals is not None else None,
+            created_at=utcnow(),
+        )
+        self._db.add(skill_outcome)
+        await self._db.commit()
+        await self._db.refresh(skill_outcome)
+        return skill_outcome
 
     # ---------------------------------------------------------------------
     # Internal helpers

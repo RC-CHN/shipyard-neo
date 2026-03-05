@@ -382,6 +382,30 @@ class SkillPayloadInfo(BaseModel):
     payload: dict[str, Any] | list[Any]
 
 
+class GoalDeclaration(BaseModel):
+    """Response from declaring a skill goal."""
+
+    goal_id: str
+    skill_key: str
+    goal: str
+    rubric_summary: str
+
+
+class SkillView(BaseModel):
+    """Unified view of the currently active skill release."""
+
+    skill_key: str
+    release_id: str
+    version: int
+    stage: str
+    goal: str | None = None
+    content: str
+    summary: str | None = None
+    preconditions: list[str] = Field(default_factory=list)
+    postconditions: list[str] = Field(default_factory=list)
+    payload_ref: str | None = None
+
+
 # Internal request models (not exported)
 #
 # These are SDK-internal helpers to build request bodies consistently and

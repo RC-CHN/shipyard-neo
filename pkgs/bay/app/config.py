@@ -376,6 +376,36 @@ class ExtractionConfig(BaseModel):
     llm: LlmExtractionConfig = Field(default_factory=LlmExtractionConfig)
 
 
+class LlmEvolutionConfig(BaseModel):
+    """LLM configuration for skill mutation."""
+
+    enabled: bool = False
+    api_base: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    model: str = "gpt-4.1-mini"
+    timeout_seconds: int = 60
+    max_tokens: int = 4096
+
+
+class EvolutionConfig(BaseModel):
+    """Skill evolution scheduler configuration."""
+
+    enabled: bool = False
+    run_on_startup: bool = False
+    interval_seconds: int = 600
+
+    # How many recent failure/partial outcomes to include in mutation context
+    max_recent_outcomes: int = 10
+
+    # Minimum failures before triggering mutation for a skill
+    min_failures_to_trigger: int = 2
+
+    # Max mutations per scheduler cycle (resource budget)
+    max_mutations_per_cycle: int = 5
+
+    llm: LlmEvolutionConfig = Field(default_factory=LlmEvolutionConfig)
+
+
 class WarmPoolConfig(BaseModel):
     """Warm pool global configuration."""
 
@@ -436,6 +466,7 @@ class Settings(BaseSettings):
     warm_pool: WarmPoolConfig = Field(default_factory=WarmPoolConfig)
     browser_learning: BrowserLearningConfig = Field(default_factory=BrowserLearningConfig)
     browser_auto_release_enabled: bool = True
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
     # Default profiles
     profiles: list[ProfileConfig] = Field(
