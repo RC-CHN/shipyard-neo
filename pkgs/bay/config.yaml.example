@@ -79,6 +79,15 @@ security:
     - "172.16.0.0/12"
     - "192.168.0.0/16"
 
+# Container proxy configuration
+# When enabled, proxy environment variables are injected into sandbox containers.
+proxy:
+  enabled: false
+  # http_proxy: "http://proxy.example.com:8080"
+  # https_proxy: "http://proxy.example.com:8080"
+  # Optional extra entries appended to default NO_PROXY list
+  # no_proxy: "my-internal-service.example.com"
+
 # Garbage Collection configuration
 # GC automatically cleans up idle sessions, expired sandboxes, and orphan resources.
 gc:
@@ -156,6 +165,9 @@ profiles:
     idle_timeout: 1800  # 30 minutes
     warm_pool_size: 1   # Keep 1 pre-warmed instance ready (0 = disable for this profile)
     env: {}
+    # Optional: profile-level proxy override
+    # proxy:
+    #   enabled: false
 
   - id: python-data
     image: "ship:data"
@@ -171,6 +183,25 @@ profiles:
     idle_timeout: 1800
     warm_pool_size: 1
     env: {}
+
+  # Example: profile with custom proxy override
+  # - id: python-restricted
+  #   image: "ship:latest"
+  #   runtime_type: ship
+  #   runtime_port: 8123
+  #   resources:
+  #     cpus: 1.0
+  #     memory: "1g"
+  #   capabilities:
+  #     - filesystem
+  #     - shell
+  #     - python
+  #   idle_timeout: 1800
+  #   env: {}
+  #   proxy:
+  #     enabled: true
+  #     http_proxy: "http://restricted-proxy:3128"
+  #     https_proxy: "http://restricted-proxy:3128"
 
   # Example: GPU profile (Phase 2+)
   # - id: python-gpu

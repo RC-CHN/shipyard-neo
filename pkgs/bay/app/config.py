@@ -97,6 +97,66 @@ class DriverConfig(BaseModel):
     image_pull_policy: Literal["always", "if_not_present", "never"] = "if_not_present"
 
 
+class ProxyConfig(BaseModel):
+    """Container proxy configuration.
+
+    Used to inject proxy environment variables into sandbox containers.
+    """
+
+    enabled: bool = False
+    http_proxy: str | None = None
+    https_proxy: str | None = None
+    no_proxy: str | None = None
+
+    # Common local/private ranges + k8s internal DNS suffixes
+    default_no_proxy: str = ",".join(
+        [
+            "localhost",
+            "127.0.0.1",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "169.254.0.0/16",
+            "*.local",
+            ".svc",
+            ".svc.cluster.local",
+            ".pod.cluster.local",
+        ]
+    )
+
+    def get_no_proxy(self) -> str:
+        """Merge default NO_PROXY list with user-defined entries."""
+        parts = [self.default_no_proxy]
+        if self.no_proxy:
+            parts.append(self.no_proxy)
+        return ",".join(parts)
+
+    def get_env_vars(self) -> dict[str, str]:
+        """Build proxy environment variables.
+
+        Returns both uppercase and lowercase variants for compatibility.
+        """
+        if not self.enabled:
+            return {}
+
+        env: dict[str, str] = {}
+
+        if self.http_proxy:
+            env["HTTP_PROXY"] = self.http_proxy
+            env["http_proxy"] = self.http_proxy
+
+        if self.https_proxy:
+            env["HTTPS_PROXY"] = self.https_proxy
+            env["https_proxy"] = self.https_proxy
+
+        no_proxy = self.get_no_proxy()
+        if no_proxy:
+            env["NO_PROXY"] = no_proxy
+            env["no_proxy"] = no_proxy
+
+        return env
+
+
 class ResourceSpec(BaseModel):
     """Container resource specification."""
 
@@ -124,6 +184,11 @@ class ContainerSpec(BaseModel):
 
     # Environment variables, supports ${VAR} placeholders
     env: dict[str, str] = Field(default_factory=dict)
+
+    # Per-container proxy override
+    # - None: inherit from profile/global
+    # - enabled=false: disable proxy for this container
+    proxy: ProxyConfig | None = None
 
     # Health check endpoint path
     health_check_path: str = "/health"
@@ -172,6 +237,11 @@ class ProfileConfig(BaseModel):
     runtime_port: int | None = None
 
     env: dict[str, str] | None = None
+
+    # Profile-level proxy override
+    # - None: inherit from global settings.proxy
+    # - enabled=false: disable proxy for this profile
+    proxy: ProxyConfig | None = None
 
     # ========== Phase 2 new fields (multi-container mode) ==========
     containers: list[ContainerSpec] | None = None
@@ -414,6 +484,7 @@ class Settings(BaseSettings):
     gc: GCConfig = Field(default_factory=GCConfig)
     warm_pool: WarmPoolConfig = Field(default_factory=WarmPoolConfig)
     browser_learning: BrowserLearningConfig = Field(default_factory=BrowserLearningConfig)
+    proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     browser_auto_release_enabled: bool = True
 
     # Default profiles
@@ -442,6 +513,20 @@ class Settings(BaseSettings):
             if profile.id == profile_id:
                 return profile
         return None
+
+
+def resolve_proxy_env(
+    *,
+    global_proxy: ProxyConfig,
+    profile_proxy: ProxyConfig | None,
+    container_proxy: ProxyConfig | None,
+) -> dict[str, str]:
+    """Resolve proxy env vars with override priority.
+
+    Priority: container > profile > global.
+    """
+    effective = container_proxy or profile_proxy or global_proxy
+    return effective.get_env_vars()
 
 
 def _load_config_file() -> dict:

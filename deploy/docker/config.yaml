@@ -50,6 +50,15 @@ security:
   api_key: "CHANGE-ME"
   allow_anonymous: false
 
+# Container proxy environment injection.
+# When enabled, Bay injects HTTP(S)_PROXY and NO_PROXY into sandbox containers.
+proxy:
+  enabled: false
+  # http_proxy: "http://proxy.example.com:7890"
+  # https_proxy: "http://proxy.example.com:7890"
+  # Optional extra entries to append to default NO_PROXY list
+  # no_proxy: "my-internal.service"
+
 # Warm Pool — pre-start standby sandbox instances to reduce cold-start latency.
 # When a user creates a sandbox, Bay will first try to claim an available warm instance,
 # delivering near-instant startup instead of waiting for container boot.
@@ -79,6 +88,9 @@ profiles:
     idle_timeout: 1800  # 30 minutes
     warm_pool_size: 1   # Keep 1 pre-warmed instance ready
     env: {}
+    # Optional profile-level proxy override
+    # proxy:
+    #   enabled: false
 
   # ── Data Science sandbox (more resources) ──────────
   - id: python-data

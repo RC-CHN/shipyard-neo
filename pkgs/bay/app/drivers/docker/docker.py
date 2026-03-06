@@ -26,7 +26,7 @@ import aiodocker
 import structlog
 from aiodocker.exceptions import DockerError
 
-from app.config import get_settings
+from app.config import get_settings, resolve_proxy_env
 from app.drivers.base import (
     ContainerInfo,
     ContainerStatus,
@@ -36,7 +36,7 @@ from app.drivers.base import (
 )
 
 if TYPE_CHECKING:
-    from app.config import ContainerSpec, ProfileConfig
+    from app.config import ContainerSpec, ProfileConfig, ProxyConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 
@@ -234,6 +234,14 @@ class DockerDriver(Driver):
 
         # Build environment
         env = [f"{k}={v}" for k, v in primary.env.items()]
+
+        proxy_env = resolve_proxy_env(
+            global_proxy=settings.proxy,
+            profile_proxy=profile.proxy,
+            container_proxy=primary.proxy,
+        )
+        env.extend(f"{k}={v}" for k, v in proxy_env.items())
+
         env.extend(
             [
                 f"BAY_SESSION_ID={session.id}",
@@ -652,6 +660,7 @@ class DockerDriver(Driver):
         cargo: "Cargo",
         network_name: str,
         extra_labels: dict[str, str] | None = None,
+        profile_proxy: "ProxyConfig | None" = None,
     ) -> tuple[dict[str, Any], str]:
         """Build Docker container config for a single ContainerSpec.
 
@@ -686,6 +695,14 @@ class DockerDriver(Driver):
 
         # Environment variables
         env = [f"{k}={v}" for k, v in spec.env.items()]
+
+        proxy_env = resolve_proxy_env(
+            global_proxy=settings.proxy,
+            profile_proxy=profile_proxy,
+            container_proxy=spec.proxy,
+        )
+        env.extend(f"{k}={v}" for k, v in proxy_env.items())
+
         env.extend(
             [
                 f"BAY_SESSION_ID={session.id}",
@@ -804,6 +821,7 @@ class DockerDriver(Driver):
                 cargo=cargo,
                 network_name=network_name,
                 extra_labels=labels,
+                profile_proxy=profile.proxy,
             )
 
             self._log.info(

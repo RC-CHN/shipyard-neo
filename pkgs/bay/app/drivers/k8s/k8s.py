@@ -23,7 +23,7 @@ import structlog
 from kubernetes_asyncio import client, config
 from kubernetes_asyncio.client import ApiClient, ApiException
 
-from app.config import get_settings
+from app.config import get_settings, resolve_proxy_env
 from app.drivers.base import (
     ContainerInfo,
     ContainerStatus,
@@ -33,7 +33,7 @@ from app.drivers.base import (
 )
 
 if TYPE_CHECKING:
-    from app.config import ContainerSpec, ProfileConfig
+    from app.config import ContainerSpec, ProfileConfig, ProxyConfig
     from app.models.cargo import Cargo
     from app.models.session import Session
 
@@ -196,7 +196,16 @@ class K8sDriver(Driver):
         )
 
         # Build environment variables
-        env = [client.V1EnvVar(name=k, value=v) for k, v in profile.env.items()]
+        env = [client.V1EnvVar(name=k, value=v) for k, v in (profile.env or {}).items()]
+
+        settings = get_settings()
+        proxy_env = resolve_proxy_env(
+            global_proxy=settings.proxy,
+            profile_proxy=profile.proxy,
+            container_proxy=None,
+        )
+        env.extend(client.V1EnvVar(name=k, value=v) for k, v in proxy_env.items())
+
         env.extend(
             [
                 client.V1EnvVar(name="BAY_SESSION_ID", value=session.id),
@@ -680,10 +689,20 @@ class K8sDriver(Driver):
         spec: "ContainerSpec",
         *,
         session: "Session",
+        profile_proxy: "ProxyConfig | None" = None,
     ) -> client.V1Container:
         """Build a K8s V1Container from a ContainerSpec."""
         # Environment variables
         env = [client.V1EnvVar(name=k, value=v) for k, v in spec.env.items()]
+
+        settings = get_settings()
+        proxy_env = resolve_proxy_env(
+            global_proxy=settings.proxy,
+            profile_proxy=profile_proxy,
+            container_proxy=spec.proxy,
+        )
+        env.extend(client.V1EnvVar(name=k, value=v) for k, v in proxy_env.items())
+
         env.extend(
             [
                 client.V1EnvVar(name="BAY_SESSION_ID", value=session.id),
@@ -760,7 +779,8 @@ class K8sDriver(Driver):
 
         # Build K8s containers from all specs
         k8s_containers = [
-            self._build_k8s_container(spec, session=session) for spec in containers_specs
+            self._build_k8s_container(spec, session=session, profile_proxy=profile.proxy)
+            for spec in containers_specs
         ]
 
         # Volume: mount Cargo PVC
