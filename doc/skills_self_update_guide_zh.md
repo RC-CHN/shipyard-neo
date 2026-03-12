@@ -33,6 +33,41 @@ Shipyard Neo 提供的是 **self-update 基建**，而不是固定训练框架�
 6. canary 健康窗口 24 小时达标后自动升 stable。
 7. 若 `success_rate` 下降超过 3% 或 `error_rate` 升至 2x 以上，自动回滚并写审计日志。
 
+#### 2.1.1 Extraction Pipeline 配置（新增）
+
+Browser Learning 现在支持可插拔提取策略与可选 LLM 辅助，配置入口为 `browser_learning.extraction`：
+
+```yaml
+browser_learning:
+  extraction:
+    dedup_enabled: true
+    variable_extraction_enabled: true
+    llm:
+      enabled: false
+      api_base: "https://api.openai.com/v1"
+      api_key: ""
+      model: "gpt-4.1-mini"
+      timeout_seconds: 30
+      max_tokens: 4096
+```
+
+等价环境变量前缀：
+
+- `BAY_BROWSER_LEARNING__EXTRACTION__DEDUP_ENABLED`
+- `BAY_BROWSER_LEARNING__EXTRACTION__VARIABLE_EXTRACTION_ENABLED`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__ENABLED`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__API_BASE`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__API_KEY`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__MODEL`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__TIMEOUT_SECONDS`
+- `BAY_BROWSER_LEARNING__EXTRACTION__LLM__MAX_TOKENS`
+
+说明：
+
+1. 默认 `llm.enabled=false`，系统使用纯规则策略。
+2. LLM 调用超时、连接错误或解析失败时，会自动降级到规则策略，不阻断学习流水线。
+3. 候选去重基于 `owner + skill_key + payload_hash`，其中 `payload_hash` 为动作 `cmd` 序列的 SHA-256。
+
 ## 3. REST API 关键接口
 
 ### 3.1 Execution History

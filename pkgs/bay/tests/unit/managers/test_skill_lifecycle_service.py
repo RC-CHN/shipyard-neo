@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -336,6 +338,32 @@ class TestCandidateLifecycle:
                 source_execution_ids=["exec-missing"],
             )
 
+    async def test_create_candidate_persists_list_conditions(
+        self, skill_service: SkillLifecycleService
+    ):
+        entry = await skill_service.create_execution(
+            owner="default",
+            sandbox_id="sandbox-1",
+            exec_type=ExecutionType.SHELL,
+            code="echo ok",
+            success=True,
+            execution_time_ms=1,
+        )
+
+        candidate = await skill_service.create_candidate(
+            owner="default",
+            skill_key="browser-skill",
+            source_execution_ids=[entry.id],
+            preconditions=["browser available", "js enabled"],
+            postconditions=["integer returned"],
+        )
+
+        assert json.loads(candidate.preconditions_json or "null") == [
+            "browser available",
+            "js enabled",
+        ]
+        assert json.loads(candidate.postconditions_json or "null") == ["integer returned"]
+
     async def test_promote_requires_passing_evaluation(self, skill_service: SkillLifecycleService):
         entry = await skill_service.create_execution(
             owner="default",
@@ -464,6 +492,77 @@ class TestCandidateLifecycle:
                 limit=10,
                 offset=-1,
             )
+
+    async def test_find_candidate_by_payload_hash(self, skill_service: SkillLifecycleService):
+        entry_a = await skill_service.create_execution(
+            owner="default",
+            sandbox_id="sandbox-1",
+            exec_type=ExecutionType.BROWSER,
+            code="open https://example.com",
+            success=True,
+            execution_time_ms=1,
+        )
+        entry_b = await skill_service.create_execution(
+            owner="default",
+            sandbox_id="sandbox-1",
+            exec_type=ExecutionType.BROWSER,
+            code="open https://example.com",
+            success=True,
+            execution_time_ms=1,
+        )
+        candidate = await skill_service.create_candidate(
+            owner="default",
+            skill_key="browser-login",
+            source_execution_ids=[entry_a.id],
+            payload_hash="abc123",
+        )
+        await skill_service.create_candidate(
+            owner="default",
+            skill_key="browser-checkout",
+            source_execution_ids=[entry_b.id],
+            payload_hash="abc123",
+        )
+
+        found = await skill_service.find_candidate_by_payload_hash(
+            owner="default",
+            skill_key="browser-login",
+            payload_hash="abc123",
+        )
+        assert found is not None
+        assert found.id == candidate.id
+
+        not_found = await skill_service.find_candidate_by_payload_hash(
+            owner="default",
+            skill_key="browser-login",
+            payload_hash="missing",
+        )
+        assert not_found is None
+
+    async def test_find_candidate_by_payload_hash_returns_none_when_hash_not_provided(
+        self,
+        skill_service: SkillLifecycleService,
+    ):
+        entry = await skill_service.create_execution(
+            owner="default",
+            sandbox_id="sandbox-1",
+            exec_type=ExecutionType.BROWSER,
+            code="open https://example.com",
+            success=True,
+            execution_time_ms=1,
+        )
+        await skill_service.create_candidate(
+            owner="default",
+            skill_key="browser-login",
+            source_execution_ids=[entry.id],
+            payload_hash="abc123",
+        )
+
+        found = await skill_service.find_candidate_by_payload_hash(
+            owner="default",
+            skill_key="browser-login",
+            payload_hash=None,
+        )
+        assert found is None
 
     async def test_promote_deactivates_previous_release(self, skill_service: SkillLifecycleService):
         entry_v1 = await skill_service.create_execution(

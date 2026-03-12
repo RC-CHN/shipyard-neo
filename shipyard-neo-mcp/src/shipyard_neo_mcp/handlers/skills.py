@@ -14,6 +14,7 @@ from shipyard_neo_mcp.validators import (
     optional_str,
     read_bool,
     read_int,
+    read_optional_conditions,
     read_optional_number,
     read_release_stage,
     require_str,
@@ -77,16 +78,8 @@ async def handle_create_skill_candidate(
             payload_ref=optional_str(arguments, "payload_ref"),
             summary=optional_str(arguments, "summary"),
             usage_notes=optional_str(arguments, "usage_notes"),
-            preconditions=(
-                arguments.get("preconditions")
-                if isinstance(arguments.get("preconditions"), dict)
-                else None
-            ),
-            postconditions=(
-                arguments.get("postconditions")
-                if isinstance(arguments.get("postconditions"), dict)
-                else None
-            ),
+            preconditions=read_optional_conditions(arguments, "preconditions"),
+            postconditions=read_optional_conditions(arguments, "postconditions"),
         )
     return [
         TextContent(
@@ -274,6 +267,87 @@ async def handle_rollback_skill_release(
                 f"skill_key: {rollback_release.skill_key}\n"
                 f"version: {rollback_release.version}\n"
                 f"rollback_of: {rollback_release.rollback_of}"
+            ),
+        )
+    ]
+
+
+async def handle_declare_skill_goal(
+    arguments: dict[str, Any],
+) -> list[TextContent]:
+    """Declare the goal for a skill key to drive evolution."""
+    client = get_client()
+    skill_key = require_str(arguments, "skill_key")
+    goal = require_str(arguments, "goal")
+    async with asyncio.timeout(_config.SDK_CALL_TIMEOUT):
+        result = await client.skills.declare_goal(skill_key=skill_key, goal=goal)
+    return [
+        TextContent(
+            type="text",
+            text=(
+                f"Goal declared for skill '{result.skill_key}'.\n"
+                f"goal_id: {result.goal_id}\n"
+                f"goal: {result.goal}"
+            ),
+        )
+    ]
+
+
+async def handle_get_active_skill(
+    arguments: dict[str, Any],
+) -> list[TextContent]:
+    """Get the currently active skill and its content."""
+    client = get_client()
+    skill_key = require_str(arguments, "skill_key")
+    async with asyncio.timeout(_config.SDK_CALL_TIMEOUT):
+        skill = await client.skills.get_active(skill_key)
+    if skill is None:
+        return [TextContent(type="text", text=f"No active release found for skill '{skill_key}'.")]
+    return [
+        TextContent(
+            type="text",
+            text=(
+                f"skill_key: {skill.skill_key}\n"
+                f"release_id: {skill.release_id}\n"
+                f"version: {skill.version}\n"
+                f"stage: {skill.stage}\n"
+                f"goal: {skill.goal or '(not declared)'}\n"
+                f"\n{skill.content}"
+            ),
+        )
+    ]
+
+
+async def handle_report_skill_outcome(
+    arguments: dict[str, Any],
+) -> list[TextContent]:
+    """Report the outcome of executing a skill to feed the evolution system."""
+    client = get_client()
+    skill_key = require_str(arguments, "skill_key")
+    release_id = require_str(arguments, "release_id")
+    outcome_raw = require_str(arguments, "outcome")
+    if outcome_raw not in ("success", "failure", "partial"):
+        raise ValueError("field 'outcome' must be 'success', 'failure', or 'partial'")
+    reasoning = require_str(arguments, "reasoning")
+    execution_id = optional_str(arguments, "execution_id")
+    signals = arguments.get("signals") if isinstance(arguments.get("signals"), dict) else None
+
+    async with asyncio.timeout(_config.SDK_CALL_TIMEOUT):
+        await client.skills.report_outcome(
+            skill_key=skill_key,
+            release_id=release_id,
+            outcome=outcome_raw,  # type: ignore[arg-type]
+            reasoning=reasoning,
+            execution_id=execution_id,
+            signals=signals,
+        )
+    return [
+        TextContent(
+            type="text",
+            text=(
+                f"Outcome reported for skill '{skill_key}'.\n"
+                f"outcome: {outcome_raw}\n"
+                f"reasoning recorded and queued for evolution processing."
             ),
         )
     ]

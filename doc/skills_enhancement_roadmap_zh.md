@@ -14,6 +14,8 @@
 
 ### 1. 技能提取智能化
 
+> 状态：已规划（OpenSpec change: `skill-extraction-intelligence`）
+
 #### 1.1 现状
 
 `BrowserLearningScheduler`（`app/services/skills/scheduler.py`）采用**规则驱动**的技能提取策略：

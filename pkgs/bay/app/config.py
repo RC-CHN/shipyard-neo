@@ -424,6 +424,83 @@ class BrowserLearningConfig(BaseModel):
     success_drop_threshold: float = 0.03
     error_rate_multiplier_threshold: float = 2.0
 
+    extraction: "ExtractionConfig" = Field(default_factory=lambda: ExtractionConfig())
+
+
+class LlmExtractionConfig(BaseModel):
+    """LLM-assisted extraction configuration."""
+
+    enabled: bool = False
+    api_base: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    model: str = "gpt-4.1-mini"
+    timeout_seconds: int = 30
+    max_tokens: int = 4096
+
+
+class ExtractionConfig(BaseModel):
+    """Extraction pipeline configuration."""
+
+    dedup_enabled: bool = True
+    variable_extraction_enabled: bool = True
+    llm: LlmExtractionConfig = Field(default_factory=LlmExtractionConfig)
+
+
+class LlmEvolutionConfig(BaseModel):
+    """LLM configuration for skill evolution tasks.
+
+    The default fields (api_base, api_key, model) apply to all tasks unless
+    overridden by a task-specific ModelSpec below.  This lets callers use a
+    fast cheap model for mutation while routing rubric / evaluation to a more
+    capable (and possibly different provider) model.
+    """
+
+    enabled: bool = False
+    api_base: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    model: str = "gpt-4.1-mini"
+    timeout_seconds: int = 60
+    max_tokens: int = 4096
+
+    # ── Per-task model overrides ──────────────────────────────────────────
+    # When set, these override the defaults above for that specific task.
+    # When None, the task inherits the default config above.
+
+    # Model used for rubric generation (declare_goal → LLM generates rubric).
+    # Recommendation: use a strong reasoning model (e.g. gpt-4.1, claude-opus).
+    rubric_model: str | None = None
+    rubric_api_base: str | None = None
+    rubric_api_key: str | None = None
+
+    # Model used for goal-conditioned evaluation (judge: does mutation satisfy goal?).
+    # Recommendation: same as rubric_model — quality matters more than speed here.
+    evaluator_model: str | None = None
+    evaluator_api_base: str | None = None
+    evaluator_api_key: str | None = None
+
+
+class EvolutionConfig(BaseModel):
+    """Skill evolution scheduler configuration."""
+
+    enabled: bool = False
+    run_on_startup: bool = False
+    interval_seconds: int = 600
+
+    # How many recent failure/partial outcomes to include in mutation context
+    max_recent_outcomes: int = 10
+
+    # Minimum failures before triggering mutation for a skill
+    min_failures_to_trigger: int = 2
+
+    # Max mutations per scheduler cycle (resource budget)
+    max_mutations_per_cycle: int = 5
+
+    # Score threshold above which a mutation candidate is auto-promoted to canary.
+    # Set to 1.1 to disable auto-promotion (no score can exceed 1.0).
+    auto_promote_threshold: float = 0.7
+
+    llm: LlmEvolutionConfig = Field(default_factory=LlmEvolutionConfig)
+
 
 class WarmPoolConfig(BaseModel):
     """Warm pool global configuration."""
@@ -486,6 +563,7 @@ class Settings(BaseSettings):
     browser_learning: BrowserLearningConfig = Field(default_factory=BrowserLearningConfig)
     proxy: ProxyConfig = Field(default_factory=ProxyConfig)
     browser_auto_release_enabled: bool = True
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
     # Default profiles
     profiles: list[ProfileConfig] = Field(

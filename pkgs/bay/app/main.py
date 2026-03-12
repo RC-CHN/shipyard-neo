@@ -15,6 +15,10 @@ from app.db import close_db, init_db
 from app.errors import BayError
 from app.services.gc.lifecycle import init_gc_scheduler, shutdown_gc_scheduler
 from app.services.http import http_client_manager
+from app.services.skills.evolution.lifecycle import (
+    init_evolution_scheduler,
+    shutdown_evolution_scheduler,
+)
 from app.services.skills.lifecycle import (
     init_browser_learning_scheduler,
     shutdown_browser_learning_scheduler,
@@ -46,6 +50,10 @@ async def lifespan(app: FastAPI):
     # Initialize and start GC scheduler
     await init_gc_scheduler()
     await init_browser_learning_scheduler()
+    await init_evolution_scheduler()
+
+    # Initialize warm pool (queue + scheduler)
+    await init_warm_pool()
 
     # Initialize warm pool (queue + scheduler)
     await init_warm_pool()
@@ -58,6 +66,10 @@ async def lifespan(app: FastAPI):
     # Stop GC scheduler
     await shutdown_gc_scheduler()
     await shutdown_browser_learning_scheduler()
+    await shutdown_evolution_scheduler()
+
+    # Stop warm pool
+    await shutdown_warm_pool()
 
     # Stop warm pool
     await shutdown_warm_pool()

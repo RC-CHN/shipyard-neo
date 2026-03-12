@@ -338,12 +338,22 @@ def get_tool_definitions() -> list[Tool]:
                         "description": "Optional usage notes for operators/agents.",
                     },
                     "preconditions": {
-                        "type": "object",
-                        "description": "Optional JSON object describing preconditions.",
+                        "anyOf": [
+                            {"type": "object"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "Optional JSON object or string array describing preconditions."
+                        ),
                     },
                     "postconditions": {
-                        "type": "object",
-                        "description": "Optional JSON object describing postconditions.",
+                        "anyOf": [
+                            {"type": "object"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "Optional JSON object or string array describing postconditions."
+                        ),
                     },
                 },
                 "required": ["skill_key", "source_execution_ids"],
@@ -513,6 +523,95 @@ def get_tool_definitions() -> list[Tool]:
                     },
                 },
                 "required": ["release_id"],
+            },
+        ),
+        Tool(
+            name="declare_skill_goal",
+            description=(
+                "Declare the goal for a skill. The system uses this goal to automatically "
+                "generate evaluation criteria and drive skill evolution. Call this once when "
+                "introducing a new skill type, or when the goal changes. "
+                "The agent does not need to specify how to evaluate — the system handles that."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_key": {
+                        "type": "string",
+                        "description": "The skill identifier, e.g. 'github-get-stars'.",
+                    },
+                    "goal": {
+                        "type": "string",
+                        "description": (
+                            "Natural language description of what this skill should accomplish. "
+                            "Be specific about the desired outcome, not the steps. "
+                            "Example: 'Navigate to a GitHub repository page and return the current star count as an integer.'"
+                        ),
+                    },
+                },
+                "required": ["skill_key", "goal"],
+            },
+        ),
+        Tool(
+            name="get_active_skill",
+            description=(
+                "Get the currently active skill for a given skill_key. "
+                "Returns the skill content that the agent should follow when executing the skill. "
+                "Returns a message indicating no active skill if none exists."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_key": {
+                        "type": "string",
+                        "description": "The skill identifier, e.g. 'github-get-stars'.",
+                    },
+                },
+                "required": ["skill_key"],
+            },
+        ),
+        Tool(
+            name="report_skill_outcome",
+            description=(
+                "Report the outcome of executing a skill. This feeds into the skill evolution system — "
+                "failures generate reflection memory that improves future mutations, successes reinforce "
+                "the current approach. The reasoning field is required: explain why the execution "
+                "succeeded or failed."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_key": {
+                        "type": "string",
+                        "description": "The skill identifier.",
+                    },
+                    "release_id": {
+                        "type": "string",
+                        "description": "The release_id from get_active_skill.",
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["success", "failure", "partial"],
+                        "description": "Whether the skill execution succeeded.",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": (
+                            "Why did this execution succeed or fail? Be specific: what worked, "
+                            "what broke, what was unexpected. This reasoning is stored and used "
+                            "in future evolution cycles."
+                        ),
+                    },
+                    "execution_id": {
+                        "type": "string",
+                        "description": "Optional execution_id from the browser or code execution.",
+                    },
+                    "signals": {
+                        "type": "object",
+                        "description": "Optional quantitative signals from the execution, e.g. {page_load_time_ms: 1200}.",
+                    },
+                },
+                "required": ["skill_key", "release_id", "outcome", "reasoning"],
             },
         ),
         Tool(

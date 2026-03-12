@@ -5,7 +5,9 @@ Parallel-safe: Yes - each test owns sandbox lifecycle.
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
+import uuid
 
 import httpx
 import pytest
@@ -49,6 +51,34 @@ async def _resolve_browser_profile(client: httpx.AsyncClient) -> str:
         if "browser" in capabilities:
             return str(item["id"])
     pytest.skip("No browser-enabled profile available")
+
+
+async def _wait_for_learning_completion(
+    client: httpx.AsyncClient,
+    *,
+    sandbox_id: str,
+    execution_id: str,
+    timeout_seconds: float = 30.0,
+) -> str:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    last_status = "unknown"
+    while asyncio.get_running_loop().time() < deadline:
+        history_resp = await client.get(
+            f"/v1/sandboxes/{sandbox_id}/history/{execution_id}",
+            timeout=30.0,
+        )
+        assert history_resp.status_code == 200, history_resp.text
+        learn_status = str(history_resp.json().get("learn_status") or "").lower()
+        if learn_status in {"processed", "skipped", "error"}:
+            return learn_status
+        if learn_status:
+            last_status = learn_status
+        await asyncio.sleep(1.0)
+    pytest.skip(
+        "Browser learning scheduler did not process execution within timeout. "
+        "Configure fast test interval via browser_learning.interval_seconds."
+    )
+    return last_status
 
 
 async def test_browser_exec_trace_and_history_round_trip():
@@ -380,3 +410,145 @@ async def test_browser_run_skill_works_with_payload_created_by_generic_payload_a
             assert run_data["total_steps"] == 1
             assert run_data["completed_steps"] == 1
             assert run_data["results"][0]["cmd"] == "open about:blank"
+
+
+async def test_browser_run_skill_works_with_payload_containing_variables_field():
+    """Candidate payload with variables metadata should remain runnable end-to-end."""
+    _require_browser_runtime()
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        browser_profile = await _resolve_browser_profile(client)
+        async with create_sandbox(client, profile=browser_profile) as sandbox:
+            sandbox_id = sandbox["id"]
+
+            payload_resp = await client.post(
+                "/v1/skills/payloads",
+                json={
+                    "kind": "candidate_payload",
+                    "payload": {
+                        "commands": ["open about:blank"],
+                        "variables": {
+                            "departure_city": {
+                                "type": "string",
+                                "default_value": "Edinburgh",
+                                "action_index": 0,
+                                "arg_position": 1,
+                            }
+                        },
+                    },
+                },
+                timeout=60.0,
+            )
+            assert payload_resp.status_code == 201, payload_resp.text
+            payload_ref = payload_resp.json()["payload_ref"]
+
+            payload_get_resp = await client.get(
+                f"/v1/skills/payloads/{payload_ref}",
+                timeout=60.0,
+            )
+            assert payload_get_resp.status_code == 200, payload_get_resp.text
+            payload_data = payload_get_resp.json()["payload"]
+            assert payload_data["variables"]["departure_city"]["default_value"] == "Edinburgh"
+
+            source_exec_resp = await client.post(
+                f"/v1/sandboxes/{sandbox_id}/browser/exec",
+                json={"cmd": "open about:blank", "timeout": 60},
+                timeout=120.0,
+            )
+            assert source_exec_resp.status_code == 200, source_exec_resp.text
+            source_execution_id = source_exec_resp.json()["execution_id"]
+
+            candidate_resp = await client.post(
+                "/v1/skills/candidates",
+                json={
+                    "skill_key": "browser-variable-payload",
+                    "source_execution_ids": [source_execution_id],
+                    "payload_ref": payload_ref,
+                },
+                timeout=60.0,
+            )
+            assert candidate_resp.status_code == 201, candidate_resp.text
+            candidate_id = candidate_resp.json()["id"]
+
+            evaluate_resp = await client.post(
+                f"/v1/skills/candidates/{candidate_id}/evaluate",
+                json={"passed": True, "score": 0.92},
+                timeout=60.0,
+            )
+            assert evaluate_resp.status_code == 200, evaluate_resp.text
+
+            promote_resp = await client.post(
+                f"/v1/skills/candidates/{candidate_id}/promote",
+                json={"stage": "canary"},
+                timeout=60.0,
+            )
+            assert promote_resp.status_code == 200, promote_resp.text
+
+            run_resp = await client.post(
+                f"/v1/sandboxes/{sandbox_id}/browser/skills/browser-variable-payload/run",
+                json={"timeout": 60, "stop_on_error": True, "include_trace": False},
+                timeout=120.0,
+            )
+            assert run_resp.status_code == 200, run_resp.text
+            run_data = run_resp.json()
+            assert run_data["execution_id"].startswith("exec-")
+            assert run_data["total_steps"] == 1
+            assert run_data["completed_steps"] == 1
+
+
+async def test_browser_learning_deduplicates_candidates_by_payload_hash():
+    """Automatic learning should skip duplicate candidates for same skill+payload."""
+    _require_browser_runtime()
+    skill_key = f"e2e-browser-learning-dedup-{uuid.uuid4().hex[:8]}"
+    commands = ["open about:blank", "open about:blank"]
+
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        browser_profile = await _resolve_browser_profile(client)
+        async with create_sandbox(client, profile=browser_profile) as sandbox:
+            sandbox_id = sandbox["id"]
+
+            exec_ids: list[str] = []
+            for _ in range(2):
+                resp = await client.post(
+                    f"/v1/sandboxes/{sandbox_id}/browser/exec_batch",
+                    json={
+                        "commands": commands,
+                        "timeout": 120,
+                        "stop_on_error": True,
+                        "learn": True,
+                        "include_trace": True,
+                        "tags": f"skill:{skill_key},learn,e2e",
+                    },
+                    timeout=180.0,
+                )
+                assert resp.status_code == 200, resp.text
+                exec_ids.append(resp.json()["execution_id"])
+
+            statuses = [
+                await _wait_for_learning_completion(
+                    client,
+                    sandbox_id=sandbox_id,
+                    execution_id=execution_id,
+                )
+                for execution_id in exec_ids
+            ]
+            assert statuses == ["processed", "processed"]
+
+            candidates_resp = await client.get(
+                "/v1/skills/candidates",
+                params={"skill_key": skill_key, "limit": 50, "offset": 0},
+                timeout=30.0,
+            )
+            assert candidates_resp.status_code == 200, candidates_resp.text
+            candidates_data = candidates_resp.json()
+            assert candidates_data["total"] == 1
+            candidate = candidates_data["items"][0]
+            assert candidate["skill_key"] == skill_key
+
+            payload_resp = await client.get(
+                f"/v1/skills/payloads/{candidate['payload_ref']}",
+                timeout=30.0,
+            )
+            assert payload_resp.status_code == 200, payload_resp.text
+            payload = payload_resp.json()["payload"]
+            assert payload["commands"] == commands
+            assert len(str(payload["payload_hash"])) == 64

@@ -275,8 +275,8 @@ class SkillCandidateInfo(BaseModel):
     auto_release_reason: str | None = None
     summary: str | None = None
     usage_notes: str | None = None
-    preconditions: dict[str, Any] | None = None
-    postconditions: dict[str, Any] | None = None
+    preconditions: list[str] | dict[str, Any] | None = None
+    postconditions: list[str] | dict[str, Any] | None = None
     source_execution_ids: list[str]
     status: SkillCandidateStatus
     latest_score: float | None = None
@@ -380,6 +380,30 @@ class SkillPayloadInfo(BaseModel):
     payload_ref: str
     kind: str
     payload: dict[str, Any] | list[Any]
+
+
+class GoalDeclaration(BaseModel):
+    """Response from declaring a skill goal."""
+
+    goal_id: str
+    skill_key: str
+    goal: str
+    rubric_summary: str
+
+
+class SkillView(BaseModel):
+    """Unified view of the currently active skill release."""
+
+    skill_key: str
+    release_id: str
+    version: int
+    stage: str
+    goal: str | None = None
+    content: str
+    summary: str | None = None
+    preconditions: list[str] = Field(default_factory=list)
+    postconditions: list[str] = Field(default_factory=list)
+    payload_ref: str | None = None
 
 
 # Internal request models (not exported)

@@ -722,7 +722,6 @@ class SandboxManager:
                 if cargo is not None:
                     cargo.owner = owner
                     await self._db.commit()
-
                 self._log.info(
                     "sandbox.warm_claim.success",
                     sandbox_id=candidate_id,

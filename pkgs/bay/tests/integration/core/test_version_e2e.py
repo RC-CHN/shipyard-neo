@@ -14,14 +14,16 @@ import re
 import httpx
 import pytest
 
-from tests.integration.conftest import (
+from ..conftest import (
     AUTH_HEADERS,
     BAY_BASE_URL,
     DEFAULT_TIMEOUT,
     create_sandbox,
+    e2e_skipif_marks,
 )
 
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?$")
+pytestmark = e2e_skipif_marks
 
 
 @pytest.mark.asyncio

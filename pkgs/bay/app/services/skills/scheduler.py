@@ -20,24 +20,16 @@ from app.models.skill import (
     SkillReleaseStage,
     SkillType,
 )
+from app.services.skills.extraction import (
+    ExtractionContext,
+    ExtractionStrategy,
+    LlmAssistedExtractionStrategy,
+    RuleBasedExtractionStrategy,
+)
 from app.services.skills.service import SkillLifecycleService
 from app.utils.datetime import utcnow
 
 logger = structlog.get_logger()
-
-
-READ_ONLY_PREFIXES = (
-    "snapshot",
-    "get ",
-    "is ",
-    "wait",
-    "cookies",
-    "storage",
-    "network requests",
-    "tab",
-    "frame",
-    "dialog",
-)
 
 
 @dataclass
@@ -68,6 +60,16 @@ class BrowserLearningProcessor:
         self._config = config
         self._auto_release_enabled = auto_release_enabled
         self._log = logger.bind(component="browser_learning")
+        self._rule_strategy = RuleBasedExtractionStrategy(
+            variable_extraction_enabled=self._config.extraction.variable_extraction_enabled,
+        )
+        if self._config.extraction.llm.enabled:
+            self._extraction_strategy: ExtractionStrategy = LlmAssistedExtractionStrategy(
+                config=self._config.extraction.llm,
+                fallback=self._rule_strategy,
+            )
+        else:
+            self._extraction_strategy = self._rule_strategy
 
     async def run_cycle(self) -> BrowserLearningCycleResult:
         result = BrowserLearningCycleResult()
@@ -110,7 +112,8 @@ class BrowserLearningProcessor:
         entry: ExecutionHistory,
         result: BrowserLearningCycleResult,
     ) -> bool:
-        segments = await self._extract_segments(entry=entry)
+        steps = await self._load_normalized_steps(entry=entry)
+        segments = self._rule_strategy.extract_actionable_segments(steps=steps)
         if not segments:
             await self._svc.set_execution_learning_status(
                 execution_id=entry.id,
@@ -120,28 +123,78 @@ class BrowserLearningProcessor:
             )
             return False
 
-        skill_key = self._derive_skill_key(entry=entry)
-        scenario_key = self._derive_scenario_key(entry=entry)
+        extraction_context = ExtractionContext(
+            owner=entry.owner,
+            execution_id=entry.id,
+            sandbox_id=entry.sandbox_id,
+            code=entry.code,
+            description=entry.description,
+            tags=entry.tags,
+        )
+        extraction_results = await self._extraction_strategy.extract(
+            segments=segments,
+            context=extraction_context,
+        )
+        if not extraction_results:
+            await self._svc.set_execution_learning_status(
+                execution_id=entry.id,
+                status=LearnStatus.SKIPPED,
+                error="no_actionable_segments",
+                processed_at=utcnow(),
+            )
+            return False
 
-        for idx, segment in enumerate(segments):
+        fallback_scenario_key = self._derive_scenario_key(entry=entry)
+
+        for idx, extracted in enumerate(extraction_results):
+            if self._config.extraction.dedup_enabled:
+                duplicate = await self._svc.find_candidate_by_payload_hash(
+                    owner=entry.owner,
+                    skill_key=extracted.skill_key,
+                    payload_hash=extracted.payload_hash,
+                )
+                if duplicate is not None:
+                    self._log.info(
+                        "skills.browser.extraction.duplicate_skipped",
+                        owner=entry.owner,
+                        execution_id=entry.id,
+                        skill_key=extracted.skill_key,
+                        payload_hash=extracted.payload_hash,
+                        duplicate_candidate_id=duplicate.id,
+                    )
+                    continue
+
+            segment_payload: dict[str, Any] = {
+                "skill_type": "browser",
+                "segment_index": idx,
+                "source_execution_id": entry.id,
+                "commands": [step["cmd"] for step in extracted.steps],
+                "steps": extracted.steps,
+                "payload_hash": extracted.payload_hash,
+            }
+            if extracted.description is not None:
+                segment_payload["description"] = extracted.description
+            variables_payload = extracted.variables_payload()
+            if variables_payload:
+                segment_payload["variables"] = variables_payload
+
             segment_blob = await self._svc.create_artifact_blob(
                 owner=entry.owner,
                 kind="browser_segment",
-                payload={
-                    "skill_type": "browser",
-                    "segment_index": idx,
-                    "source_execution_id": entry.id,
-                    "commands": [step["cmd"] for step in segment],
-                    "steps": segment,
-                },
+                payload=segment_payload,
             )
             payload_ref = self._svc.make_blob_ref(segment_blob.id)
+            scenario_key = (
+                self._derive_scenario_key_from_text(extracted.description)
+                or fallback_scenario_key
+            )
 
             candidate = await self._svc.create_candidate(
                 owner=entry.owner,
-                skill_key=skill_key,
+                skill_key=extracted.skill_key,
                 scenario_key=scenario_key,
                 payload_ref=payload_ref,
+                payload_hash=extracted.payload_hash,
                 source_execution_ids=[entry.id],
                 created_by="system:auto",
                 skill_type=SkillType.BROWSER,
@@ -150,7 +203,7 @@ class BrowserLearningProcessor:
             )
             result.created_candidates += 1
 
-            metrics = self._score_segment(segment=segment)
+            metrics = self._score_segment(segment=extracted.steps)
             passed = (
                 metrics["score"] >= self._config.score_threshold
                 and metrics["replay_success"] >= self._config.replay_success_threshold
@@ -196,7 +249,10 @@ class BrowserLearningProcessor:
                 )
                 continue
 
-            active = await self._svc.get_active_release(owner=entry.owner, skill_key=skill_key)
+            active = await self._svc.get_active_release(
+                owner=entry.owner,
+                skill_key=extracted.skill_key,
+            )
             release = await self._svc.promote_candidate(
                 owner=entry.owner,
                 candidate_id=candidate.id,
@@ -232,35 +288,15 @@ class BrowserLearningProcessor:
         return True
 
     async def _extract_segments(self, *, entry: ExecutionHistory) -> list[list[dict[str, Any]]]:
+        steps = await self._load_normalized_steps(entry=entry)
+        return self._rule_strategy.extract_actionable_segments(steps=steps)
+
+    async def _load_normalized_steps(self, *, entry: ExecutionHistory) -> list[dict[str, Any]]:
         trace_payload = await self._svc.get_payload_by_ref(
             owner=entry.owner,
             payload_ref=entry.payload_ref,
         )
-
-        steps = self._normalize_steps(entry=entry, trace_payload=trace_payload)
-        if not steps:
-            return []
-
-        segments: list[list[dict[str, Any]]] = []
-        current: list[dict[str, Any]] = []
-
-        for step in steps:
-            cmd = step.get("cmd", "")
-            failed = int(step.get("exit_code", 1)) != 0
-            is_read_only = self._is_read_only_command(cmd)
-            kind = str(step.get("kind", "individual_action"))
-
-            if failed or is_read_only or kind != "individual_action" or not cmd:
-                if len(current) >= 2:
-                    segments.append(current.copy())
-                current.clear()
-                continue
-            current.append(step)
-
-        if len(current) >= 2:
-            segments.append(current)
-
-        return segments
+        return self._normalize_steps(entry=entry, trace_payload=trace_payload)
 
     @staticmethod
     def _normalize_steps(
@@ -309,37 +345,28 @@ class BrowserLearningProcessor:
 
     @staticmethod
     def _is_read_only_command(cmd: str) -> bool:
-        normalized = cmd.strip().lower()
-        return any(normalized.startswith(prefix) for prefix in READ_ONLY_PREFIXES)
+        return RuleBasedExtractionStrategy.is_read_only_command(cmd)
 
     @staticmethod
     def _score_segment(*, segment: list[dict[str, Any]]) -> dict[str, Any]:
-        steps = len(segment)
-        samples = steps * 10
-        replay_success = 1.0 if steps > 0 else 0.0
-        score = min(0.99, 0.75 + 0.08 * steps)
-        p95_duration = 0
-        return {
-            "score": round(score, 4),
-            "replay_success": round(replay_success, 4),
-            "samples": samples,
-            "error_rate": round(1.0 - replay_success, 4),
-            "p95_duration": p95_duration,
-        }
+        return RuleBasedExtractionStrategy.score_segment(segment=segment)
 
     @staticmethod
     def _derive_skill_key(*, entry: ExecutionHistory) -> str:
-        tags = [part.strip() for part in (entry.tags or "").split(",") if part.strip()]
-        for tag in tags:
-            if tag.startswith("skill:") and len(tag) > len("skill:"):
-                return tag[len("skill:") :]
-        return f"browser-{entry.sandbox_id}"
+        return RuleBasedExtractionStrategy.derive_skill_key(
+            tags=entry.tags,
+            sandbox_id=entry.sandbox_id,
+        )
 
     @staticmethod
     def _derive_scenario_key(*, entry: ExecutionHistory) -> str | None:
-        if not entry.description:
+        return BrowserLearningProcessor._derive_scenario_key_from_text(entry.description)
+
+    @staticmethod
+    def _derive_scenario_key_from_text(description: str | None) -> str | None:
+        if not description:
             return None
-        normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", entry.description.strip().lower())
+        normalized = re.sub(r"[^a-zA-Z0-9._-]+", "-", description.strip().lower())
         normalized = normalized.strip("-")
         if not normalized:
             return None

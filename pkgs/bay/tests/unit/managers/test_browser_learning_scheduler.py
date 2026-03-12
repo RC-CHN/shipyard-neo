@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
-from app.config import BrowserLearningConfig
+from app.config import BrowserLearningConfig, ExtractionConfig, LlmExtractionConfig
 from app.models.skill import (
     ExecutionType,
     LearnStatus,
@@ -20,6 +22,7 @@ from app.models.skill import (
     SkillType,
 )
 from app.services.skills import scheduler as scheduler_module
+from app.services.skills.extraction import LlmAssistedExtractionStrategy
 from app.services.skills.scheduler import BrowserLearningProcessor
 from app.services.skills.service import SkillLifecycleService
 from app.utils.datetime import utcnow
@@ -411,6 +414,391 @@ async def test_processor_marks_execution_error_when_trace_ref_is_invalid(
     assert refreshed.learn_status == LearnStatus.ERROR
     assert refreshed.learn_error is not None
     assert "Artifact blob not found" in refreshed.learn_error
+
+
+@pytest.mark.asyncio
+async def test_processor_deduplicates_by_skill_key_and_payload_hash(
+    skill_service: SkillLifecycleService,
+    learning_config: BrowserLearningConfig,
+):
+    trace_payload = {
+        "steps": [
+            {"kind": "individual_action", "cmd": "open https://example.com", "exit_code": 0},
+            {"kind": "individual_action", "cmd": "click @e1", "exit_code": 0},
+        ]
+    }
+    first_blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    second_blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-1",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-1",
+        success=True,
+        execution_time_ms=11,
+        payload_ref=skill_service.make_blob_ref(first_blob.id),
+        tags="skill:browser-login",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-1",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-2",
+        success=True,
+        execution_time_ms=12,
+        payload_ref=skill_service.make_blob_ref(second_blob.id),
+        tags="skill:browser-login",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+
+    processor = BrowserLearningProcessor(
+        service=skill_service,
+        config=learning_config,
+        auto_release_enabled=False,
+    )
+    cycle = await processor.run_cycle()
+    assert cycle.processed_executions == 2
+    assert cycle.created_candidates == 1
+
+    same_key_items, same_key_total = await skill_service.list_candidates(
+        owner="default",
+        skill_key="browser-login",
+    )
+    assert same_key_total == 1
+    assert same_key_items[0].payload_hash is not None
+
+    third_blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-2",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-3",
+        success=True,
+        execution_time_ms=13,
+        payload_ref=skill_service.make_blob_ref(third_blob.id),
+        tags="skill:browser-checkout",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+    cycle_second = await processor.run_cycle()
+    assert cycle_second.created_candidates == 1
+
+    checkout_items, checkout_total = await skill_service.list_candidates(
+        owner="default",
+        skill_key="browser-checkout",
+    )
+    assert checkout_total == 1
+    assert checkout_items[0].payload_hash == same_key_items[0].payload_hash
+
+
+@pytest.mark.asyncio
+async def test_processor_logs_duplicate_skipped_event(
+    skill_service: SkillLifecycleService,
+    learning_config: BrowserLearningConfig,
+):
+    trace_payload = {
+        "steps": [
+            {"kind": "individual_action", "cmd": "open about:blank", "exit_code": 0},
+            {"kind": "individual_action", "cmd": "open about:blank", "exit_code": 0},
+        ]
+    }
+    blob_a = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    blob_b = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-dup",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-a",
+        success=True,
+        execution_time_ms=9,
+        payload_ref=skill_service.make_blob_ref(blob_a.id),
+        tags="skill:browser-dup-log",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-dup",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-b",
+        success=True,
+        execution_time_ms=9,
+        payload_ref=skill_service.make_blob_ref(blob_b.id),
+        tags="skill:browser-dup-log",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+
+    events: list[tuple[str, dict[str, object]]] = []
+    processor = BrowserLearningProcessor(
+        service=skill_service,
+        config=learning_config,
+        auto_release_enabled=False,
+    )
+    processor._log = SimpleNamespace(
+        info=lambda event, **kwargs: events.append((event, kwargs)),
+        exception=lambda *args, **kwargs: None,
+    )
+
+    cycle = await processor.run_cycle()
+    assert cycle.created_candidates == 1
+    duplicate_events = [
+        payload
+        for event, payload in events
+        if event == "skills.browser.extraction.duplicate_skipped"
+    ]
+    assert len(duplicate_events) == 1
+    assert duplicate_events[0]["skill_key"] == "browser-dup-log"
+    assert isinstance(duplicate_events[0]["payload_hash"], str)
+    assert duplicate_events[0]["duplicate_candidate_id"].startswith("sc-")
+
+
+@pytest.mark.asyncio
+async def test_scheduler_uses_llm_strategy_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    skill_service: SkillLifecycleService,
+    learning_config: BrowserLearningConfig,
+):
+    async def _fake_call_llm(
+        self: LlmAssistedExtractionStrategy,
+        *,
+        segments: list[list[dict[str, object]]],
+        context,
+    ) -> dict[str, object]:
+        del self, context
+        payload = {
+            "results": [
+                {
+                    "skill_key": "semantic-login",
+                    "description": "semantic login flow",
+                    "steps": segments[0],
+                    "variables": {
+                        "username": {
+                            "type": "string",
+                            "default_value": "zenfun",
+                            "action_index": 1,
+                            "arg_position": 1,
+                        }
+                    },
+                }
+            ]
+        }
+        return {"choices": [{"message": {"content": json.dumps(payload)}}]}
+
+    monkeypatch.setattr(LlmAssistedExtractionStrategy, "_call_llm", _fake_call_llm)
+
+    blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload={
+            "steps": [
+                {"kind": "individual_action", "cmd": "open https://example.com", "exit_code": 0},
+                {
+                    "kind": "individual_action",
+                    "cmd": "type @username zenfun",
+                    "exit_code": 0,
+                },
+                {"kind": "individual_action", "cmd": "click @submit", "exit_code": 0},
+            ]
+        },
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-llm",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch",
+        success=True,
+        execution_time_ms=10,
+        payload_ref=skill_service.make_blob_ref(blob.id),
+        tags="skill:browser-login",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+
+    llm_enabled_config = learning_config.model_copy(
+        update={
+            "extraction": ExtractionConfig(
+                dedup_enabled=True,
+                variable_extraction_enabled=True,
+                llm=LlmExtractionConfig(enabled=True, api_base="https://llm.test/v1", api_key="k"),
+            )
+        }
+    )
+    processor = BrowserLearningProcessor(
+        service=skill_service,
+        config=llm_enabled_config,
+        auto_release_enabled=False,
+    )
+    cycle = await processor.run_cycle()
+    assert cycle.created_candidates == 1
+
+    candidates, total = await skill_service.list_candidates(owner="default")
+    assert total == 1
+    assert candidates[0].skill_key == "semantic-login"
+
+    payload = await skill_service.get_payload_by_ref(
+        owner="default",
+        payload_ref=candidates[0].payload_ref,
+    )
+    assert isinstance(payload, dict)
+    assert "variables" in payload
+
+
+@pytest.mark.asyncio
+async def test_scheduler_llm_strategy_falls_back_to_rule_based(
+    monkeypatch: pytest.MonkeyPatch,
+    skill_service: SkillLifecycleService,
+    learning_config: BrowserLearningConfig,
+):
+    async def _timeout_call_llm(
+        self: LlmAssistedExtractionStrategy,
+        *,
+        segments: list[list[dict[str, object]]],
+        context,
+    ) -> dict[str, object]:
+        del self, segments, context
+        raise httpx.TimeoutException("timeout")
+
+    monkeypatch.setattr(LlmAssistedExtractionStrategy, "_call_llm", _timeout_call_llm)
+
+    blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload={
+            "steps": [
+                {"kind": "individual_action", "cmd": "open https://example.com", "exit_code": 0},
+                {"kind": "individual_action", "cmd": "click @submit", "exit_code": 0},
+            ]
+        },
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-fallback",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch",
+        success=True,
+        execution_time_ms=9,
+        payload_ref=skill_service.make_blob_ref(blob.id),
+        tags="skill:browser-fallback",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+
+    llm_enabled_config = learning_config.model_copy(
+        update={
+            "extraction": ExtractionConfig(
+                dedup_enabled=True,
+                variable_extraction_enabled=True,
+                llm=LlmExtractionConfig(enabled=True, api_base="https://llm.test/v1", api_key="k"),
+            )
+        }
+    )
+    processor = BrowserLearningProcessor(
+        service=skill_service,
+        config=llm_enabled_config,
+        auto_release_enabled=False,
+    )
+    cycle = await processor.run_cycle()
+    assert cycle.created_candidates == 1
+
+    candidates, total = await skill_service.list_candidates(owner="default")
+    assert total == 1
+    assert candidates[0].skill_key == "browser-fallback"
+
+
+@pytest.mark.asyncio
+async def test_processor_creates_duplicates_when_dedup_disabled(
+    skill_service: SkillLifecycleService,
+    learning_config: BrowserLearningConfig,
+):
+    trace_payload = {
+        "steps": [
+            {"kind": "individual_action", "cmd": "open https://example.com", "exit_code": 0},
+            {"kind": "individual_action", "cmd": "click @e1", "exit_code": 0},
+        ]
+    }
+    first_blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    second_blob = await skill_service.create_artifact_blob(
+        owner="default",
+        kind="browser_trace",
+        payload=trace_payload,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-1",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-1",
+        success=True,
+        execution_time_ms=11,
+        payload_ref=skill_service.make_blob_ref(first_blob.id),
+        tags="skill:browser-login",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+    await skill_service.create_execution(
+        owner="default",
+        sandbox_id="sandbox-1",
+        exec_type=ExecutionType.BROWSER_BATCH,
+        code="batch-2",
+        success=True,
+        execution_time_ms=12,
+        payload_ref=skill_service.make_blob_ref(second_blob.id),
+        tags="skill:browser-login",
+        learn_enabled=True,
+        learn_status=LearnStatus.PENDING,
+    )
+
+    no_dedup_config = learning_config.model_copy(
+        update={
+            "extraction": ExtractionConfig(
+                dedup_enabled=False,
+                variable_extraction_enabled=True,
+                llm=LlmExtractionConfig(enabled=False),
+            )
+        }
+    )
+    processor = BrowserLearningProcessor(
+        service=skill_service,
+        config=no_dedup_config,
+        auto_release_enabled=False,
+    )
+    cycle = await processor.run_cycle()
+    assert cycle.processed_executions == 2
+    assert cycle.created_candidates == 2
+
+    same_key_items, same_key_total = await skill_service.list_candidates(
+        owner="default",
+        skill_key="browser-login",
+    )
+    assert same_key_total == 2
+    assert same_key_items[0].payload_hash == same_key_items[1].payload_hash
 
 
 @pytest.mark.asyncio

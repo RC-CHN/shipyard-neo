@@ -58,7 +58,6 @@ proxy:
   # https_proxy: "http://proxy.example.com:7890"
   # Optional extra entries to append to default NO_PROXY list
   # no_proxy: "my-internal.service"
-
 # Warm Pool — pre-start standby sandbox instances to reduce cold-start latency.
 # When a user creates a sandbox, Bay will first try to claim an available warm instance,
 # delivering near-instant startup instead of waiting for container boot.
