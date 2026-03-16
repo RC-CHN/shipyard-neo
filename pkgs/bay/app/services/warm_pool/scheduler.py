@@ -16,7 +16,9 @@ from typing import TYPE_CHECKING
 import structlog
 from sqlmodel import func, select
 
+from app.drivers.base import ContainerStatus
 from app.models.sandbox import Sandbox, WarmState
+from app.models.session import Session, SessionStatus
 from app.utils.datetime import utcnow
 
 if TYPE_CHECKING:
@@ -132,17 +134,151 @@ class WarmPoolScheduler:
 
         return results
 
+    async def _reconcile_profile_runtime_state(self, profile_id: str) -> int:
+        """Reconcile DB warm-pool state with actual runtime state.
+
+        For warm sandboxes marked as available, the DB may drift from reality after
+        driver/runtime restarts. This periodically re-validates those rows against
+        the runtime backend and downgrades broken entries back to pending so they
+        can be re-enqueued for warmup.
+
+        Returns:
+            Number of warm sandboxes requeued for recovery.
+        """
+        from app.api.dependencies import get_driver
+        from app.db.session import get_async_session
+
+        async with get_async_session() as db:
+            result = await db.execute(
+                select(Sandbox, Session)
+                .outerjoin(Session, Session.id == Sandbox.current_session_id)
+                .where(
+                    Sandbox.deleted_at.is_(None),
+                    Sandbox.is_warm_pool.is_(True),
+                    Sandbox.warm_state == WarmState.AVAILABLE.value,
+                    Sandbox.profile_id == profile_id,
+                )
+            )
+            available_rows = result.all()
+
+        if not available_rows:
+            return 0
+
+        driver = get_driver()
+        stale_ids: list[str] = []
+        requeued = 0
+
+        for sandbox, session in available_rows:
+            runtime_ok = False
+
+            if session is not None:
+                runtime_ok = await self._is_session_runtime_healthy(driver, session)
+
+            if runtime_ok:
+                continue
+
+            stale_ids.append(sandbox.id)
+            if self._queue.enqueue(sandbox_id=sandbox.id, owner=sandbox.owner):
+                requeued += 1
+
+            self._log.warning(
+                "warm_pool.runtime_state_drift_detected",
+                sandbox_id=sandbox.id,
+                profile_id=profile_id,
+                session_id=sandbox.current_session_id,
+                requeued=True,
+            )
+
+        if not stale_ids:
+            return 0
+
+        async with get_async_session() as db:
+            result = await db.execute(select(Sandbox).where(Sandbox.id.in_(stale_ids)))
+            stale_sandboxes = result.scalars().all()
+
+            session_ids = [
+                sandbox.current_session_id
+                for sandbox in stale_sandboxes
+                if sandbox.current_session_id
+            ]
+            sessions_by_id: dict[str, Session] = {}
+            if session_ids:
+                session_result = await db.execute(
+                    select(Session).where(Session.id.in_(session_ids))
+                )
+                sessions_by_id = {session.id: session for session in session_result.scalars().all()}
+
+            for sandbox in stale_sandboxes:
+                sandbox.warm_state = None
+                sandbox.warm_ready_at = None
+                sandbox.warm_rotate_at = None
+
+                if sandbox.current_session_id:
+                    session = sessions_by_id.get(sandbox.current_session_id)
+                    if session is not None:
+                        session.observed_state = SessionStatus.STOPPED
+                        session.endpoint = None
+                        session.last_observed_at = utcnow()
+
+            await db.commit()
+
+        self._log.info(
+            "warm_pool.runtime_reconcile.complete",
+            profile_id=profile_id,
+            checked=len(available_rows),
+            stale=len(stale_ids),
+            requeued=requeued,
+        )
+        return requeued
+
+    async def _is_session_runtime_healthy(self, driver, session: Session) -> bool:
+        """Check whether a session still has a live runtime behind it."""
+        if session.containers:
+            try:
+                instances = await driver.list_runtime_instances(
+                    labels={
+                        "bay.session_id": session.id,
+                    }
+                )
+            except Exception as exc:
+                self._log.warning(
+                    "warm_pool.runtime_probe_failed",
+                    session_id=session.id,
+                    mode="multi",
+                    error=str(exc),
+                )
+                return True
+
+            return any(instance.state == ContainerStatus.RUNNING.value for instance in instances)
+
+        if session.container_id is None:
+            return False
+
+        try:
+            info = await driver.status(session.container_id, runtime_port=None)
+        except Exception as exc:
+            self._log.warning(
+                "warm_pool.runtime_probe_failed",
+                session_id=session.id,
+                container_id=session.container_id,
+                mode="single",
+                error=str(exc),
+            )
+            return True
+
+        return info.status == ContainerStatus.RUNNING
+
     async def _maintain_profile(self, profile) -> int:
         """Maintain warm pool for a single profile.
 
         Returns number of new warm sandboxes created.
         """
-        from app.api.dependencies import get_driver
         from app.db.session import get_async_session
-        from app.managers.sandbox import SandboxManager
 
         now = utcnow()
         created_count = 0
+
+        await self._reconcile_profile_runtime_state(profile.id)
 
         async with get_async_session() as db:
             # Count available warm sandboxes for this profile

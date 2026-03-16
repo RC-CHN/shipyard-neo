@@ -14,7 +14,7 @@ from app.api.dependencies import get_driver
 from app.config import get_settings
 from app.db.session import get_async_session
 from app.managers.sandbox import SandboxManager
-from app.models.sandbox import Sandbox
+from app.models.sandbox import Sandbox, WarmState
 from app.services.warm_pool.queue import WarmupQueue
 from app.services.warm_pool.scheduler import WarmPoolScheduler
 
@@ -23,6 +23,52 @@ logger = structlog.get_logger()
 # Global instances
 _warmup_queue: WarmupQueue | None = None
 _warm_pool_scheduler: WarmPoolScheduler | None = None
+
+
+async def _requeue_existing_warm_pool_sandboxes(warmup_queue: WarmupQueue) -> None:
+    """Requeue persisted warm sandboxes after process restart.
+
+    Why:
+    - The warmup queue is in-memory only, so queued tasks are lost on process/pod restarts.
+    - Warm sandboxes persisted with `warm_state=None` would otherwise be counted as
+      "pending" forever, preventing the scheduler from replenishing the pool.
+    - Previously available warm sandboxes may also have lost their backing runtime
+      after a cluster restart, so they should be revalidated via ensure_running().
+    """
+    async with get_async_session() as db:
+        result = await db.execute(
+            select(Sandbox).where(
+                Sandbox.deleted_at.is_(None),
+                Sandbox.is_warm_pool.is_(True),
+            )
+        )
+        warm_sandboxes = result.scalars().all()
+
+    if not warm_sandboxes:
+        logger.info("warm_pool.reconcile.complete", total=0, requeued=0, skipped_retiring=0)
+        return
+
+    requeued = 0
+    skipped_retiring = 0
+    skipped_enqueue = 0
+
+    for sandbox in warm_sandboxes:
+        if sandbox.warm_state == WarmState.RETIRING.value:
+            skipped_retiring += 1
+            continue
+
+        if warmup_queue.enqueue(sandbox_id=sandbox.id, owner=sandbox.owner):
+            requeued += 1
+        else:
+            skipped_enqueue += 1
+
+    logger.info(
+        "warm_pool.reconcile.complete",
+        total=len(warm_sandboxes),
+        requeued=requeued,
+        skipped_retiring=skipped_retiring,
+        skipped_enqueue=skipped_enqueue,
+    )
 
 
 async def init_warm_pool() -> tuple[WarmupQueue | None, WarmPoolScheduler | None]:
@@ -57,8 +103,10 @@ async def init_warm_pool() -> tuple[WarmupQueue | None, WarmPoolScheduler | None
     _warmup_queue = WarmupQueue(config=warm_config)
     await _warmup_queue.start()
 
-    # Start pool scheduler only if there are profiles with warm pool
     if has_warm_profiles:
+        await _requeue_existing_warm_pool_sandboxes(_warmup_queue)
+
+        # Start pool scheduler only if there are profiles with warm pool
         _warm_pool_scheduler = WarmPoolScheduler(
             config=warm_config,
             warmup_queue=_warmup_queue,
