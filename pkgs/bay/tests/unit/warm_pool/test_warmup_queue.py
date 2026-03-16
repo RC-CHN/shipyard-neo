@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import SQLModel, select
 
 from app.config import WarmPoolConfig
+from app.managers.sandbox import SandboxManager
+from app.models.cargo import Cargo
+from app.models.sandbox import Sandbox
+from app.models.session import Session, SessionStatus
 from app.services.warm_pool.queue import WarmupQueue
+from tests.fakes import FakeDriver
 
 
 def _make_config(**overrides) -> WarmPoolConfig:
@@ -20,6 +29,29 @@ def _make_config(**overrides) -> WarmPoolConfig:
     }
     defaults.update(overrides)
     return WarmPoolConfig(**defaults)
+
+
+@pytest.fixture
+async def db_session():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.create_all)
+
+    async_session_factory = sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with async_session_factory() as session:
+        yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
+def driver() -> FakeDriver:
+    return FakeDriver()
 
 
 class TestWarmupQueueEnqueue:
@@ -152,3 +184,70 @@ class TestWarmupQueueStats:
 
         assert queue.stats.enqueue_total == 2
         assert queue.stats.dedup_total == 1
+
+
+class TestWarmupQueueRecovery:
+    @pytest.mark.asyncio
+    async def test_process_task_does_not_skip_stale_running_session(
+        self,
+        db_session: AsyncSession,
+        driver: FakeDriver,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        config = _make_config()
+        queue = WarmupQueue(config=config)
+
+        cargo = Cargo(
+            id="cargo-1",
+            owner="warm-pool",
+            managed=True,
+            driver_ref="vol-cargo-1",
+        )
+        sandbox = Sandbox(
+            id="sandbox-1",
+            owner="warm-pool",
+            profile_id="python-default",
+            cargo_id=cargo.id,
+            is_warm_pool=True,
+            warm_state=None,
+        )
+        session = Session(
+            id="sess-1",
+            sandbox_id=sandbox.id,
+            profile_id="python-default",
+            container_id="missing-container",
+            endpoint="http://dead-runtime",
+            observed_state=SessionStatus.RUNNING,
+            desired_state=SessionStatus.RUNNING,
+        )
+        sandbox.current_session_id = session.id
+
+        db_session.add(cargo)
+        db_session.add(sandbox)
+        db_session.add(session)
+        await db_session.commit()
+
+        class _SessionFactory:
+            async def __aenter__(self):
+                return db_session
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        monkeypatch.setattr(
+            "app.db.session.get_async_session",
+            lambda: _SessionFactory(),
+        )
+        monkeypatch.setattr("app.api.dependencies.get_driver", lambda: driver)
+
+        ensure_running_mock = AsyncMock(return_value=session)
+        monkeypatch.setattr(SandboxManager, "ensure_running", ensure_running_mock)
+        monkeypatch.setattr(SandboxManager, "mark_warm_available", AsyncMock(return_value=None))
+
+        await queue._process_task(
+            task=type("Task", (), {"sandbox_id": sandbox.id, "owner": sandbox.owner})(),
+            worker_id=0,
+        )
+
+        ensure_running_mock.assert_awaited_once()
+        assert queue.stats.success_total == 1

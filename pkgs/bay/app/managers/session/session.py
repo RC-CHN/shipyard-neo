@@ -122,8 +122,13 @@ class SessionManager:
         self._log.info(
             "session.ensure_running",
             session_id=session.id,
+            sandbox_id=session.sandbox_id,
+            profile_id=profile.id,
             observed_state=session.observed_state,
+            desired_state=session.desired_state,
             container_count=len(profile.get_containers()),
+            has_endpoint=session.endpoint is not None,
+            has_containers=bool(session.containers),
         )
 
         # Phase 2: Multi-container path
@@ -255,6 +260,18 @@ class SessionManager:
         The session's `containers` JSON field tracks per-container state.
         The legacy `container_id` and `endpoint` fields point to the primary container.
         """
+        # If DB says running, verify the multi-container runtime still exists.
+        if session.observed_state == SessionStatus.RUNNING and session.containers:
+            self._log.debug(
+                "session.multi_probe.begin",
+                session_id=session.id,
+                sandbox_id=session.sandbox_id,
+                profile_id=profile.id,
+                primary_container_id=session.container_id,
+                container_names=[c.get("name") for c in session.containers],
+            )
+            session = await self._probe_and_recover_multi_if_dead(session)
+
         # Already running and ready
         if session.is_ready:
             return session
@@ -322,14 +339,24 @@ class SessionManager:
                 self._log.info(
                     "session.multi_container_started",
                     session_id=session.id,
+                    sandbox_id=session.sandbox_id,
+                    profile_id=profile.id,
                     containers=[ci.name for ci in container_infos],
+                    container_ids={ci.name: ci.container_id for ci in container_infos},
+                    endpoints={ci.name: ci.endpoint for ci in container_infos},
                     primary=primary_info.name,
+                    primary_container_id=primary_info.container_id,
+                    primary_endpoint=primary_info.endpoint,
                 )
 
             except Exception as e:
                 self._log.error(
                     "session.multi_container_failed",
                     session_id=session.id,
+                    sandbox_id=session.sandbox_id,
+                    profile_id=profile.id,
+                    network_name=network_name,
+                    created_containers=[ci.name for ci in container_infos],
                     error=str(e),
                 )
 
@@ -721,6 +748,87 @@ class SessionManager:
         if session:
             session.last_active_at = utcnow()
             await self._db.commit()
+
+    async def _probe_and_recover_multi_if_dead(self, session: Session) -> Session:
+        """Probe multi-container runtime presence and reset stale session state.
+
+        For multi-container sessions, the DB may still say RUNNING even after the
+        whole runtime group (Docker containers or K8s Pod) was manually removed.
+        We conservatively treat the session as dead when no live runtime instance
+        can be found for the session_id.
+        """
+        expected_container_names = [c.get("name") for c in session.containers or []]
+        expected_container_ids = [c.get("container_id") for c in session.containers or []]
+
+        try:
+            instances = await self._driver.list_runtime_instances(
+                labels={
+                    "bay.session_id": session.id,
+                }
+            )
+        except Exception as e:
+            self._log.warning(
+                "session.multi_probe_failed",
+                session_id=session.id,
+                sandbox_id=session.sandbox_id,
+                expected_container_names=expected_container_names,
+                expected_container_ids=expected_container_ids,
+                error=str(e),
+            )
+            return session
+
+        live_instances = [
+            instance for instance in instances if instance.state == ContainerStatus.RUNNING.value
+        ]
+        self._log.info(
+            "session.multi_probe.result",
+            session_id=session.id,
+            sandbox_id=session.sandbox_id,
+            expected_container_names=expected_container_names,
+            expected_container_ids=expected_container_ids,
+            discovered_runtime_ids=[instance.id for instance in instances],
+            discovered_runtime_states={instance.id: instance.state for instance in instances},
+            live_runtime_ids=[instance.id for instance in live_instances],
+            live_runtime_count=len(live_instances),
+        )
+
+        has_live_runtime = len(live_instances) > 0
+        if has_live_runtime:
+            self._log.debug(
+                "session.multi_probe.healthy",
+                session_id=session.id,
+                sandbox_id=session.sandbox_id,
+                live_runtime_ids=[instance.id for instance in live_instances],
+            )
+            return session
+
+        self._log.warning(
+            "session.multi_runtime_dead_detected",
+            session_id=session.id,
+            sandbox_id=session.sandbox_id,
+            expected_container_names=expected_container_names,
+            expected_container_ids=expected_container_ids,
+            runtime_count=len(instances),
+        )
+
+        old_primary_container_id = session.container_id
+        old_endpoint = session.endpoint
+        session.container_id = None
+        session.endpoint = None
+        session.containers = None
+        session.observed_state = SessionStatus.PENDING
+        session.last_observed_at = utcnow()
+        await self._db.commit()
+
+        self._log.info(
+            "session.multi_recovered_from_dead_runtime",
+            session_id=session.id,
+            sandbox_id=session.sandbox_id,
+            old_primary_container_id=old_primary_container_id,
+            old_endpoint=old_endpoint,
+            reset_observed_state=session.observed_state,
+        )
+        return session
 
     async def _probe_and_recover_if_dead(
         self,

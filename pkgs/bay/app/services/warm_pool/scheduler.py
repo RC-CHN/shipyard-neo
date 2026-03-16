@@ -175,10 +175,19 @@ class WarmPoolScheduler:
                 runtime_ok = await self._is_session_runtime_healthy(driver, session)
 
             if runtime_ok:
+                self._log.debug(
+                    "warm_pool.runtime_state_healthy",
+                    sandbox_id=sandbox.id,
+                    profile_id=profile_id,
+                    session_id=sandbox.current_session_id,
+                    current_session_id=sandbox.current_session_id,
+                    warm_state=sandbox.warm_state,
+                )
                 continue
 
             stale_ids.append(sandbox.id)
-            if self._queue.enqueue(sandbox_id=sandbox.id, owner=sandbox.owner):
+            enqueue_result = self._queue.enqueue(sandbox_id=sandbox.id, owner=sandbox.owner)
+            if enqueue_result:
                 requeued += 1
 
             self._log.warning(
@@ -186,7 +195,9 @@ class WarmPoolScheduler:
                 sandbox_id=sandbox.id,
                 profile_id=profile_id,
                 session_id=sandbox.current_session_id,
-                requeued=True,
+                current_session_id=sandbox.current_session_id,
+                warm_state=sandbox.warm_state,
+                requeued=enqueue_result,
             )
 
         if not stale_ids:
@@ -234,6 +245,8 @@ class WarmPoolScheduler:
     async def _is_session_runtime_healthy(self, driver, session: Session) -> bool:
         """Check whether a session still has a live runtime behind it."""
         if session.containers:
+            expected_container_names = [c.get("name") for c in session.containers]
+            expected_container_ids = [c.get("container_id") for c in session.containers]
             try:
                 instances = await driver.list_runtime_instances(
                     labels={
@@ -245,13 +258,34 @@ class WarmPoolScheduler:
                     "warm_pool.runtime_probe_failed",
                     session_id=session.id,
                     mode="multi",
+                    expected_container_names=expected_container_names,
+                    expected_container_ids=expected_container_ids,
                     error=str(exc),
                 )
                 return True
 
-            return any(instance.state == ContainerStatus.RUNNING.value for instance in instances)
+            healthy = any(instance.state == ContainerStatus.RUNNING.value for instance in instances)
+            self._log.debug(
+                "warm_pool.runtime_probe_result",
+                session_id=session.id,
+                mode="multi",
+                expected_container_names=expected_container_names,
+                expected_container_ids=expected_container_ids,
+                discovered_runtime_ids=[instance.id for instance in instances],
+                discovered_runtime_states={instance.id: instance.state for instance in instances},
+                healthy=healthy,
+            )
+            return healthy
 
         if session.container_id is None:
+            self._log.debug(
+                "warm_pool.runtime_probe_result",
+                session_id=session.id,
+                mode="single",
+                container_id=None,
+                healthy=False,
+                reason="missing_container_id",
+            )
             return False
 
         try:
@@ -266,7 +300,16 @@ class WarmPoolScheduler:
             )
             return True
 
-        return info.status == ContainerStatus.RUNNING
+        healthy = info.status == ContainerStatus.RUNNING
+        self._log.debug(
+            "warm_pool.runtime_probe_result",
+            session_id=session.id,
+            mode="single",
+            container_id=session.container_id,
+            discovered_status=info.status.value,
+            healthy=healthy,
+        )
+        return healthy
 
     async def _maintain_profile(self, profile) -> int:
         """Maintain warm pool for a single profile.

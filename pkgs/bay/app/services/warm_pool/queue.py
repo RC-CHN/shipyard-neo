@@ -264,6 +264,7 @@ class WarmupQueue:
             "warmup_worker.processing",
             worker_id=worker_id,
             sandbox_id=task.sandbox_id,
+            owner=task.owner,
         )
 
         try:
@@ -283,28 +284,41 @@ class WarmupQueue:
                     self._log.debug(
                         "warmup_worker.skip.deleted",
                         sandbox_id=task.sandbox_id,
+                        owner=task.owner,
                     )
                     return
 
-                # If sandbox already has a running session, skip
-                if sandbox.current_session_id is not None:
-                    # Check if the session is actually running
-                    from app.models.session import Session, SessionStatus
+                self._log.info(
+                    "warmup_worker.ensure_running.start",
+                    worker_id=worker_id,
+                    sandbox_id=sandbox.id,
+                    owner=sandbox.owner,
+                    profile_id=sandbox.profile_id,
+                    current_session_id=sandbox.current_session_id,
+                    is_warm_pool=sandbox.is_warm_pool,
+                    warm_state=sandbox.warm_state,
+                )
 
-                    sess_result = await db.execute(
-                        select(Session).where(Session.id == sandbox.current_session_id)
-                    )
-                    session = sess_result.scalars().first()
-                    if session and session.observed_state == SessionStatus.RUNNING:
-                        self._log.debug(
-                            "warmup_worker.skip.already_running",
-                            sandbox_id=task.sandbox_id,
-                        )
-                        return
-
-                # Execute warmup
+                # Execute warmup. Runtime liveness is validated inside
+                # SandboxManager.ensure_running() / SessionManager.ensure_running(),
+                # so we must not trust a stale DB-only RUNNING state here.
                 manager = SandboxManager(driver=get_driver(), db_session=db)
-                await manager.ensure_running(sandbox)
+                session = await manager.ensure_running(sandbox)
+
+                self._log.info(
+                    "warmup_worker.ensure_running.complete",
+                    worker_id=worker_id,
+                    sandbox_id=sandbox.id,
+                    owner=sandbox.owner,
+                    profile_id=sandbox.profile_id,
+                    current_session_id=sandbox.current_session_id,
+                    recovered_session_id=session.id,
+                    recovered_container_id=session.container_id,
+                    observed_state=session.observed_state,
+                    endpoint=session.endpoint,
+                    is_warm_pool=sandbox.is_warm_pool,
+                    warm_state=sandbox.warm_state,
+                )
 
                 # If this is a warm pool sandbox, mark it as available after warmup
                 if sandbox.is_warm_pool and sandbox.warm_state is None:
@@ -317,11 +331,19 @@ class WarmupQueue:
                         sandbox.id,
                         warm_rotate_ttl=warm_rotate_ttl,
                     )
+                    self._log.info(
+                        "warmup_worker.mark_available.complete",
+                        worker_id=worker_id,
+                        sandbox_id=sandbox.id,
+                        profile_id=sandbox.profile_id,
+                        warm_rotate_ttl=warm_rotate_ttl,
+                    )
 
             self._stats.success_total += 1
             self._log.info(
                 "warmup_worker.success",
                 sandbox_id=task.sandbox_id,
+                owner=task.owner,
                 worker_id=worker_id,
             )
 
@@ -330,6 +352,7 @@ class WarmupQueue:
             self._log.warning(
                 "warmup_worker.failed",
                 sandbox_id=task.sandbox_id,
+                owner=task.owner,
                 worker_id=worker_id,
                 error=str(exc),
             )

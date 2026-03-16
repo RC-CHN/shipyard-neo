@@ -8,7 +8,7 @@ in unit tests because FakeDriver does not run a real HTTP server.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -218,6 +218,56 @@ class TestMultiContainerEnsureRunning:
 
         # Network should have been removed
         assert len(driver.remove_network_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_multi_container_recovers_when_runtime_group_was_deleted(
+        self, driver: FakeDriver, db_session: AsyncSession, cargo: Cargo
+    ):
+        """If the whole multi-container runtime group disappears, ensure_running should recreate it."""
+        from app.managers.session import SessionManager
+
+        mgr = SessionManager(driver, db_session)
+        profile = _multi_profile()
+
+        db_session.add(cargo)
+        await db_session.commit()
+
+        session = await mgr.create("sandbox-1", cargo, profile)
+        session = await mgr.ensure_running(session, cargo, profile)
+
+        original_container_id = session.container_id
+        assert original_container_id is not None
+        assert session.containers is not None
+        original_container_ids = [c["container_id"] for c in session.containers]
+
+        # Simulate whole runtime group being manually deleted.
+        for container_id in original_container_ids:
+            await driver.destroy(container_id)
+
+        # Refresh DB object to mimic a later request observing stale RUNNING state.
+        refreshed = await mgr.get(session.id)
+        assert refreshed is not None
+        assert refreshed.observed_state == SessionStatus.RUNNING
+        assert refreshed.container_id == original_container_id
+
+        with patch.object(
+            mgr,
+            "_wait_for_multi_ready",
+            AsyncMock(return_value=None),
+        ):
+            recovered = await mgr.ensure_running(refreshed, cargo, profile)
+
+        assert recovered.observed_state == SessionStatus.RUNNING
+        assert recovered.container_id is not None
+        assert recovered.container_id != original_container_id
+        assert recovered.endpoint is not None
+        assert recovered.containers is not None
+        recovered_container_ids = [c["container_id"] for c in recovered.containers]
+        assert recovered_container_ids != original_container_ids
+
+        # One initial create + one recovery create.
+        assert len(driver.create_multi_calls) == 2
+        assert len(driver.start_multi_calls) == 2
 
     @pytest.mark.asyncio
     async def test_single_container_path_unchanged(
