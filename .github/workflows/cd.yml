@@ -20,7 +20,8 @@ permissions:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/shipyard-neo
+  # github.repository is always lowercase (e.g. "astrbotdevs/shipyard-neo")
+  IMAGE_PREFIX: ghcr.io/${{ github.repository }}
 
 concurrency:
   group: cd-${{ github.ref }}
