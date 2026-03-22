@@ -5,6 +5,7 @@
 #   - 手动触发 (workflow_dispatch) → 构建并推送 :latest + :sha-xxxxx
 #
 # 构建三个镜像: bay, ship, gull
+# 每个镜像使用原生 runner 分别构建 amd64 和 arm64，然后合并为多架构 manifest。
 
 name: CD
 
@@ -26,10 +27,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── 构建 Bay 镜像 ─────────────────────────────────────────
-  build-bay:
-    name: "Build Bay"
-    runs-on: ubuntu-latest
+  # ── 构建各平台镜像 ─────────────────────────────────────────
+  build:
+    name: "Build ${{ matrix.component }} (${{ matrix.platform }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [bay, ship, gull]
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +57,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_PREFIX }}-bay
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -54,22 +65,46 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Build and push
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: pkgs/bay
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          context: pkgs/${{ matrix.component }}
+          platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          outputs: type=image,"name=${{ env.IMAGE_PREFIX }}-${{ matrix.component }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.component }}-${{ matrix.platform }},mode=max
 
-  # ── 构建 Ship 镜像 ────────────────────────────────────────
-  build-ship:
-    name: "Build Ship"
+      - name: Export digest
+        run: |
+          mkdir -p ${{ runner.temp }}/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.component }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ── 合并多架构 manifest ────────────────────────────────────
+  merge:
+    name: "Merge ${{ matrix.component }}"
     runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        component: [bay, ship, gull]
     steps:
-      - uses: actions/checkout@v4
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-${{ matrix.component }}-*
+          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
 
@@ -84,7 +119,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_PREFIX }}-ship
+          images: ${{ env.IMAGE_PREFIX }}-${{ matrix.component }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -92,50 +127,15 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: pkgs/ship
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE_PREFIX }}-${{ matrix.component }}@sha256:%s ' *)
 
-  # ── 构建 Gull 镜像 ────────────────────────────────────────
-  build-gull:
-    name: "Build Gull"
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Inspect image
+        run: |
+          tag=$(jq -cr '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          docker buildx imagetools inspect "$tag"
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_PREFIX }}-gull
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=latest,enable=${{ github.event_name == 'workflow_dispatch' }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: pkgs/gull
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
