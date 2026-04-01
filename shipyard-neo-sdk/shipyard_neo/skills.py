@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from shipyard_neo.types import (
+    GoalDeclaration,
     SkillCandidateInfo,
     SkillCandidateList,
     SkillCandidateStatus,
@@ -18,6 +17,7 @@ from shipyard_neo.types import (
     SkillReleaseInfo,
     SkillReleaseList,
     SkillReleaseStage,
+    SkillView,
     _SkillPayloadCreateRequest,
 )
 
@@ -74,8 +74,8 @@ class SkillManager:
         payload_ref: str | None = None,
         summary: str | None = None,
         usage_notes: str | None = None,
-        preconditions: dict[str, Any] | None = None,
-        postconditions: dict[str, Any] | None = None,
+        preconditions: list[str] | dict[str, Any] | None = None,
+        postconditions: list[str] | dict[str, Any] | None = None,
     ) -> SkillCandidateInfo:
         body = {
             "skill_key": skill_key,
@@ -221,3 +221,69 @@ class SkillManager:
     async def get_release_health(self, release_id: str) -> SkillReleaseHealth:
         response = await self._http.get(f"/v1/skills/releases/{release_id}/health")
         return SkillReleaseHealth.model_validate(response)
+
+    # ------------------------------------------------------------------
+    # Intent-driven interface (evolution system)
+    # ------------------------------------------------------------------
+
+    async def declare_goal(
+        self,
+        *,
+        skill_key: str,
+        goal: str,
+    ) -> GoalDeclaration:
+        """Declare the goal for a skill key.
+
+        The system uses this goal to drive skill evolution and generate
+        evaluation criteria. Call once when introducing a new skill, or
+        whenever the goal changes. This is an upsert operation.
+        """
+        response = await self._http.post(
+            "/v1/skills/goals",
+            json={"skill_key": skill_key, "goal": goal},
+        )
+        return GoalDeclaration.model_validate(response)
+
+    async def get_active(self, skill_key: str) -> SkillView | None:
+        """Get the currently active skill release.
+
+        Returns a SkillView whose ``content`` field can be passed directly
+        to an LLM as execution instructions. Returns None if no active
+        release exists yet.
+        """
+        from shipyard_neo.errors import NotFoundError
+
+        try:
+            response = await self._http.get(f"/v1/skills/{skill_key}/active")
+        except NotFoundError:
+            return None
+        return SkillView.model_validate(response)
+
+    async def report_outcome(
+        self,
+        *,
+        skill_key: str,
+        release_id: str,
+        outcome: Literal["success", "failure", "partial"],
+        reasoning: str,
+        execution_id: str | None = None,
+        signals: dict[str, Any] | None = None,
+    ) -> None:
+        """Report the outcome of executing a skill.
+
+        ``reasoning`` is required — explain why the execution succeeded or
+        failed. This text is stored as the evolution signal feed: failures
+        generate reflection memory that improves future mutations, successes
+        reinforce the current approach.
+        """
+        body: dict[str, Any] = {
+            "skill_key": skill_key,
+            "release_id": release_id,
+            "outcome": outcome,
+            "reasoning": reasoning,
+        }
+        if execution_id is not None:
+            body["execution_id"] = execution_id
+        if signals is not None:
+            body["signals"] = signals
+        await self._http.post("/v1/skills/outcomes", json=body)

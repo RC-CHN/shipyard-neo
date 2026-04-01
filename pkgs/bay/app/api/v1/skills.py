@@ -25,8 +25,8 @@ class SkillCandidateCreateRequest(BaseModel):
     payload_ref: str | None = None
     summary: str | None = None
     usage_notes: str | None = None
-    preconditions: dict[str, Any] | None = None
-    postconditions: dict[str, Any] | None = None
+    preconditions: list[str] | dict[str, Any] | None = None
+    postconditions: list[str] | dict[str, Any] | None = None
 
 
 class SkillCandidateResponse(BaseModel):
@@ -41,8 +41,8 @@ class SkillCandidateResponse(BaseModel):
     auto_release_reason: str | None
     summary: str | None
     usage_notes: str | None
-    preconditions: dict[str, Any] | None
-    postconditions: dict[str, Any] | None
+    preconditions: list[str] | dict[str, Any] | None
+    postconditions: list[str] | dict[str, Any] | None
     source_execution_ids: list[str]
     status: str
     latest_score: float | None
@@ -173,6 +173,55 @@ class SkillPayloadResponse(BaseModel):
     payload: dict[str, Any] | list[Any]
 
 
+class SkillGoalDeclareRequest(BaseModel):
+    """Declare goal for a skill key."""
+
+    skill_key: str
+    goal: str
+
+
+class SkillGoalDeclareResponse(BaseModel):
+    """Goal declaration response."""
+
+    goal_id: str
+    skill_key: str
+    goal: str
+    rubric_summary: str
+
+
+class SkillActiveResponse(BaseModel):
+    """Active skill view — unified view of the current release."""
+
+    skill_key: str
+    release_id: str
+    version: int
+    stage: str
+    goal: str | None
+    content: str
+    summary: str | None
+    preconditions: list[str]
+    postconditions: list[str]
+    payload_ref: str | None
+
+
+class SkillOutcomeRequest(BaseModel):
+    """Report an execution outcome."""
+
+    skill_key: str
+    release_id: str
+    outcome: str = Field(..., pattern="^(success|failure|partial)$")
+    reasoning: str
+    execution_id: str | None = None
+    signals: dict[str, Any] | None = None
+
+
+class SkillOutcomeResponse(BaseModel):
+    """Outcome record response."""
+
+    outcome_id: str
+    accepted: bool
+
+
 class SkillDeleteRequest(BaseModel):
     """Delete request."""
 
@@ -188,14 +237,23 @@ class SkillDeleteResponse(BaseModel):
     delete_reason: str | None
 
 
-def _json_field_to_obj(raw: str | None) -> dict[str, Any] | None:
+def _json_field_to_obj(raw: str | None) -> list[str] | dict[str, Any] | None:
+    """Deserialize a pre/postconditions JSON field.
+
+    Accepts both list (evolution-generated) and dict (API-created) formats.
+    Returns None on missing or unparseable input.
+    """
     if raw is None:
         return None
     try:
         parsed = json.loads(raw)
     except Exception:
         return None
-    return parsed if isinstance(parsed, dict) else None
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed]
+    if isinstance(parsed, dict):
+        return parsed
+    return None
 
 
 def _candidate_to_response(candidate) -> SkillCandidateResponse:
@@ -263,6 +321,57 @@ def _release_to_response(release) -> SkillReleaseResponse:
         deleted_by=release.deleted_by,
         delete_reason=release.delete_reason,
     )
+
+
+@router.post("/goals", response_model=SkillGoalDeclareResponse, status_code=200)
+async def declare_skill_goal(
+    request: SkillGoalDeclareRequest,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillGoalDeclareResponse:
+    skill_goal = await skill_svc.declare_goal(
+        owner=owner,
+        skill_key=request.skill_key,
+        goal=request.goal,
+    )
+    return SkillGoalDeclareResponse(
+        goal_id=skill_goal.id,
+        skill_key=skill_goal.skill_key,
+        goal=skill_goal.goal,
+        rubric_summary=skill_goal.rubric_summary,
+    )
+
+
+@router.get("/{skill_key}/active", response_model=SkillActiveResponse)
+async def get_active_skill(
+    skill_key: str,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillActiveResponse:
+    view = await skill_svc.get_active_skill_view(owner=owner, skill_key=skill_key)
+    if view is None:
+        from app.errors import NotFoundError
+
+        raise NotFoundError(f"No active release for skill: {skill_key}")
+    return SkillActiveResponse(**view)
+
+
+@router.post("/outcomes", response_model=SkillOutcomeResponse, status_code=201)
+async def report_skill_outcome(
+    request: SkillOutcomeRequest,
+    skill_svc: SkillLifecycleServiceDep,
+    owner: AuthDep,
+) -> SkillOutcomeResponse:
+    outcome = await skill_svc.record_outcome(
+        owner=owner,
+        skill_key=request.skill_key,
+        release_id=request.release_id,
+        outcome=request.outcome,
+        reasoning=request.reasoning,
+        execution_id=request.execution_id,
+        signals=request.signals,
+    )
+    return SkillOutcomeResponse(outcome_id=outcome.id, accepted=True)
 
 
 @router.post("/payloads", response_model=SkillPayloadCreateResponse, status_code=201)

@@ -123,6 +123,7 @@ class SkillCandidate(SQLModel, table=True):
     skill_key: str = Field(index=True)
     scenario_key: str | None = Field(default=None, index=True)
     payload_ref: str | None = Field(default=None)
+    payload_hash: str | None = Field(default=None, index=True)
     skill_type: SkillType = Field(default=SkillType.CODE, index=True)
     auto_release_eligible: bool = Field(default=False, index=True)
     auto_release_reason: str | None = Field(default=None)
@@ -148,7 +149,10 @@ class SkillCandidate(SQLModel, table=True):
     last_evaluated_at: datetime | None = Field(default=None)
 
     promotion_release_id: str | None = Field(default=None, index=True)
-
+    # Evolution lineage (Phase 2)
+    evolution_parent_id: str | None = Field(default=None, index=True)
+    evolution_meta_prompt_id: str | None = Field(default=None, index=True)
+    mutation_reasoning: str | None = Field(default=None)
     deleted_at: datetime | None = Field(default=None, index=True)
     deleted_by: str | None = Field(default=None)
     delete_reason: str | None = Field(default=None)
@@ -170,6 +174,63 @@ class SkillEvaluation(SQLModel, table=True):
     report: str | None = Field(default=None)
 
     evaluated_by: str | None = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+
+
+class MetaPrompt(SQLModel, table=True):
+    """Mutation instruction in the MetaPrompt archive.
+
+    Each record is a strategy for improving a skill (e.g., 'add error handling').
+    Selection weight is derived from success_count / (usage_count + 1).
+    """
+
+    __tablename__ = "meta_prompts"
+
+    id: str = Field(primary_key=True)
+    instruction: str
+    is_default: bool = Field(default=False, index=True)
+
+    usage_count: int = Field(default=0)
+    success_count: int = Field(default=0)
+
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SkillGoal(SQLModel, table=True):
+    """Declared goal for a skill key — the human's intent input."""
+
+    __tablename__ = "skill_goals"
+
+    id: str = Field(primary_key=True)
+    owner: str = Field(index=True)
+
+    skill_key: str = Field(index=True)
+
+    goal: str
+    rubric_summary: str = Field(default="")
+    rubric_json: str | None = Field(default=None)  # JSON: SkillRubric structure
+
+    created_at: datetime = Field(default_factory=utcnow, index=True)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class SkillOutcome(SQLModel, table=True):
+    """Execution outcome report — the evolution signal feed."""
+
+    __tablename__ = "skill_outcomes"
+
+    id: str = Field(primary_key=True)
+    owner: str = Field(index=True)
+
+    skill_key: str = Field(index=True)
+    release_id: str = Field(index=True)
+
+    outcome: str = Field(index=True)  # "success" | "failure" | "partial"
+    reasoning: str
+    execution_id: str | None = Field(default=None, index=True)
+    signals_json: str | None = Field(default=None)
+
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

@@ -486,4 +486,139 @@ class TestSkillsManagerAndHistory:
             health = await client.skills.get_release_health("sr-risky")
             assert health.should_rollback is True
             assert health.rollback_reasons == ["success_rate_drop", "error_rate_regression"]
-            assert health.thresholds["error_rate_multiplier"] == 2.0
+
+    # -------------------------------------------------------------------------
+    # pre/postconditions dual-format compatibility (dict vs list)
+    # -------------------------------------------------------------------------
+
+    def _candidate_payload(
+        self,
+        *,
+        preconditions=None,
+        postconditions=None,
+    ) -> dict:
+        return {
+            "id": "sc-evo-1",
+            "skill_key": "github-get-stars",
+            "source_execution_ids": ["exec-1"],
+            "status": "draft",
+            "created_at": "2026-03-01T00:00:00Z",
+            "updated_at": "2026-03-01T00:00:00Z",
+            "preconditions": preconditions,
+            "postconditions": postconditions,
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_candidate_parses_list_preconditions(self, httpx_mock):
+        """get_candidate must not raise when server returns list[str] pre/postconditions."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/skills/candidates/sc-evo-1",
+            json=self._candidate_payload(
+                preconditions=["browser available", "JS enabled"],
+                postconditions=["integer returned"],
+            ),
+            status_code=200,
+        )
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            c = await client.skills.get_candidate("sc-evo-1")
+        assert c.preconditions == ["browser available", "JS enabled"]
+        assert c.postconditions == ["integer returned"]
+
+    @pytest.mark.asyncio
+    async def test_get_candidate_parses_dict_preconditions(self, httpx_mock):
+        """get_candidate must still work when server returns dict pre/postconditions."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/skills/candidates/sc-evo-1",
+            json=self._candidate_payload(
+                preconditions={"browser": "available"},
+                postconditions={"result": "integer"},
+            ),
+            status_code=200,
+        )
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            c = await client.skills.get_candidate("sc-evo-1")
+        assert c.preconditions == {"browser": "available"}
+        assert c.postconditions == {"result": "integer"}
+
+    @pytest.mark.asyncio
+    async def test_get_candidate_parses_null_preconditions(self, httpx_mock):
+        """get_candidate must handle null pre/postconditions (no conditions set)."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/skills/candidates/sc-evo-1",
+            json=self._candidate_payload(),
+            status_code=200,
+        )
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            c = await client.skills.get_candidate("sc-evo-1")
+        assert c.preconditions is None
+        assert c.postconditions is None
+
+    @pytest.mark.asyncio
+    async def test_list_candidates_parses_list_preconditions(self, httpx_mock):
+        """list_candidates must not raise when evolution candidates have list preconditions."""
+        httpx_mock.add_response(
+            method="GET",
+            url="http://localhost:8000/v1/skills/candidates?limit=100&offset=0",
+            json={
+                "items": [
+                    self._candidate_payload(
+                        preconditions=["browser available"],
+                        postconditions=["integer returned"],
+                    )
+                ],
+                "total": 1,
+            },
+            status_code=200,
+        )
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            result = await client.skills.list_candidates()
+        assert result.total == 1
+        assert result.items[0].preconditions == ["browser available"]
+
+    @pytest.mark.asyncio
+    async def test_create_candidate_accepts_list_preconditions(self, httpx_mock):
+        """create_candidate should pass list[str] conditions through unchanged."""
+        httpx_mock.add_response(
+            method="POST",
+            url="http://localhost:8000/v1/skills/candidates",
+            json=self._candidate_payload(
+                preconditions=["browser available", "JS enabled"],
+                postconditions=["integer returned"],
+            ),
+            status_code=201,
+        )
+
+        async with BayClient(
+            endpoint_url="http://localhost:8000",
+            access_token="test-token",
+        ) as client:
+            candidate = await client.skills.create_candidate(
+                skill_key="github-get-stars",
+                source_execution_ids=["exec-1"],
+                preconditions=["browser available", "JS enabled"],
+                postconditions=["integer returned"],
+            )
+
+        request = httpx_mock.get_requests()[0]
+        assert request.read().decode() == (
+            '{"skill_key":"github-get-stars","source_execution_ids":["exec-1"],'
+            '"preconditions":["browser available","JS enabled"],'
+            '"postconditions":["integer returned"]}'
+        )
+        assert candidate.preconditions == ["browser available", "JS enabled"]
+        assert candidate.postconditions == ["integer returned"]

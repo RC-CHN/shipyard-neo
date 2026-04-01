@@ -390,7 +390,7 @@ async def test_skill_delete_release_and_candidate_flow():
                 json={"stage": "canary"},
             )
             assert promote_b.status_code == 200
-            release_b = promote_b.json()
+            promote_b.json()
 
             # Deleted release is no longer returned by list endpoint.
             list_releases = await client.get(
@@ -431,3 +431,29 @@ async def test_skill_delete_release_and_candidate_flow():
 
             get_deleted_candidate = await client.get(f"/v1/skills/candidates/{candidate_a['id']}")
             assert get_deleted_candidate.status_code == 404
+
+
+async def test_create_candidate_accepts_list_conditions():
+    """Candidate create API should accept list[str] pre/postconditions."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        async with create_sandbox(client) as sandbox:
+            sandbox_id = sandbox["id"]
+            execution_id = await _create_python_execution(client, sandbox_id, "print('candidate')")
+
+            response = await client.post(
+                "/v1/skills/candidates",
+                json={
+                    "skill_key": "browser-login",
+                    "source_execution_ids": [execution_id],
+                    "preconditions": ["browser available", "user authenticated"],
+                    "postconditions": ["dashboard visible"],
+                },
+            )
+
+            assert response.status_code == 201
+            candidate = response.json()
+            assert candidate["preconditions"] == [
+                "browser available",
+                "user authenticated",
+            ]
+            assert candidate["postconditions"] == ["dashboard visible"]
