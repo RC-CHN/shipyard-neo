@@ -52,7 +52,7 @@ cargo:
 security:
   # API Key authentication
   #
-  # Bay supports two modes for API key configuration:
+  # Bay supports three modes for API key configuration:
   #
   # 1. Auto-generation (default, recommended):
   #    On first boot, Bay will:
@@ -60,9 +60,13 @@ security:
   #    - Write credentials.json for companion services (e.g., AstrBot)
   #    Subsequent restarts will reuse the existing key from DB.
   #
-  # 2. Environment variable override:
+  # 2. Config file: set `api_key` below to a fixed key.
+  #    Seeds the key to DB on startup. credentials.json is NOT written
+  #    (you already know the key — configure companion services manually).
+  #
+  # 3. Environment variable override:
   #    Set BAY_API_KEY=sk-bay-your-key to inject a specific key.
-  #    This seeds the key to DB on startup.
+  #    Seeds the key to DB on startup. credentials.json is NOT written.
 
   # Allow anonymous access (no authentication required)
   # Development: true (default) - allows unauthenticated requests
