@@ -23,6 +23,9 @@ This test verifies ALL SDK functionality:
 - Idempotency: create_sandbox with idempotency_key
 """
 
+# Prevent pytest from collecting this manual smoke script as a test module.
+__test__ = False
+
 import asyncio
 import sys
 from pathlib import Path
@@ -32,7 +35,7 @@ SDK_PATH = Path(__file__).parent.parent.parent.parent.parent.parent / "shipyard-
 if SDK_PATH.exists():
     sys.path.insert(0, str(SDK_PATH))
 
-from shipyard_neo import BayClient, NotFoundError, SandboxStatus
+from shipyard_neo import BayClient, NotFoundError, SandboxStatus  # noqa: E402
 
 
 async def test_sandbox_lifecycle(client: BayClient) -> str:
@@ -86,7 +89,7 @@ async def test_sandbox_lifecycle(client: BayClient) -> str:
     print("\n[7] Extending TTL by 60 seconds...")
     old_expires = sandbox.expires_at
     await sandbox.extend_ttl(60)
-    print(f"  ✓ TTL extended")
+    print("  ✓ TTL extended")
     print(f"    Old expires_at: {old_expires}")
     print(f"    New expires_at: {sandbox.expires_at}")
 

@@ -86,6 +86,16 @@ jobs:
                   capabilities: [browser]
                   primary_for: [browser]
               idle_timeout: 1800
+
+          browser_learning:
+            enabled: true
+            run_on_startup: true
+            interval_seconds: 2
+            extraction:
+              dedup_enabled: true
+              variable_extraction_enabled: true
+              llm:
+                enabled: false
           CFG
 
       - name: Start Bay API for nightly e2e

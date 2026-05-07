@@ -165,3 +165,22 @@ def require_str_list(arguments: dict[str, Any], key: str) -> list[str]:
             raise ValueError(f"field '{key}' must be a non-empty array of strings")
         normalized.append(item)
     return normalized
+
+
+def read_optional_conditions(
+    arguments: dict[str, Any], key: str
+) -> list[str] | dict[str, Any] | None:
+    """Extract optional pre/postconditions as object or string array."""
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        normalized: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValueError(f"field '{key}' must be an object or an array of strings")
+            normalized.append(item)
+        return normalized
+    raise ValueError(f"field '{key}' must be an object or an array of strings")
