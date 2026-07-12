@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
@@ -32,6 +33,12 @@ from app.validators.path import (
 )
 
 router = APIRouter()
+
+
+def _attachment_content_disposition(filename: str) -> str:
+    """Build an ASCII-only attachment header that supports Unicode filenames."""
+    encoded_filename = quote(filename, safe="")
+    return f"attachment; filename*=UTF-8''{encoded_filename}"
 
 
 # -- Path validation dependencies --
@@ -829,5 +836,5 @@ async def download_file(
     return Response(
         content=content,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _attachment_content_disposition(filename)},
     )

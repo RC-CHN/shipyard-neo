@@ -19,7 +19,7 @@ def validate_relative_path(path: str, *, field_name: str = "path") -> str:
 
     Rules:
     1. Must not be empty
-    2. Must not be absolute (start with /)
+    2. May use /workspace as an explicit workspace-root alias
     3. Must not contain null bytes
     4. After normalization, must not escape workspace (start with ..)
 
@@ -55,6 +55,17 @@ def validate_relative_path(path: str, *, field_name: str = "path") -> str:
             message=f"{field_name} contains invalid characters",
             details={"field": field_name, "reason": "null_byte"},
         )
+
+    # AstrBot and some other clients expose sandbox paths as /workspace/..., while
+    # the Bay/Ship API uses paths relative to that directory.  AstrBot versions
+    # that strip only the leading slash send the compatibility form
+    # workspace/....  Normalize both forms before applying the traversal checks.
+    if path == "/workspace" or path == "workspace":
+        path = "."
+    elif path.startswith("/workspace/"):
+        path = path.removeprefix("/workspace/")
+    elif path.startswith("workspace/"):
+        path = path.removeprefix("workspace/")
 
     p = PurePosixPath(path)
 
