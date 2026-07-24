@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from ipaddress import IPv4Network, ip_network
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -660,6 +661,24 @@ class DockerDriver(Driver):
         """Generate network name for a session."""
         return f"bay_net_{session_id}"
 
+    @staticmethod
+    def _used_docker_subnets(networks: list[dict[str, Any]]) -> list[IPv4Network]:
+        """Extract valid IPv4 subnets from Docker network inspection results."""
+        used_subnets: list[IPv4Network] = []
+        for network in networks:
+            ipam_configs = network.get("IPAM", {}).get("Config") or []
+            for config in ipam_configs:
+                subnet = config.get("Subnet")
+                if not subnet:
+                    continue
+                try:
+                    parsed = ip_network(subnet, strict=False)
+                except ValueError:
+                    continue
+                if isinstance(parsed, IPv4Network):
+                    used_subnets.append(parsed)
+        return used_subnets
+
     async def create_session_network(self, session_id: str) -> str:
         """Create a session-scoped Docker bridge network.
 
@@ -680,11 +699,31 @@ class DockerDriver(Driver):
 
         settings = get_settings()
         gc_instance_id = settings.gc.get_instance_id()
+        docker_config = settings.driver.docker
+        pool = IPv4Network(docker_config.session_network_pool)
+        used_subnets = self._used_docker_subnets(await client.networks.list())
+        subnet = next(
+            (
+                candidate
+                for candidate in pool.subnets(new_prefix=docker_config.session_network_prefix)
+                if not any(candidate.overlaps(used) for used in used_subnets)
+            ),
+            None,
+        )
+        if subnet is None:
+            raise RuntimeError(
+                "session network pool exhausted: "
+                f"{pool} has no available /{docker_config.session_network_prefix} subnet"
+            )
 
         await client.networks.create(
             {
                 "Name": network_name,
                 "Driver": "bridge",
+                "IPAM": {
+                    "Driver": "default",
+                    "Config": [{"Subnet": str(subnet)}],
+                },
                 "Labels": {
                     "bay.managed": "true",
                     "bay.session_id": session_id,

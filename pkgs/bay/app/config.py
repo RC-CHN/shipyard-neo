@@ -9,11 +9,12 @@ Configuration sources (in priority order):
 from __future__ import annotations
 
 from functools import lru_cache
+from ipaddress import IPv4Network
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -37,6 +38,10 @@ class DockerConfig(BaseModel):
 
     socket: str = "unix:///var/run/docker.sock"
 
+    # Address space used for session-scoped bridge networks.
+    session_network_pool: str = "10.252.0.0/16"
+    session_network_prefix: int = Field(default=24, ge=0, le=30)
+
     # 可选：把 runtime 容器接入指定 network（Bay 也需要在该 network 内才能用容器 IP 直连）
     # 为空则不指定 network（使用 Docker 默认网络）
     network: str | None = None
@@ -55,6 +60,25 @@ class DockerConfig(BaseModel):
 
     # 指定固定宿主机端口（None/0 表示随机端口）
     host_port: int | None = None
+
+    @field_validator("session_network_pool")
+    @classmethod
+    def validate_session_network_pool(cls, value: str) -> str:
+        """Require a canonical IPv4 network for deterministic subnet allocation."""
+        try:
+            return str(IPv4Network(value, strict=True))
+        except ValueError as exc:
+            raise ValueError("session_network_pool must be a valid IPv4 network") from exc
+
+    @model_validator(mode="after")
+    def validate_session_network_prefix(self) -> DockerConfig:
+        """Require the allocated subnet prefix to fit inside the configured pool."""
+        pool = IPv4Network(self.session_network_pool)
+        if self.session_network_prefix < pool.prefixlen:
+            raise ValueError(
+                "session_network_prefix must be greater than or equal to the pool prefix"
+            )
+        return self
 
 
 class K8sConfig(BaseModel):
