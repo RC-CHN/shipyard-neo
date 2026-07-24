@@ -29,6 +29,11 @@ driver:
   docker:
     socket: "unix:///var/run/docker.sock"
 
+    # Allocate session bridge networks from a dedicated private pool to avoid
+    # overlap with common 192.168.x.x physical LANs. Each session receives a /24.
+    session_network_pool: "10.252.0.0/16"
+    session_network_prefix: 24
+
     # Bay in container, Ship/Gull in container — use container network direct connect
     connect_mode: container_network
 
