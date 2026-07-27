@@ -43,6 +43,34 @@ async def test_upload_and_download_text():
             assert d.content == content
 
 
+async def test_upload_and_download_unicode_filename_with_workspace_alias():
+    """Unicode filenames and AstrBot's stripped /workspace form are supported."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        async with create_sandbox(client) as sandbox:
+            sid = sandbox["id"]
+            content = "中文文件内容".encode()
+            path = "中文测试文件.txt"
+
+            u = await client.post(
+                f"/v1/sandboxes/{sid}/filesystem/upload",
+                files={"file": (path, content, "text/plain")},
+                data={"path": path},
+                timeout=120.0,
+            )
+            assert u.status_code == 200
+
+            d = await client.get(
+                f"/v1/sandboxes/{sid}/filesystem/download",
+                params={"path": f"workspace/{path}"},
+                timeout=30.0,
+            )
+            assert d.status_code == 200
+            assert d.content == content
+            assert d.headers["content-disposition"].startswith(
+                "attachment; filename*=UTF-8''"
+            )
+
+
 async def test_upload_and_download_binary():
     """Upload binary file and download it back."""
     async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:

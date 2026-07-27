@@ -59,6 +59,20 @@ class TestValidateRelativePath:
     def test_current_dir_only(self) -> None:
         assert validate_relative_path(".") == "."
 
+    @pytest.mark.parametrize(
+        ("path", "expected"),
+        [
+            ("/workspace/file.txt", "file.txt"),
+            ("/workspace/a/b.txt", "a/b.txt"),
+            ("/workspace", "."),
+            ("workspace/file.txt", "file.txt"),
+            ("workspace/a/b.txt", "a/b.txt"),
+            ("workspace", "."),
+        ],
+    )
+    def test_normalizes_workspace_root_alias(self, path: str, expected: str) -> None:
+        assert validate_relative_path(path) == expected
+
     # --- Normalization edge cases ---
 
     def test_normalizes_double_slash(self) -> None:
@@ -91,10 +105,15 @@ class TestValidateRelativePath:
         assert exc.value.code == "invalid_path"
         assert exc.value.details["reason"] == "absolute_path"
 
-    def test_rejects_absolute_path_container_mount(self) -> None:
+    def test_rejects_traversal_through_workspace_alias(self) -> None:
         with pytest.raises(InvalidPathError) as exc:
-            validate_relative_path("/workspace/file.txt")
-        assert exc.value.details["reason"] == "absolute_path"
+            validate_relative_path("/workspace/../etc/passwd")
+        assert exc.value.details["reason"] == "path_traversal"
+
+    def test_rejects_traversal_through_stripped_workspace_alias(self) -> None:
+        with pytest.raises(InvalidPathError) as exc:
+            validate_relative_path("workspace/../../etc/passwd")
+        assert exc.value.details["reason"] == "path_traversal"
 
     def test_rejects_traversal_at_start(self) -> None:
         with pytest.raises(InvalidPathError) as exc:
