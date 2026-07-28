@@ -51,6 +51,8 @@ async def execute_shell_command(request: ExecuteShellRequest):
 
         return ExecuteShellResponse(**result.__dict__)
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to execute command: {str(e)}"

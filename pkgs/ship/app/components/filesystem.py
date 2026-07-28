@@ -1,12 +1,31 @@
 import os
-import aiofiles
+from urllib.parse import quote
 from typing import List, Optional
+
+import aiofiles
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse as FastAPIFileResponse
 from pydantic import BaseModel
 from ..workspace import resolve_path
 
 router = APIRouter()
+
+
+def _content_disposition(filename: str) -> str:
+    """Build an ASCII fallback and RFC 5987 UTF-8 attachment filename."""
+    ascii_fallback = "".join(
+        character
+        if 32 <= ord(character) < 127 and character not in {'"', "\\", ";"}
+        else "_"
+        for character in filename
+    ).strip()
+    if not ascii_fallback:
+        ascii_fallback = "download"
+    encoded_filename = quote(filename, safe="!#$&+-.^_`|~")
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{encoded_filename}"
+    )
 
 
 # 定义请求和响应模型
@@ -88,6 +107,8 @@ async def create_file(request: CreateFileRequest):
             "message": f"File created: {request.path}",
             "path": str(file_path.absolute()),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create file: {str(e)}")
 
@@ -151,6 +172,8 @@ async def write_file(request: WriteFileRequest):
             "path": str(file_path.absolute()),
             "size": stat.st_size,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write file: {str(e)}")
 
@@ -270,17 +293,18 @@ async def list_directory(request: ListDirRequest):
                 continue
 
             try:
-                stat = item.stat()
+                resolved_item = resolve_path(str(item))
+                stat = resolved_item.stat()
                 file_info = FileInfo(
                     name=item.name,
-                    path=str(item.absolute()),
-                    is_file=item.is_file(),
-                    is_dir=item.is_dir(),
-                    size=stat.st_size if item.is_file() else None,
+                    path=str(resolved_item),
+                    is_file=resolved_item.is_file(),
+                    is_dir=resolved_item.is_dir(),
+                    size=stat.st_size if resolved_item.is_file() else None,
                     modified_time=stat.st_mtime,
                 )
                 files.append(file_info)
-            except (OSError, PermissionError):
+            except (HTTPException, OSError, PermissionError):
                 # 跳过无法访问的文件
                 continue
 
@@ -358,8 +382,8 @@ async def download_file(file_path: str):
         # 返回文件
         return FastAPIFileResponse(
             path=str(target_path),
-            filename=target_path.name,
             media_type="application/octet-stream",
+            headers={"Content-Disposition": _content_disposition(target_path.name)},
         )
 
     except HTTPException:

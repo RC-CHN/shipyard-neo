@@ -133,7 +133,7 @@ Shell commands run as the `shipyard` user with passwordless `sudo` available.
 
 - **Shell**: `/bin/bash`
 - **User**: `shipyard` (uid 1000) with `sudo NOPASSWD: ALL`
-- **Working directory**: Configurable per request, relative to `/workspace`
+- **Working directory**: Relative paths use `/workspace`; allowed absolute paths may use `/workspace` or `/tmp`
 - **Chaining**: Shell operators (`&&`, `|`, `;`, `>`) work as expected
 
 ### Common Patterns
@@ -185,8 +185,9 @@ Direct file read/write/list/delete operations without shell.
 
 ### Key Behaviors
 
-- All paths are **relative to `/workspace`** (or absolute under `/workspace`)
-- Path traversal outside `/workspace` is blocked with HTTP 403
+- Relative paths are rooted at `/workspace`; allowed absolute paths may use `/workspace` or `/tmp`
+- `/tmp` is local to the current Ship container and is not shared or persistent across restarts
+- Path traversal outside the configured allowed roots is blocked with HTTP 403
 - Parent directories are created automatically on write
 
 ### Security Constraint

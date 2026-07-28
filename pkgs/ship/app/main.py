@@ -4,7 +4,7 @@ from .components.filesystem import router as fs_router
 from .components.ipython import router as ipython_router, get_or_create_kernel
 from .components.shell import router as shell_router
 from .components.term import router as term_router
-from .workspace import WORKSPACE_ROOT
+from .workspace import WORKSPACE_ROOT, get_path_policy
 import logging
 import os
 import re
@@ -143,6 +143,7 @@ async def get_meta():
         },
         "workspace": {
             "mount_path": str(WORKSPACE_ROOT),
+            "path_policy": get_path_policy(),
         },
         "capabilities": {
             "filesystem": {
@@ -156,7 +157,7 @@ async def get_meta():
                     "upload",
                     "download",
                 ],
-                "path_mode": "relative_to_mount",
+                "path_mode": "relative_or_allowed_absolute",
                 "endpoints": {
                     "create": "/fs/create_file",
                     "read": "/fs/read_file",

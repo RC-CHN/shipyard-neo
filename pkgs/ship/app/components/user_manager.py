@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Dict, Optional, List, Tuple
 from fastapi import HTTPException
 
+from ..workspace import resolve_path
+
 logger = logging.getLogger(__name__)
 
 # 固定的执行用户和 workspace
@@ -245,21 +247,9 @@ async def run_command(
         if env:
             process_env.update(env)
 
-        working_dir = WORKSPACE_ROOT
-        if cwd:
-            if not os.path.isabs(cwd):
-                working_dir = working_dir / cwd
-            else:
-                working_dir = Path(cwd)
-            # resolve working dir
-            working_dir = working_dir.resolve()
-            try:
-                working_dir.relative_to(WORKSPACE_ROOT)
-            except ValueError:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Access denied: path must be within workspace: {WORKSPACE_ROOT}",
-                )
+        # Keep command text opaque; only the explicit cwd is interpreted as a
+        # path and therefore goes through the same policy as filesystem APIs.
+        working_dir = resolve_path(cwd or ".")
 
         env_args = []
         if env:
@@ -369,6 +359,8 @@ async def run_command(
                     error="Command timed out",
                 )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception(
             "Shell exec failed: cmd=%s cwd=%s env_keys=%s",
