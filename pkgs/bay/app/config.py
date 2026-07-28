@@ -8,13 +8,16 @@ Configuration sources (in priority order):
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.validators.path import DEFAULT_ALLOWED_ROOTS, normalize_allowed_roots
 
 
 class ServerConfig(BaseModel):
@@ -22,6 +25,24 @@ class ServerConfig(BaseModel):
 
     host: str = "0.0.0.0"
     port: int = 8114
+
+
+class FilesystemConfig(BaseModel):
+    """Public filesystem path policy shared with every Ship runtime."""
+
+    model_config = ConfigDict(validate_default=True)
+
+    allowed_roots: list[str] = Field(default_factory=lambda: list(DEFAULT_ALLOWED_ROOTS))
+
+    @field_validator("allowed_roots")
+    @classmethod
+    def validate_allowed_roots(cls, value: list[str]) -> list[str]:
+        """Require canonical POSIX absolute roots including /workspace."""
+        return normalize_allowed_roots(value)
+
+    def allowed_roots_json(self) -> str:
+        """Serialize the validated policy for Ship container environment."""
+        return json.dumps(self.allowed_roots, separators=(",", ":"))
 
 
 class DatabaseConfig(BaseModel):
@@ -499,6 +520,7 @@ class Settings(BaseSettings):
     )
 
     server: ServerConfig = Field(default_factory=ServerConfig)
+    filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     driver: DriverConfig = Field(default_factory=DriverConfig)
     cargo: CargoConfig = Field(default_factory=CargoConfig)

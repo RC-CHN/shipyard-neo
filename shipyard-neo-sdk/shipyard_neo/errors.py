@@ -129,13 +129,13 @@ class CapabilityNotSupportedError(BayError):
 
 
 class InvalidPathError(BayError):
-    """Invalid file path (400).
+    """Invalid sandbox path (400).
 
     Raised when a path fails validation:
     - Empty path
-    - Absolute path (starts with /)
+    - Unsupported absolute path
     - Path traversal (escapes workspace boundary)
-    - Contains null bytes
+    - Control characters or unsupported Windows syntax
     """
 
     code = "invalid_path"
@@ -144,9 +144,9 @@ class InvalidPathError(BayError):
 
 
 class CargoFileNotFoundError(BayError):
-    """File not found in sandbox workspace (404).
+    """File not found in an allowed sandbox path (404).
 
-    Applies to any relative path that doesn't exist, not just cargo scenarios.
+    Applies to any allowed path that doesn't exist, not just cargo scenarios.
 
     Note: Renamed from FileNotFoundError to avoid shadowing Python's builtin.
     """

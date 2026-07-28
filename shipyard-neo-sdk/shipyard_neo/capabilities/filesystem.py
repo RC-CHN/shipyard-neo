@@ -9,15 +9,19 @@ from shipyard_neo.types import FileInfo
 class FilesystemCapability(BaseCapability):
     """Filesystem operations capability.
 
-    Read, write, list, delete files in the sandbox workspace.
-    All paths are relative to /workspace.
+    Read, write, list, and delete files in the sandbox.
+
+    Relative paths are anchored at ``/workspace``. Absolute paths may use an
+    allowed runtime root such as ``/workspace`` or ``/tmp``. ``/tmp`` belongs
+    only to the current Ship container; use ``/workspace`` for shared or
+    persistent files.
     """
 
     async def read_file(self, path: str) -> str:
         """Read a text file from the sandbox.
 
         Args:
-            path: File path relative to /workspace
+            path: Sandbox path relative to /workspace or an allowed absolute path
 
         Returns:
             File content as string
@@ -38,7 +42,7 @@ class FilesystemCapability(BaseCapability):
         Creates parent directories if needed.
 
         Args:
-            path: File path relative to /workspace
+            path: Sandbox path relative to /workspace or an allowed absolute path
             content: File content as string
 
         Raises:
@@ -57,7 +61,7 @@ class FilesystemCapability(BaseCapability):
         """List directory contents.
 
         Args:
-            path: Directory path relative to /workspace (default: ".")
+            path: Sandbox path relative to /workspace or an allowed absolute path
 
         Returns:
             List of FileInfo objects
@@ -77,7 +81,7 @@ class FilesystemCapability(BaseCapability):
         """Delete a file or directory.
 
         Args:
-            path: File/directory path relative to /workspace
+            path: Sandbox path relative to /workspace or an allowed absolute path
 
         Raises:
             CargoFileNotFoundError: If path doesn't exist
@@ -94,7 +98,7 @@ class FilesystemCapability(BaseCapability):
         Uses multipart/form-data internally.
 
         Args:
-            path: Target path relative to /workspace
+            path: Sandbox path relative to /workspace or an allowed absolute path
             content: Binary file content
 
         Raises:
@@ -110,7 +114,7 @@ class FilesystemCapability(BaseCapability):
         """Download a file as binary content.
 
         Args:
-            path: File path relative to /workspace
+            path: Sandbox path relative to /workspace or an allowed absolute path
 
         Returns:
             Binary file content

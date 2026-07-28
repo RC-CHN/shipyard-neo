@@ -8,6 +8,14 @@ server:
   host: "0.0.0.0"
   port: 8114
 
+# Public sandbox filesystem policy. Relative paths are anchored at /workspace.
+# Absolute paths may target only one of these POSIX roots. /tmp is local to the
+# current Ship container and is not shared or guaranteed to survive a restart.
+filesystem:
+  allowed_roots:
+    - "/workspace"
+    - "/tmp"
+
 database:
   # Phase 1: SQLite (single instance)
   # For production: postgresql+asyncpg://user:pass@host/dbname

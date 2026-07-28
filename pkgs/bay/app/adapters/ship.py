@@ -16,9 +16,15 @@ from typing import Any
 import httpx
 import structlog
 
-from app.adapters.base import BaseAdapter, ExecutionResult, RuntimeMeta
-from app.errors import CargoFileNotFoundError, RequestTimeoutError, ShipError
+from app.adapters.base import BaseAdapter, ExecutionResult, RuntimeMeta, RuntimePathPolicy
+from app.errors import (
+    CargoFileNotFoundError,
+    InvalidPathError,
+    RequestTimeoutError,
+    ShipError,
+)
 from app.services.http import http_client_manager
+from app.validators.path import normalize_allowed_roots
 
 logger = structlog.get_logger()
 
@@ -32,6 +38,52 @@ def _get_shared_client() -> httpx.AsyncClient | None:
         return http_client_manager.client
     except RuntimeError:
         return None
+
+
+def _parse_path_policy(workspace: dict[str, Any]) -> RuntimePathPolicy | None:
+    """Parse Ship's optional path-policy metadata.
+
+    Missing or malformed metadata deliberately falls back to legacy behavior:
+    Ship receives workspace-relative paths only.
+    """
+    raw_policy = workspace.get("path_policy")
+    if not isinstance(raw_policy, dict):
+        return None
+
+    accepts_absolute_paths = raw_policy.get("accepts_absolute_paths")
+    raw_roots = raw_policy.get("allowed_roots")
+    if not isinstance(accepts_absolute_paths, bool) or not isinstance(raw_roots, list):
+        return None
+
+    try:
+        return RuntimePathPolicy(
+            accepts_absolute_paths=accepts_absolute_paths,
+            allowed_roots=tuple(normalize_allowed_roots(raw_roots)),
+        )
+    except ValueError:
+        return None
+
+
+def _raise_ship_response_error(response: httpx.Response, *, operation: str) -> None:
+    """Preserve Ship's structured ``invalid_path`` response in Bay."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if not isinstance(detail, dict) and isinstance(payload, dict):
+        detail = payload.get("error")
+    if isinstance(detail, dict) and detail.get("code") == "invalid_path":
+        raw_details = detail.get("details")
+        details = raw_details if isinstance(raw_details, dict) else {}
+        message = detail.get("message")
+        raise InvalidPathError(
+            message=message if isinstance(message, str) else None,
+            details=details,
+        )
+
+    raise ShipError(f"{operation} failed: {response.status_code}")
 
 
 class ShipAdapter(BaseAdapter):
@@ -101,7 +153,7 @@ class ShipAdapter(BaseAdapter):
                     status=response.status_code,
                     body=response.text,
                 )
-                raise ShipError(f"Ship request failed: {response.status_code}")
+                _raise_ship_response_error(response, operation="Ship request")
 
             return response.json()
 
@@ -134,6 +186,7 @@ class ShipAdapter(BaseAdapter):
         runtime = data.get("runtime", {})
         workspace = data.get("workspace", {})
         capabilities = data.get("capabilities", {})
+        path_policy = _parse_path_policy(workspace)
 
         self._meta_cache = RuntimeMeta(
             name=runtime.get("name", "ship"),
@@ -141,6 +194,7 @@ class ShipAdapter(BaseAdapter):
             api_version=runtime.get("api_version", "v1"),
             mount_path=workspace.get("mount_path", "/workspace"),
             capabilities=capabilities,
+            path_policy=path_policy,
         )
 
         self._log.info(
@@ -148,6 +202,9 @@ class ShipAdapter(BaseAdapter):
             name=self._meta_cache.name,
             version=self._meta_cache.version,
             capabilities=list(capabilities.keys()),
+            accepts_absolute_paths=(
+                path_policy.accepts_absolute_paths if path_policy is not None else False
+            ),
         )
 
         return self._meta_cache
@@ -281,7 +338,7 @@ class ShipAdapter(BaseAdapter):
                     )
 
             if response.status_code >= 400:
-                raise ShipError(f"Upload failed: {response.status_code}")
+                _raise_ship_response_error(response, operation="Upload")
         except httpx.RequestError as e:
             raise ShipError(f"Upload file failed: {e}")
 
@@ -307,7 +364,7 @@ class ShipAdapter(BaseAdapter):
             if response.status_code == 404:
                 raise CargoFileNotFoundError(f"File not found: {path}")
             if response.status_code >= 400:
-                raise ShipError(f"Download failed: {response.status_code}")
+                _raise_ship_response_error(response, operation="Download")
             return response.content
         except httpx.RequestError as e:
             raise ShipError(f"Download file failed: {e}")

@@ -107,3 +107,72 @@ async def test_download_nonexistent_returns_404():
             )
             assert d.status_code == 404
             assert d.json()["error"]["code"] == "file_not_found"
+
+
+async def test_tmp_upload_download_list_and_delete():
+    """An active Ship accepts /tmp for binary transfer operations."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        async with create_sandbox(client) as sandbox:
+            sid = sandbox["id"]
+            path = f"/tmp/{sid}-transfer.bin"
+            content = b"temporary-binary-content"
+
+            upload = await client.post(
+                f"/v1/sandboxes/{sid}/filesystem/upload",
+                files={"file": ("transfer.bin", content, "application/octet-stream")},
+                data={"path": path},
+                timeout=120.0,
+            )
+            assert upload.status_code == 200
+            assert upload.json()["path"] == path
+
+            listing = await client.get(
+                f"/v1/sandboxes/{sid}/filesystem/directories",
+                params={"path": "/tmp"},
+                timeout=30.0,
+            )
+            assert listing.status_code == 200
+            assert f"{sid}-transfer.bin" in [entry["name"] for entry in listing.json()["entries"]]
+
+            download = await client.get(
+                f"/v1/sandboxes/{sid}/filesystem/download",
+                params={"path": path},
+                timeout=30.0,
+            )
+            assert download.status_code == 200
+            assert download.content == content
+
+            delete = await client.delete(
+                f"/v1/sandboxes/{sid}/filesystem/files",
+                params={"path": path},
+                timeout=30.0,
+            )
+            assert delete.status_code == 200
+
+
+async def test_download_content_disposition_supports_unicode_filename():
+    """Downloads include both an ASCII fallback and RFC 5987 UTF-8 filename."""
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        async with create_sandbox(client) as sandbox:
+            sid = sandbox["id"]
+            path = "报告 emoji 🧪.txt"
+            content = b"unicode filename"
+
+            upload = await client.post(
+                f"/v1/sandboxes/{sid}/filesystem/upload",
+                files={"file": ("source.txt", content, "text/plain")},
+                data={"path": path},
+                timeout=120.0,
+            )
+            assert upload.status_code == 200
+
+            download = await client.get(
+                f"/v1/sandboxes/{sid}/filesystem/download",
+                params={"path": path},
+                timeout=30.0,
+            )
+            assert download.status_code == 200
+            disposition = download.headers["content-disposition"]
+            disposition.encode("ascii")
+            assert 'filename="__ emoji _.txt"' in disposition
+            assert "filename*=UTF-8''%E6%8A%A5%E5%91%8A" in disposition

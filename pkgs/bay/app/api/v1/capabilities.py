@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import Response
@@ -27,28 +28,46 @@ from app.errors import NotFoundError, ValidationError
 from app.models.skill import ExecutionType, LearnStatus
 from app.router.capability import CapabilityRouter
 from app.validators.path import (
-    validate_optional_relative_path,
-    validate_relative_path,
+    validate_optional_sandbox_path,
+    validate_sandbox_path,
 )
 
 router = APIRouter()
+
+
+def _content_disposition(filename: str) -> str:
+    """Build an ASCII fallback plus RFC 5987 UTF-8 attachment filename."""
+    ascii_fallback = "".join(
+        character if 32 <= ord(character) < 127 and character not in {'"', "\\", ";"} else "_"
+        for character in filename
+    ).strip()
+    if not ascii_fallback:
+        ascii_fallback = "download"
+    encoded_filename = quote(filename, safe="!#$&+-.^_`|~")
+    return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
 
 # -- Path validation dependencies --
 
 
 def validated_path(
-    path: str = Query(..., description="File path relative to /workspace"),
+    path: str = Query(
+        ...,
+        description="Sandbox path (relative to /workspace or an allowed absolute path)",
+    ),
 ) -> str:
     """Dependency to validate required path query parameter."""
-    return validate_relative_path(path, field_name="path")
+    return validate_sandbox_path(path, field_name="path")
 
 
 def validated_path_with_default(
-    path: str = Query(".", description="Directory path relative to /workspace"),
+    path: str = Query(
+        ".",
+        description="Sandbox directory (relative to /workspace or an allowed absolute path)",
+    ),
 ) -> str:
     """Dependency to validate optional path query parameter with default."""
-    return validate_relative_path(path, field_name="path")
+    return validate_sandbox_path(path, field_name="path")
 
 
 # Type aliases for validated path dependencies
@@ -96,7 +115,7 @@ class ShellExecRequest(BaseModel):
 
     command: str
     timeout: int = Field(default=30, ge=1, le=300)
-    cwd: str | None = None  # Relative to /workspace, validated
+    cwd: str | None = None  # Normalized with the public sandbox path policy
     include_code: bool = False
     description: str | None = None
     tags: str | None = None
@@ -105,7 +124,7 @@ class ShellExecRequest(BaseModel):
     @classmethod
     def validate_cwd(cls, v: str | None) -> str | None:
         """Validate cwd path if provided."""
-        return validate_optional_relative_path(v, field_name="cwd")
+        return validate_optional_sandbox_path(v, field_name="cwd")
 
 
 class ShellExecResponse(BaseModel):
@@ -123,7 +142,7 @@ class ShellExecResponse(BaseModel):
 class FileReadRequest(BaseModel):
     """Request to read a file."""
 
-    path: str  # Relative to /workspace
+    path: str  # Normalized sandbox path
 
 
 class FileReadResponse(BaseModel):
@@ -135,20 +154,20 @@ class FileReadResponse(BaseModel):
 class FileWriteRequest(BaseModel):
     """Request to write a file."""
 
-    path: str  # Relative to /workspace, validated
+    path: str  # Normalized sandbox path
     content: str
 
     @field_validator("path")
     @classmethod
     def validate_path(cls, v: str) -> str:
         """Validate file path."""
-        return validate_relative_path(v, field_name="path")
+        return validate_sandbox_path(v, field_name="path")
 
 
 class FileListRequest(BaseModel):
     """Request to list directory."""
 
-    path: str = "."  # Relative to /workspace
+    path: str = "."  # Normalized sandbox path
 
 
 class FileListResponse(BaseModel):
@@ -160,7 +179,7 @@ class FileListResponse(BaseModel):
 class FileDeleteRequest(BaseModel):
     """Request to delete file/directory."""
 
-    path: str  # Relative to /workspace
+    path: str  # Normalized sandbox path
 
 
 # Endpoints
@@ -790,7 +809,10 @@ async def upload_file(
     sandbox: FilesystemCapabilityDep,  # Validates filesystem capability at profile level
     sandbox_mgr: SandboxManagerDep,
     file: UploadFile = File(..., description="File to upload"),
-    path: str = Form(..., description="Target path relative to /workspace"),
+    path: str = Form(
+        ...,
+        description="Target path relative to /workspace or an allowed absolute path",
+    ),
 ) -> FileUploadResponse:
     """Upload binary file to sandbox.
 
@@ -798,8 +820,9 @@ async def upload_file(
     - file: The file to upload
     - path: Target path in the sandbox workspace
     """
-    # Manually validate path for Form parameter
-    validated_upload_path = validate_relative_path(path, field_name="path")
+    # Form fields bypass Pydantic body validators, so use the same entry point
+    # as query parameters and JSON request models.
+    validated_upload_path = validate_sandbox_path(path, field_name="path")
 
     capability_router = CapabilityRouter(sandbox_mgr)
 
@@ -829,5 +852,5 @@ async def download_file(
     return Response(
         content=content,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition(filename)},
     )

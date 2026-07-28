@@ -310,6 +310,10 @@ class DockerDriver(Driver):
                 f"BAY_WORKSPACE_PATH={WORKSPACE_MOUNT_PATH}",
             ]
         )
+        if primary.runtime_type == "ship":
+            env.append(
+                f"BAY_FILESYSTEM_ALLOWED_ROOTS_JSON={settings.filesystem.allowed_roots_json()}"
+            )
 
         self._log.info(
             "docker.create",
@@ -797,6 +801,10 @@ class DockerDriver(Driver):
                 f"BAY_CONTAINER_NAME={spec.name}",
             ]
         )
+        if spec.runtime_type == "ship":
+            env.append(
+                f"BAY_FILESYSTEM_ALLOWED_ROOTS_JSON={settings.filesystem.allowed_roots_json()}"
+            )
 
         # Host config.
         # NetworkMode = session network (primary): provides Docker's embedded

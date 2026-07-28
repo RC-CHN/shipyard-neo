@@ -14,6 +14,14 @@ from dataclasses import dataclass
 from typing import Any
 
 
+@dataclass(frozen=True)
+class RuntimePathPolicy:
+    """Runtime support for normalized absolute sandbox paths."""
+
+    accepts_absolute_paths: bool
+    allowed_roots: tuple[str, ...]
+
+
 @dataclass
 class RuntimeMeta:
     """Runtime metadata from GET /meta."""
@@ -23,6 +31,8 @@ class RuntimeMeta:
     api_version: str
     mount_path: str  # e.g., "/workspace"
     capabilities: dict[str, Any]  # capability -> operations
+    # None means an older runtime that only accepts workspace-relative paths.
+    path_policy: RuntimePathPolicy | None = None
 
 
 @dataclass

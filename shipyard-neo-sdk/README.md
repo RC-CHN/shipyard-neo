@@ -188,6 +188,11 @@ await sandbox.filesystem.upload("bin/model.bin", b"binary-bytes")
 blob = await sandbox.filesystem.download("bin/model.bin")
 ```
 
+Relative paths are rooted at `/workspace`. You may also pass an allowed
+absolute path such as `/workspace/output.txt` or `/tmp/output.txt`. `/tmp` is
+local to the current Ship container and may disappear when it is restarted;
+use `/workspace` for cross-container exchange and persistent cargo files.
+
 ## Cargo API (`client.cargos`)
 
 ```python

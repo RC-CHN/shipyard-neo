@@ -354,6 +354,11 @@ data = await sandbox.filesystem.download("assets/image.png")
 open("downloaded.png", "wb").write(data)
 ```
 
+相对路径仍以 `/workspace` 为根，也可以显式传递允许的绝对路径，例如
+`/workspace/output.txt` 或 `/tmp/output.txt`。`/tmp` 只属于当前 Ship 容器，
+容器重启后不保证保留，也不会在容器间共享；跨容器交换和需要持久化的文件请使用
+`/workspace`。
+
 ### Browser 能力
 
 在沙箱中执行浏览器自动化命令（需要 Profile 支持 `browser` 能力）。

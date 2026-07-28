@@ -27,7 +27,7 @@ class ShellCapability(BaseCapability):
         Args:
             command: Shell command to execute
             timeout: Execution timeout in seconds (1-300)
-            cwd: Working directory relative to /workspace
+            cwd: Working directory relative to /workspace or at an allowed absolute path
             include_code: Include executed command in response payload
             description: Optional execution description to store in history
             tags: Optional comma-separated tags to store in history

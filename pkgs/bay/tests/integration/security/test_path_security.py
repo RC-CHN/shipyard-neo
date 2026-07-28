@@ -57,8 +57,8 @@ async def test_read_rejects_malicious_path(sandbox_id: str, path: str, reason: s
 
 @pytest.mark.parametrize(
     "path",
-    ["/tmp/evil.sh", "../secret.txt"],
-    ids=["absolute", "traversal"],
+    ["/etc/evil.sh", "../secret.txt"],
+    ids=["outside_allowed_roots", "traversal"],
 )
 async def test_write_rejects_malicious_path(sandbox_id: str, path: str):
     """PUT /filesystem/files rejects malicious paths."""
@@ -115,8 +115,8 @@ async def test_download_rejects_absolute_path(sandbox_id: str):
 
 @pytest.mark.parametrize(
     "path",
-    ["/tmp/evil.txt", "../../evil.txt"],
-    ids=["absolute", "traversal"],
+    ["/etc/evil.txt", "../../evil.txt"],
+    ids=["outside_allowed_roots", "traversal"],
 )
 async def test_upload_rejects_malicious_path(sandbox_id: str, path: str):
     """POST /filesystem/upload rejects malicious paths."""
@@ -212,3 +212,33 @@ async def test_shell_relative_cwd_allowed(sandbox_id: str):
         )
         assert r.status_code == 200
         assert "subdir" in r.json()["output"]
+
+
+async def test_tmp_absolute_path_allowed_for_current_ship(sandbox_id: str):
+    """The active Ship accepts /tmp for filesystem operations and shell cwd."""
+    tmp_dir = f"/tmp/bay-path-policy-{sandbox_id}"
+    tmp_file = f"{tmp_dir}/artifact.txt"
+
+    async with httpx.AsyncClient(base_url=BAY_BASE_URL, headers=AUTH_HEADERS) as client:
+        write = await client.put(
+            f"/v1/sandboxes/{sandbox_id}/filesystem/files",
+            json={"path": tmp_file, "content": "temporary"},
+            timeout=120.0,
+        )
+        assert write.status_code == 200
+
+        read = await client.get(
+            f"/v1/sandboxes/{sandbox_id}/filesystem/files",
+            params={"path": tmp_file},
+            timeout=30.0,
+        )
+        assert read.status_code == 200
+        assert read.json()["content"] == "temporary"
+
+        shell = await client.post(
+            f"/v1/sandboxes/{sandbox_id}/shell/exec",
+            json={"command": "pwd", "cwd": tmp_dir},
+            timeout=30.0,
+        )
+        assert shell.status_code == 200
+        assert shell.json()["output"] == tmp_dir

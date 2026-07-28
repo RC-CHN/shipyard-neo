@@ -229,6 +229,14 @@ class K8sDriver(Driver):
                 client.V1EnvVar(name="BAY_WORKSPACE_PATH", value=WORKSPACE_MOUNT_PATH),
             ]
         )
+        primary = profile.get_primary_container()
+        if primary is not None and primary.runtime_type == "ship":
+            env.append(
+                client.V1EnvVar(
+                    name="BAY_FILESYSTEM_ALLOWED_ROOTS_JSON",
+                    value=settings.filesystem.allowed_roots_json(),
+                )
+            )
 
         # Build resource requirements
         memory_k8s = _parse_memory(profile.resources.memory)
@@ -727,6 +735,13 @@ class K8sDriver(Driver):
                 client.V1EnvVar(name="BAY_CONTAINER_NAME", value=spec.name),
             ]
         )
+        if spec.runtime_type == "ship":
+            env.append(
+                client.V1EnvVar(
+                    name="BAY_FILESYSTEM_ALLOWED_ROOTS_JSON",
+                    value=settings.filesystem.allowed_roots_json(),
+                )
+            )
 
         # Resource requirements
         memory_k8s = _parse_memory(spec.resources.memory)

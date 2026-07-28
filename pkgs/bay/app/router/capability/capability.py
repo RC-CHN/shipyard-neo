@@ -23,6 +23,7 @@ from app.managers.sandbox import SandboxManager
 from app.models.sandbox import Sandbox
 from app.models.session import Session
 from app.router.capability.adapter_pool import AdapterPool, default_adapter_pool
+from app.validators.path import normalize_sandbox_path, path_for_runtime
 
 logger = structlog.get_logger()
 
@@ -187,6 +188,29 @@ class CapabilityRouter:
                 available=list(meta.capabilities.keys()),
             )
 
+    async def _path_for_runtime(
+        self,
+        adapter: BaseAdapter,
+        path: str,
+        *,
+        field_name: str,
+    ) -> str:
+        """Use one normalization path before negotiating Ship compatibility."""
+        from app.config import get_settings
+
+        normalized_path = normalize_sandbox_path(
+            path,
+            allowed_roots=get_settings().filesystem.allowed_roots,
+            field_name=field_name,
+        )
+        meta = await adapter.get_meta()
+        policy = meta.path_policy
+        return path_for_runtime(
+            normalized_path,
+            accepts_absolute_paths=policy.accepts_absolute_paths if policy else False,
+            allowed_roots=policy.allowed_roots if policy else ("/workspace",),
+        )
+
     # -- Python capability --
 
     async def exec_python(
@@ -235,7 +259,7 @@ class CapabilityRouter:
             sandbox: Target sandbox
             command: Shell command to execute
             timeout: Execution timeout in seconds
-            cwd: Working directory (relative to /workspace)
+            cwd: Working directory following the public sandbox path policy
 
         Returns:
             Execution result
@@ -251,7 +275,12 @@ class CapabilityRouter:
             command=command[:100],
         )
 
-        return await adapter.exec_shell(command, timeout=timeout, cwd=cwd)
+        runtime_cwd = (
+            await self._path_for_runtime(adapter, cwd, field_name="cwd")
+            if cwd is not None
+            else None
+        )
+        return await adapter.exec_shell(command, timeout=timeout, cwd=runtime_cwd)
 
     # -- Browser capability (Phase 2) --
 
@@ -364,7 +393,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: File path (relative to /workspace)
+            path: File path following the public sandbox path policy
 
         Returns:
             File content
@@ -379,7 +408,8 @@ class CapabilityRouter:
             path=path,
         )
 
-        return await adapter.read_file(path)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        return await adapter.read_file(runtime_path)
 
     async def write_file(
         self,
@@ -391,7 +421,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: File path (relative to /workspace)
+            path: File path following the public sandbox path policy
             content: File content
         """
         session = await self.ensure_session(sandbox)
@@ -405,7 +435,8 @@ class CapabilityRouter:
             content_len=len(content),
         )
 
-        await adapter.write_file(path, content)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        await adapter.write_file(runtime_path, content)
 
     async def list_files(
         self,
@@ -416,7 +447,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: Directory path (relative to /workspace)
+            path: Directory path following the public sandbox path policy
 
         Returns:
             List of file entries
@@ -431,7 +462,8 @@ class CapabilityRouter:
             path=path,
         )
 
-        return await adapter.list_files(path)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        return await adapter.list_files(runtime_path)
 
     async def delete_file(
         self,
@@ -442,7 +474,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: File/directory path (relative to /workspace)
+            path: File/directory path following the public sandbox path policy
         """
         session = await self.ensure_session(sandbox)
         adapter = self._get_adapter(session, capability="filesystem")
@@ -454,7 +486,8 @@ class CapabilityRouter:
             path=path,
         )
 
-        await adapter.delete_file(path)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        await adapter.delete_file(runtime_path)
 
     # -- Upload/Download capability --
 
@@ -468,7 +501,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: Target path (relative to /workspace)
+            path: Target path following the public sandbox path policy
             content: File content as bytes
         """
         session = await self.ensure_session(sandbox)
@@ -482,7 +515,8 @@ class CapabilityRouter:
             content_len=len(content),
         )
 
-        await adapter.upload_file(path, content)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        await adapter.upload_file(runtime_path, content)
 
     async def download_file(
         self,
@@ -493,7 +527,7 @@ class CapabilityRouter:
 
         Args:
             sandbox: Target sandbox
-            path: File path (relative to /workspace)
+            path: File path following the public sandbox path policy
 
         Returns:
             File content as bytes
@@ -508,4 +542,5 @@ class CapabilityRouter:
             path=path,
         )
 
-        return await adapter.download_file(path)
+        runtime_path = await self._path_for_runtime(adapter, path, field_name="path")
+        return await adapter.download_file(runtime_path)

@@ -165,23 +165,26 @@ class CapabilityNotSupportedError(BayError):
         message: str | None = None,
         capability: str | None = None,
         available: list[str] | None = None,
+        allowed_roots: list[str] | None = None,
     ) -> None:
         details: dict[str, Any] = {}
         if capability:
             details["capability"] = capability
         if available is not None:
             details["available"] = available
+        if allowed_roots is not None:
+            details["allowed_roots"] = allowed_roots
         super().__init__(message, details)
 
 
 class InvalidPathError(BayError):
-    """Invalid file path (absolute, traversal, etc.).
+    """Invalid sandbox path (outside the allowed roots, traversal, etc.).
 
     Raised when a path fails validation:
     - Empty path
-    - Absolute path (starts with /)
+    - Unsupported absolute path
     - Path traversal (escapes workspace boundary)
-    - Contains null bytes
+    - Control characters or unsupported Windows syntax
     """
 
     code = "invalid_path"
